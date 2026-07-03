@@ -1,0 +1,25 @@
+{#
+  PurpleForge — master deploy sequence (GENERATED, do not edit).
+  Rendered by scripts/forge.py generate. CLAUDE.md invariant: hardening
+  applies BEFORE vulnerabilities are injected; deploy order is
+  infra(terraform) -> ad-topology -> ad-theming -> hardening baseline ->
+  vuln-injection -> EDR/telemetry -> snapshot. This file is the single entry
+  point a /deploy command should run — never invoke the individual playbooks
+  out of order by hand. Only imports playbooks scripts/forge.py actually
+  rendered (e.g. vuln-injection.yml doesn't exist for a 0-vuln spec).
+
+  NOTE: no post-deploy snapshot step exists yet. CLAUDE.md's deploy order
+  calls for a clean-state snapshot here, after vuln-injection and before any
+  purple-team attack — that requires either an azurerm VM/managed-disk
+  snapshot resource wired into a real /deploy orchestrator, or an
+  ansible-side equivalent, neither of which has been built or tested against
+  a live Azure subscription. Track it before relying on "reset between
+  exercises" — don't assume it exists because this file runs cleanly.
+#}
+---
+- import_playbook: ad-topology.yml
+- import_playbook: ad-theming.yml
+- import_playbook: defensive-controls.yml
+{% if has_vuln_injection %}
+- import_playbook: vuln-injection.yml
+{% endif %}

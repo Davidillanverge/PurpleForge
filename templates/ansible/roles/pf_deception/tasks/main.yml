@@ -1,0 +1,26 @@
+---
+# pf_deception — PurpleForge-authored (no upstream primitive). Seeds
+# honeyuser accounts named per the theme's honey_account_naming pattern
+# (catalog/themes/<theme>.yml), each with an attractive SPN so it shows up in
+# a Kerberoasting sweep — the intent is that touching these accounts at all is
+# a high-confidence signal, not a control PurpleForge validates today (no
+# detection-lab means nothing consumes that signal yet, but the bait exists
+# so a future SIEM integration has something to alert on).
+- name: "pf_deception | create honey account {{ item }}"
+  win_domain_user:
+    name: "{{ item }}"
+    firstname: "{{ item.split('.')[0] | capitalize }}"
+    surname: Account
+    description: "Service account — do not modify"
+    password: "{{ lookup('community.general.random_string', length=24, special=true) }}"
+    password_never_expires: true
+    spn:
+      - "HOST/{{ item }}.{{ domain }}"
+    spn_action: replace
+    enabled: true
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+  loop: "{{ pf_deception_honey_accounts }}"

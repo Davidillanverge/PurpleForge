@@ -1,0 +1,87 @@
+# PurpleForge — second worked example: single domain, corporate-espionage theme,
+# AWS provider, defense.profile: hardened (CIS L2 + prevent-mode EDR, minimal gaps).
+# Exercises a different provider, theme, SIEM/EDR pair and reconciliation path than
+# medieval-2dom-azure.yml.
+lab:
+  name: raven-corp
+  theme: corporate
+  provider: aws
+  region: eu-west-1
+  isolation: vpn-only
+  auto_shutdown: "19:00 Europe/Madrid"
+  budget_alert_usd: 100
+
+forest:
+  - domain: ravencorp.local
+    netbios: RAVENCORP
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2022
+    domain: ravencorp.local
+    count: 1
+  - role: member-server
+    os: windows-server-2022
+    domain: ravencorp.local
+    services: [iis, mssql]
+    count: 1
+  - role: workstation
+    os: windows-11-23h2
+    domain: ravencorp.local
+    count: 3
+
+population:
+  users: 150
+  density: messy
+  seed: 4242
+
+vulnerabilities:               # the deliberate gaps
+  - asreproast
+  - unconstrained-delegation
+  - passwords-in-description
+
+defense:
+  profile: hardened
+
+  siem:
+    platform: wazuh
+    ship_sysmon: true
+    ship_wef: true
+    network_monitoring: [suricata]
+
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: block, tamper_protection: true, network_protection: true }
+      targets: all
+    - product: wazuh-agent
+      mode: prevent
+      targets: all
+
+  hardening:
+    baseline: cis-l2
+    apply_to: all
+    controls:
+      laps: true
+      lsa_protection: true
+      credential_guard: true
+      smb_signing: enforce
+      ldap_signing: enforce
+      disable_llmnr_nbtns_mdns: true
+      protected_users_group: [RAVENCORP\da-finance]
+    intentional_gaps_auto: true    # derive skip_rule exclusions from each vuln's neutralized_by
+
+  deception:
+    honey_accounts: 2
+    canarytokens: [aws-keys]
+
+on_conflict: exclude-control
+
+detection_rules: auto
+
+validation:
+  bloodhound: true
+  pingcastle: true
+  atomic_red_team: [T1558.004, T1187, T1552]

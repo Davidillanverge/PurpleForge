@@ -1,0 +1,41 @@
+id: ntlm-downgrade
+name: "Downgrade de autenticación NTLM - LM/NTLMv1 permitido"
+severity: high
+attack:
+  mitre_attack: [T1557.001, T1110.002]
+  requires_services: []
+  intended_path: >
+    El nivel de autenticación LAN Manager permite respuestas LM/NTLMv1 (en
+    vez de exigir NTLMv2 exclusivamente). Un atacante posicionado en la red
+    (LLMNR/NBT-NS poisoning, Responder) captura un intercambio NTLMv1 y lo
+    crackea offline en minutos/horas -las respuestas LM/NTLMv1 son
+    criptográficamente mucho más débiles que NTLMv2- obteniendo el hash o la
+    contraseña en texto claro de la cuenta capturada.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/ntlm-downgrade.yml
+  reuses: "vendor/GOAD/ansible/roles/vulns/ntlmdowngrade (mismo registro LMCompatibilityLevel, mismo valor débil)"
+  params: { lm_compatibility_level: 2 }
+detect:
+  data_source: "Security 4624 (logon NTLM) con PackageName NTLM y LmPackageName distinto de NTLM v2; Sysmon"
+  signal: "4624/4776 mostrando NTLMv1 o LM en LmPackageName para una autenticación entrante"
+  siem_rule: templates/detection/{siem}/ntlm_downgrade
+neutralized_by:
+  # Verified: hardening.controls.ntlmv2_only = LMCompatibilityLevel 5, CIS
+  # rule 2.3.11.7 (level1, identical on Windows-2019-CIS/Windows-2022-CIS) —
+  # see catalog/defense/hardening/control-cis-rules.yml. Applied directly by
+  # pf_controls, independent of which baseline (if any) is also selected —
+  # deliberately NOT also listing `hardening.baseline: [cis-l1, cis-l2]` here
+  # (same call as unconstrained-delegation.yml in Fase 6): the fixed-toggle
+  # entry alone already captures the real dependency (the reconciliation
+  # checks the resolved boolean, regardless of which baseline set it), and a
+  # second baseline-kind entry would only produce a redundant, unlabeled
+  # "control label 'None'" conflict alongside it — caught by generating this
+  # exact vuln+control pair and reading the reconciliation output, not by
+  # inspection.
+  - hardening.controls.ntlmv2_only
+mitigate:
+  summary: "Fijar 'Network security: LAN Manager authentication level' a 'Send NTLMv2 response only. Refuse LM & NTLM' (LMCompatibilityLevel=5); deshabilitar LLMNR/NBT-NS para reducir la superficie de captura."
+validate:
+  bloodhound_edge: null
+  atomic: T1110.002

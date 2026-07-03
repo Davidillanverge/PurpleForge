@@ -1,0 +1,127 @@
+{#
+  PurpleForge — Ansible inventory for {{ lab_name }}.
+  Rendered by scripts/forge.py generate from lab-manifest.json's topology
+  (see .claude/skills/ad-topology/SKILL.md for the group-assignment rules).
+  WinRM is only reachable from the management subnet (network-topology's NSG
+  rules) — i.e. only through the WireGuard bastion, never directly.
+#}
+all:
+  vars:
+    ansible_user: ansible
+    ansible_password: "{{ ansible_password }}"
+    ansible_connection: winrm
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_port: 5986
+    two_adapters: false
+    nat_adapter: ""
+    domain_adapter: "Ethernet"
+    dns_server_forwarder: "168.63.129.16"
+    force_dns_server: "no"
+    http_proxy: "no"
+    ad_http_proxy: ""
+    ad_https_proxy: ""
+{% if ad_theming_extra_groups %}
+    ad_theming_extra_groups:
+{% for g in ad_theming_extra_groups %}
+      - { name: "{{ g.name }}", description: "{{ g.description }}" }
+{% endfor %}
+{% else %}
+    ad_theming_extra_groups: []
+{% endif %}
+  children:
+{% if groups.domain_controllers %}
+    domain_controllers:
+      hosts:
+{% for h in groups.domain_controllers %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+          domain: "{{ h.domain }}"
+          domain_name: "{{ h.domain }}"
+          netbios_name: "{{ h.netbios_name }}"
+          domain_username: "{{ h.domain_username }}"
+          domain_password: "{{ h.domain_password }}"
+          dns_domain: "{{ h.dns_domain }}"
+          badblood_user_count: {{ h.badblood_user_count }}
+          badblood_group_count: {{ h.badblood_group_count }}
+          badblood_computer_count: {{ h.badblood_computer_count }}
+          badblood_seed: {{ h.badblood_seed }}
+{% endfor %}
+{% endif %}
+{% if groups.domain_controllers_additional %}
+    domain_controllers_additional:
+      hosts:
+{% for h in groups.domain_controllers_additional %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+          domain: "{{ h.domain }}"
+          domain_name: "{{ h.domain_name }}"
+          netbios_name: "{{ h.netbios_name }}"
+          domain_username: "{{ h.domain_username }}"
+          domain_password: "{{ h.domain_password }}"
+          dns_domain: "{{ h.dns_domain }}"
+{% endfor %}
+{% endif %}
+{% if groups.child_domain_controllers %}
+    child_domain_controllers:
+      hosts:
+{% for h in groups.child_domain_controllers %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+          domain: "{{ h.domain }}"
+          domain_name: "{{ h.domain_name }}"
+          netbios_name: "{{ h.netbios_name }}"
+          domain_password: "{{ h.domain_password }}"
+          dns_domain: "{{ h.dns_domain }}"
+          parent_domain: "{{ h.parent_domain }}"
+          parent_domain_user: "{{ h.parent_domain_user }}"
+          parent_domain_password: "{{ h.parent_domain_password }}"
+          source_dc: "{{ h.source_dc }}"
+          badblood_user_count: {{ h.badblood_user_count }}
+          badblood_group_count: {{ h.badblood_group_count }}
+          badblood_computer_count: {{ h.badblood_computer_count }}
+          badblood_seed: {{ h.badblood_seed }}
+{% endfor %}
+{% endif %}
+{% if groups.trust_anchors %}
+    trust_anchors:
+      hosts:
+{% for h in groups.trust_anchors %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          domain_username: "{{ h.domain_username }}"
+          domain_password: "{{ h.domain_password }}"
+          remote_forest: "{{ h.remote_forest }}"
+          remote_admin: "{{ h.remote_admin }}"
+          remote_admin_password: "{{ h.remote_admin_password }}"
+{% endfor %}
+{% endif %}
+{% if groups.member_servers %}
+    member_servers:
+      hosts:
+{% for h in groups.member_servers %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+          member_domain: "{{ h.member_domain }}"
+          domain_username: "{{ h.domain_username }}"
+          domain_password: "{{ h.domain_password }}"
+          dns_domain: "{{ h.dns_domain }}"
+{% endfor %}
+{% endif %}
+{% if groups.workstations %}
+    workstations:
+      hosts:
+{% for h in groups.workstations %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+          member_domain: "{{ h.member_domain }}"
+          domain_username: "{{ h.domain_username }}"
+          domain_password: "{{ h.domain_password }}"
+          dns_domain: "{{ h.dns_domain }}"
+{% endfor %}
+{% endif %}

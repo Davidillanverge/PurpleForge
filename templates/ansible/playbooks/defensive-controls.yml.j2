@@ -1,0 +1,107 @@
+{#
+  PurpleForge — defensive-controls playbook (GENERATED, do not edit).
+  Rendered by scripts/forge.py generate. Order (CLAUDE.md): hardening baseline
+  first (so vuln-injection's gaps land in an already-hardened box), then EDR,
+  then the concrete pf_controls toggles, then deception. See
+  .claude/skills/defensive-controls/SKILL.md for why each ansible-lockdown
+  role is invoked via `include_role` with the level tags this project has
+  actually verified (level1-domaincontroller/level1-memberserver/etc., or
+  cat1/cat2/cat3 for STIG) — and why those tags alone are not sufficient:
+  ansible-lockdown documents `--tags`/`--skip-tags` at ansible-playbook
+  invocation time as the actual level-selection mechanism (see
+  vendor/ansible-lockdown/Windows-2022-CIS/README.md's "This is managed using
+  tags" section). `forge.py generate`'s own console output prints the exact
+  --tags value each baseline needs; a future /deploy orchestrator should pass
+  it through.
+#}
+---
+{% for g in hardening.groups %}
+- name: "PurpleForge | defensive-controls | hardening baseline ({{ g.os }} via {{ g.role_name }}, tags: {{ g.tags | join(', ') }})"
+  hosts: "{{ g.hosts | join(':') }}"
+  gather_facts: true
+  vars:
+{% for rule in g.skip_rule_vars %}
+    {{ rule }}: false
+{% endfor %}
+{% if not g.skip_rule_vars %}
+    _no_skip_rules_for_this_os: true
+{% endif %}
+  tasks:
+    - name: "Apply {{ g.role_name }} ({{ g.tags | join(', ') }})"
+      ansible.builtin.include_role:
+        name: "{{ g.role_name }}"
+      tags:
+{% if g.tags %}
+{% for t in g.tags %}
+        - "{{ t }}"
+{% endfor %}
+{% else %}
+        []
+{% endif %}
+{% endfor %}
+
+{% for e in edr %}
+- name: "PurpleForge | defensive-controls | EDR ({{ e.product }}, mode: {{ e.mode }})"
+  hosts: "{{ e.targets | join(':') }}"
+  gather_facts: false
+  vars:
+    pf_defender_av_mode: "{{ e.mode }}"
+{% if e.settings %}
+    pf_defender_av_settings:
+{% for k, v in e.settings %}
+      {{ k }}: {{ v }}
+{% endfor %}
+{% else %}
+    pf_defender_av_settings: {}
+{% endif %}
+  roles:
+    - pf_defender_av
+{% endfor %}
+
+- name: "PurpleForge | defensive-controls | concrete controls (LAPS, LSA protection, SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Protected Users)"
+  hosts: "{{ all_target_hosts | join(':') }}"
+  gather_facts: false
+  vars:
+    pf_controls_laps: {{ controls.laps }}
+    pf_controls_lsa_protection: {{ controls.lsa_protection }}
+    pf_controls_smb_signing: {{ controls.smb_signing }}
+    pf_controls_ldap_signing: {{ controls.ldap_signing }}
+    pf_controls_disable_llmnr_nbtns_mdns: {{ controls.disable_llmnr_nbtns_mdns }}
+    pf_controls_credential_guard: {{ controls.credential_guard }}
+    pf_controls_ntlmv2_only: {{ controls.ntlmv2_only }}
+{% if controls.protected_users_group %}
+    pf_controls_protected_users_group:
+{% for u in controls.protected_users_group %}
+      - {{ u }}
+{% endfor %}
+{% else %}
+    pf_controls_protected_users_group: []
+{% endif %}
+{% if dc_hosts %}
+    pf_controls_dc_hosts:
+{% for h in dc_hosts %}
+      - "{{ h }}"
+{% endfor %}
+{% else %}
+    pf_controls_dc_hosts: []
+{% endif %}
+    pf_controls_laps_schema_host: {{ laps_schema_host_yaml }}
+  roles:
+    - pf_controls
+
+{% if deception.run_on %}
+- name: "PurpleForge | defensive-controls | deception ({{ deception.honey_accounts | length }} honey account(s))"
+  hosts: "{{ deception.run_on }}"
+  gather_facts: false
+  vars:
+{% if deception.honey_accounts %}
+    pf_deception_honey_accounts:
+{% for a in deception.honey_accounts %}
+      - "{{ a }}"
+{% endfor %}
+{% else %}
+    pf_deception_honey_accounts: []
+{% endif %}
+  roles:
+    - pf_deception
+{% endif %}

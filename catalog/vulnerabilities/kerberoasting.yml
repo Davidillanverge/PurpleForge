@@ -1,0 +1,36 @@
+id: kerberoasting
+name: "Kerberoasting - cuenta de servicio con SPN y contraseña débil"
+severity: high
+attack:
+  mitre_attack: [T1558.003]
+  requires_services: []
+  intended_path: >
+    Cualquier usuario autenticado del dominio puede solicitar un TGS para una
+    cuenta con SPN registrado; el ticket va cifrado con el hash de la
+    contraseña de esa cuenta de servicio. Si la contraseña es débil/corta se
+    crackea offline y se obtiene el control de la cuenta (a menudo
+    sobreprivilegiada).
+inject:
+  type: powershell
+  primitive: "vendor/Vulnerable-AD/vulnad.ps1#VulnAD-Kerberoasting"
+  playbook: templates/ansible/vulns/kerberoasting.yml
+  params: { count: 2 }
+detect:
+  data_source: "Security 4769 (solicitud de TGS); Sysmon"
+  signal: "4769 con tipo de cifrado RC4 (0x17) solicitado para una cuenta de usuario con SPN"
+  siem_rule: templates/detection/{siem}/kerberoasting
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was found for it during
+# Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only
+# lists VERIFIED control->rule mappings). The reconciliation still treats it as
+# 'bundled in this baseline' for warn/exclude-control purposes, but defensive-
+# controls cannot derive a concrete skip_rule for it — only the baseline-level
+# conflict is recorded, not a rule number.
+neutralized_by:
+  - hardening.controls.service_account_password_policy   # etiqueta libre: rota/alarga contraseñas de cuentas con SPN
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Usar gMSA o contraseñas de cuenta de servicio largas y aleatorias (>25 caracteres); Kerberos AES-only; alertar en picos de 4769 con cifrado RC4."
+validate:
+  bloodhound_edge: "HasSPN"
+  atomic: T1558.003

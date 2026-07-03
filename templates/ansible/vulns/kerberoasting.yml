@@ -1,0 +1,36 @@
+---
+# Vuln inject task-file: kerberoasting (T1558.003)
+# Included by the generated vuln-injection.yml, run against the target domain's
+# root DC (vars domain/domain_username/domain_password come from the inventory).
+#
+# Reuses Vulnerable-AD's VulnAD-Kerberoasting *technique* (a domain account with
+# a registered SPN and a crackable password) but injects a NAMED, deterministic
+# service account instead of Vulnerable-AD's random-user pick — random selection
+# breaks PurpleForge invariants #5 (determinism, seed-driven) and idempotency.
+# win_domain_user (community.windows >= 1.10, GOAD pins 1.11.0) sets the SPN
+# natively. The weak password is what makes the roasted TGS crackable offline;
+# it lives only in generated/<lab>/ (gitignored).
+- name: "kerberoasting | create kerberoastable service account {{ vuln_kerberoast_account }}"
+  win_domain_user:
+    name: "{{ vuln_kerberoast_account }}"
+    firstname: Service
+    surname: SQL
+    description: "SQL reporting service account"
+    password: "{{ vuln_kerberoast_password }}"
+    password_never_expires: true
+    spn:
+      - "MSSQLSvc/{{ vuln_kerberoast_account }}.{{ domain }}:1433"
+    spn_action: replace
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+  register: vuln_kerberoast_result
+
+- name: "kerberoasting | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Kerberoasting gap live: any domain user can request a TGS for
+      {{ vuln_kerberoast_account }} (SPN MSSQLSvc/...), the ticket is
+      RC4/AES-encrypted with this account's weak password and crackable offline.

@@ -1,0 +1,31 @@
+{#
+  PurpleForge — vuln-injection playbook for {{ lab_name }} (GENERATED, do not edit).
+  Rendered by scripts/forge.py generate from the spec's vulnerabilities[] and the
+  catalog. One play per selected vuln, targeting the host scripts/forge.py's
+  plan_vuln_injection resolved (adcs-* on the ADCS host; everything else on the
+  primary domain's root DC). Each play includes the matching task-file from
+  ../vulns/<id>.yml (copied into generated/<lab>/ansible/vulns/) and passes the
+  deterministic per-vuln vars (named artifacts + lab-only passwords).
+
+  Deploy order (CLAUDE.md): this runs AFTER the hardening baseline, so the
+  intentional gaps land in an already-hardened environment. The reconciliation
+  (lab-manifest.json) guarantees the hardening did not skip-rule away the control
+  each of these vulns needs; `neutralization` below echoes that per vuln.
+#}
+---
+{% for v in planned %}
+- name: "PurpleForge | vuln-injection | {{ v.id }} ({{ v.mitre }}) -> {{ v.run_on }}"
+  hosts: {{ v.run_on }}
+  gather_facts: false
+  vars:
+    vuln_files_dir: "{{ '{{' }} playbook_dir {{ '}}' }}/files"
+{% for k, val in v.vars.items() %}
+    {{ k }}: "{{ val }}"
+{% endfor %}
+  tasks:
+    # {{ v.name }}
+    # intended path: {{ v.intended_path }}
+    # neutralization: {{ v.neutralization }}
+    - name: "{{ v.id }} | inject"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../vulns/{{ v.id }}.yml"
+{% endfor %}

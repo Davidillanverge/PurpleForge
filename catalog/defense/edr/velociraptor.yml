@@ -1,0 +1,10 @@
+# catalog/defense/edr/velociraptor.yml
+id: velociraptor
+name: "Velociraptor"
+description: >
+  Client enrolls against a Velociraptor server (self-hostable, but still a
+  backend this project does not build — no detection-lab). See
+  elastic-defend.yml for the shared rationale.
+backend_required: true
+implementation:
+  engine: none

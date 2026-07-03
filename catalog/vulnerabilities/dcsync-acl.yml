@@ -1,0 +1,36 @@
+id: dcsync-acl
+name: "DCSync vía ACL - derechos de replicación otorgados a una cuenta no privilegiada"
+severity: critical
+attack:
+  mitre_attack: [T1003.006]
+  requires_services: []
+  intended_path: >
+    Una cuenta de bajo privilegio recibe (por error de delegación, o de forma
+    intencionada para el laboratorio) los derechos extendidos
+    DS-Replication-Get-Changes y DS-Replication-Get-Changes-All sobre el
+    objeto de dominio. Puede entonces invocar MS-DRSR (mimikatz
+    lsadump::dcsync) y volcar cualquier hash NTLM del dominio, incluido krbtgt.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/dcsync-acl.yml
+  reuses: "vendor/GOAD/ansible/roles/vulns/acls (Set-ACL ExtendedRight), extendido con el GUID DS-Replication-Get-Changes-All"
+  params: { for: "{{ target_user }}", to: "DC={{ domain_dn }}", right: ExtendedRight, extended_right_guid: "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" }
+detect:
+  data_source: "Security 4662 (operación sobre objeto AD); metadatos de replicación del DC"
+  signal: "4662 cuyo Properties/AccessMask incluye el GUID de DS-Replication-Get-Changes-All, emitido por una cuenta que no es un DC ni una cuenta de servicio de replicación conocida"
+  siem_rule: templates/detection/{siem}/dcsync_acl
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was found for it during
+# Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only
+# lists VERIFIED control->rule mappings). The reconciliation still treats it as
+# 'bundled in this baseline' for warn/exclude-control purposes, but defensive-
+# controls cannot derive a concrete skip_rule for it — only the baseline-level
+# conflict is recorded, not a rule number.
+neutralized_by:
+  - hardening.controls.acl_hygiene_audit   # etiqueta libre: auditoría periódica de ACLs de replicación de dominio
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Auditar y restringir ACLs de replicación de dominio (dcdiag /test:acl, BloodHound edge DCSync); alertar en 4662 sobre los GUIDs de replicación."
+validate:
+  bloodhound_edge: "DCSync"
+  atomic: T1003.006

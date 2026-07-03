@@ -1,0 +1,40 @@
+id: unconstrained-delegation
+name: "Delegación no restringida (unconstrained delegation) en un host miembro"
+severity: critical
+attack:
+  mitre_attack: [T1187, T1558.003]
+  requires_services: []
+  intended_path: >
+    Un servidor miembro tiene activo el flag TRUSTED_FOR_DELEGATION. Si un
+    atacante compromete ese host, puede coaccionar (p.ej. spooler/PetitPotam-style,
+    o autenticación legítima) a una cuenta privilegiada -incluido un DC- para
+    que se autentique contra él; el TGT de la cuenta coaccionada queda
+    cacheado en memoria LSASS del host y puede extraerse para suplantarla.
+inject:
+  type: powershell
+  primitive: "custom — sin equivalente directo en Vulnerable-AD/GOAD; sigue el patrón VulnAD-* (Set-ADAccountControl vía módulo ActiveDirectory)"
+  playbook: templates/ansible/vulns/unconstrained-delegation.yml
+  params: { computer: "{{ target_host }}", flag: TRUSTED_FOR_DELEGATION }
+detect:
+  data_source: "Security 4624/4768/4769 correlados; Sysmon EventID 10 (acceso a lsass.exe)"
+  signal: "TGT de una cuenta privilegiada presente en la caché Kerberos de un host no-DC inmediatamente tras una autenticación coaccionada"
+  siem_rule: templates/detection/{siem}/unconstrained_delegation
+neutralized_by:
+  # Verified: hardening.controls.lsa_protection = RunAsPPL, applied directly by
+  # the pf_controls role (not via an ansible-lockdown baseline) — dificulta el
+  # volcado de LSASS donde queda cacheado el TGT coaccionado. The conflict
+  # check is against this toggle's own resolved value, independent of baseline.
+  #
+  # NOTE: an earlier draft also listed `hardening.baseline: [cis-l2, stig]`
+  # here, on the assumption that CIS L2 bundles RunAsPPL. Verified false during
+  # Fase 6: ansible-lockdown's rule 18.9.26.2 (RunAsPPL) is tagged
+  # ngws-domaincontroller/ngws-memberserver only — NOT level1/level2 — so
+  # selecting cis-l2 does not, by itself, neutralize this vuln. Removed rather
+  # than left as an unverified claim; see catalog/defense/hardening/
+  # control-cis-rules.yml for what IS verified.
+  - hardening.controls.lsa_protection
+mitigate:
+  summary: "Eliminar TRUSTED_FOR_DELEGATION salvo necesidad justificada; usar delegación restringida basada en recursos (RBCD); meter cuentas sensibles en Protected Users."
+validate:
+  bloodhound_edge: "AllowedToDelegate"
+  atomic: T1187

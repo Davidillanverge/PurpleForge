@@ -1,0 +1,59 @@
+---
+# pf_defender_av — the one EDR entry PurpleForge implements end-to-end (see
+# catalog/defense/edr/defender-av.yml): Microsoft Defender Antivirus is built
+# into every Windows Server 2019+/10/11 image, no external console/backend
+# needed. Every other defense.edr[].product needs a backend this project does
+# not build (no detection-lab) and is reported as not-implemented instead
+# (scripts/forge.py:plan_edr) rather than silently no-op'd.
+#
+# This is a plain Ansible role (resolved via ansible.cfg's roles_path, never
+# rendered through scripts/forge.py's own Jinja step) — {{ }} below is
+# ordinary Ansible templating, evaluated by ansible-playbook itself.
+#
+# pf_defender_av_mode (enabled|detect|prevent) picks the ASR/tamper defaults;
+# pf_defender_av_settings can override asr_rules/tamper_protection/
+# network_protection explicitly (matches lab-spec.schema.json's
+# defense.edr[].settings free-form object).
+
+- name: "pf_defender_av | resolve ASR action from mode/settings"
+  ansible.builtin.set_fact:
+    pf_asr_action: >-
+      {{ pf_defender_av_settings.asr_rules
+         | default('block' if pf_defender_av_mode == 'prevent' else 'audit') }}
+    pf_tamper_enabled: >-
+      {{ pf_defender_av_settings.tamper_protection
+         | default(pf_defender_av_mode == 'prevent') }}
+    pf_network_protection_enabled: >-
+      {{ pf_defender_av_settings.network_protection
+         | default(pf_defender_av_mode != 'detect') }}
+
+- name: "pf_defender_av | ensure real-time protection is on"
+  ansible.windows.win_powershell:
+    script: Set-MpPreference -DisableRealtimeMonitoring $false
+
+- name: "pf_defender_av | network protection ({{ pf_network_protection_enabled }})"
+  ansible.windows.win_powershell:
+    script: |
+      Set-MpPreference -EnableNetworkProtection {{ 'Enabled' if pf_network_protection_enabled | bool else 'Disabled' }}
+
+- name: "pf_defender_av | tamper protection registry (Intune/enterprise-managed key)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows Defender\Features
+    name: TamperProtection
+    data: "{{ 5 if pf_tamper_enabled | bool else 0 }}"
+    type: dword
+
+- name: "pf_defender_av | Attack Surface Reduction rules ({{ pf_asr_action }})"
+  ansible.windows.win_powershell:
+    script: |
+      $ids = @(
+        '56a863a9-875e-4185-98a7-b882c64b5ce5'  # Block abuse of exploited vulnerable signed drivers
+        '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2'  # Block credential stealing from LSASS
+        'd4f940ab-401b-4efc-aadc-ad5f3c50688a'  # Block Office apps from creating child processes
+        '3b576869-a4ec-4529-8536-b80a7769e899'  # Block Office apps from creating executable content
+        '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84'  # Block Office apps from injecting code into other processes
+        'd3e037e1-3eb8-44c8-a917-57927947596d'  # Block JavaScript/VBScript from launching downloaded executables
+        '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b'  # Block Win32 API calls from Office macros
+      )
+      $action = '{{ "AuditMode" if pf_asr_action == "audit" else "Enabled" }}'
+      Add-MpPreference -AttackSurfaceReductionRules_Ids $ids -AttackSurfaceReductionRules_Actions ($ids | ForEach-Object { $action })

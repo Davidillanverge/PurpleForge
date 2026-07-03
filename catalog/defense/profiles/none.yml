@@ -1,0 +1,28 @@
+# catalog/defense/profiles/none.yml
+# Perfil defensivo 'none': nada desplegado. Práctica puramente ofensiva.
+# lab-spec deep-merges esto con el bloque `defense:` del spec (el spec gana en overrides).
+profile: none
+description: "Sin stack defensivo. Ninguna herramienta de detección ni prevención."
+defaults:
+  siem:
+    platform: none
+    ship_sysmon: false
+    ship_wef: false
+    network_monitoring: []
+  edr: []
+  hardening:
+    baseline: none
+    apply_to: all
+    controls:
+      laps: false
+      lsa_protection: false
+      credential_guard: false
+      smb_signing: disable
+      ldap_signing: disable
+      disable_llmnr_nbtns_mdns: false
+      ntlmv2_only: false
+      protected_users_group: []
+    intentional_gaps_auto: false
+  deception:
+    honey_accounts: 0
+    canarytokens: []

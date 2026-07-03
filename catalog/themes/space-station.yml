@@ -1,0 +1,78 @@
+# catalog/themes/space-station.yml — see medieval-kingdom.yml's header
+# comment for how `vocabulary`/`extra_groups`/`honey_account_naming` are
+# consumed.
+id: space-station
+name: "Orbital Station"
+description: >
+  A research/industrial space station with department "decks" standing in
+  for BadBlood's corporate department codes.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "decks" here
+    - { code: CMD, name: "Command Deck" }
+    - { code: ENG, name: "Engineering Bay" }
+    - { code: MED, name: "Medical Bay" }
+    - { code: SCI, name: "Science Division" }
+    - { code: SCD, name: "Security Detail" }
+    - { code: NAV, name: "Navigation" }
+    - { code: LIF, name: "Life Support" }
+    - { code: CGO, name: "Cargo Operations" }
+
+  given_names_male:
+    - Orion
+    - Atlas
+    - Sirius
+    - Talon
+    - Kai
+    - Rho
+    - Sol
+    - Marcus
+    - Felix
+    - Darius
+    - Jasper
+    - Cassian
+    - Theo
+    - Ezra
+    - Idris
+
+  given_names_female:
+    - Kira
+    - Zara
+    - Vega
+    - Nova
+    - Cassia
+    - Lyra
+    - Rhea
+    - Juno
+    - Mira
+    - Ceres
+    - Nyx
+    - Selene
+    - Aria
+    - Freya
+    - Willow
+
+  family_names:
+    - Voss
+    - Kessler
+    - Draven
+    - Orlov
+    - Kade
+    - Solari
+    - Vance
+    - Ashworth
+    - Cole
+    - Marlowe
+    - Reyes
+    - Osei
+    - Takeda
+    - Winters
+    - Stone
+
+extra_groups:
+  - { name: "Bridge Crew", description: "Command staff — highly privileged" }
+  - { name: "Engineering Corps", description: "Server/infrastructure admin tier" }
+  - { name: "Science Directorate", description: "Research data custodians" }
+  - { name: "Quarantine Bay", description: "Isolated/low-trust accounts" }
+
+honey_account_naming: "reactor.tech.{n}"

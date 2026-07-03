@@ -1,0 +1,33 @@
+# catalog/defense/profiles/realistic.yml
+# Perfil defensivo 'realistic': Defender AV (ASR audit) + CIS L1 (con gaps
+# intencionados) + SIEM + 1 EDR. El escenario más representativo de una
+# empresa media.
+profile: realistic
+description: "Defender AV en audit + CIS L1 + SIEM + 1 EDR adicional. Gaps intencionados vía reconciliación."
+defaults:
+  siem:
+    platform: elastic
+    ship_sysmon: true
+    ship_wef: true
+    network_monitoring: []
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+  hardening:
+    baseline: cis-l1
+    apply_to: all
+    controls:
+      laps: true
+      lsa_protection: true
+      credential_guard: false
+      smb_signing: enforce
+      ldap_signing: enforce
+      disable_llmnr_nbtns_mdns: true
+      ntlmv2_only: true
+      protected_users_group: []
+    intentional_gaps_auto: true
+  deception:
+    honey_accounts: 1
+    canarytokens: []

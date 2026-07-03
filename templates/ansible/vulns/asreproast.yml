@@ -1,0 +1,48 @@
+---
+# Vuln inject task-file: asreproast (T1558.004)
+# Reuses Vulnerable-AD's VulnAD-ASREPRoasting technique (Set-ADAccountControl
+# -DoesNotRequirePreAuth $true) but on a NAMED deterministic account rather than
+# a random user. userAccountControl's DONT_REQ_PREAUTH bit isn't cleanly
+# settable through win_domain_user, so we create the account with that module
+# (idempotent) then flip the flag with the exact Set-ADAccountControl call
+# Vulnerable-AD uses (win_powershell reports Changed only when it actually flips).
+- name: "asreproast | create account {{ vuln_asrep_account }}"
+  win_domain_user:
+    name: "{{ vuln_asrep_account }}"
+    firstname: Legacy
+    surname: App
+    description: "Legacy application service account"
+    password: "{{ vuln_asrep_password }}"
+    password_never_expires: true
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "asreproast | disable Kerberos pre-authentication on {{ vuln_asrep_account }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties DoesNotRequirePreAuth
+      if (-not $u.DoesNotRequirePreAuth) {
+        Set-ADAccountControl -Identity $Account -DoesNotRequirePreAuth $true
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_asrep_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "asreproast | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      AS-REP roasting gap live: {{ vuln_asrep_account }} has DONT_REQ_PREAUTH,
+      so an unauthenticated attacker can request an AS-REP and crack it offline.

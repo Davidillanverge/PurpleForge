@@ -1,0 +1,68 @@
+# catalog/defense/hardening/control-cis-rules.yml
+#
+# Maps each PurpleForge fixed-toggle hardening control to the concrete
+# ansible-lockdown CIS rule variables (winXXcis_rule_N_N_N) that implement the
+# SAME control, per Windows OS role. This is what makes the reconciliation's
+# "exclude the concrete rule (skip_rule)" acceptance criterion real: when the
+# reconciliation excludes a toggle to keep a vuln alive, defensive-controls
+# both (a) has pf_controls NOT apply the control, and (b) sets these rule vars
+# to false so the ansible-lockdown baseline doesn't re-apply it — but only when
+# the rule is actually in the selected level (see `level`).
+#
+# Levels: l1 rules run under a cis-l1 OR cis-l2 baseline; l2 rules only under
+# cis-l2; ngws rules are in neither default level (Next-Generation Windows
+# Security profile) so they need no skip even when the control is excluded.
+#
+# Rule numbers were read directly from the pinned vendor/ansible-lockdown roles
+# (see .claude/skills/defensive-controls/SKILL.md). Server roles (2019/2022)
+# are verified; the workstation/2025 columns are populated where the number
+# matches and marked `unverified: true` otherwise — the AD-relevant controls
+# here apply to DCs/member-servers, so server coverage is what the seed vulns
+# actually exercise.
+
+controls:
+  smb_signing:
+    # Neutralizes SMB-relay/NTLM-relay style attacks (smb-signing-disabled vuln).
+    # Identical numbering and level (l1) on both server roles — the clean,
+    # fully-demonstrable skip_rule case.
+    windows-server-2019: { level: l1, rules: [win19cis_rule_2_3_8_1, win19cis_rule_2_3_8_2, win19cis_rule_2_3_9_2, win19cis_rule_2_3_9_3] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_2_3_8_1, win22cis_rule_2_3_8_2, win22cis_rule_2_3_9_2, win22cis_rule_2_3_9_3] }
+    windows-server-2025: { level: l1, rules: [win25cis_rule_2_3_8_1, win25cis_rule_2_3_8_2, win25cis_rule_2_3_9_2, win25cis_rule_2_3_9_3], unverified: true }
+    windows-10-22h2:     { level: l1, rules: [win10cis_rule_2_3_8_1, win10cis_rule_2_3_8_2, win10cis_rule_2_3_9_2, win10cis_rule_2_3_9_3], unverified: true }
+    windows-11-23h2:     { level: l1, rules: [win11cis_rule_2_3_8_1, win11cis_rule_2_3_8_2, win11cis_rule_2_3_9_2, win11cis_rule_2_3_9_3], unverified: true }
+
+  ldap_signing:
+    # DC server signing + channel binding (2.3.5.3/2.3.5.4) and client signing
+    # (2.3.11.8 on 2019, 2.3.11.9 on 2022 — the number genuinely differs).
+    windows-server-2019: { level: l1, rules: [win19cis_rule_2_3_5_3, win19cis_rule_2_3_5_4, win19cis_rule_2_3_11_8] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_2_3_5_3, win22cis_rule_2_3_5_4, win22cis_rule_2_3_11_9] }
+    windows-server-2025: { level: l1, rules: [win25cis_rule_2_3_5_3, win25cis_rule_2_3_5_4, win25cis_rule_2_3_11_9], unverified: true }
+
+  disable_llmnr_nbtns_mdns:
+    # mDNS (18.6.4.1) + NetBIOS-on-public (18.6.4.2). LLMNR proper (Turn off
+    # multicast name resolution) lives under 18.6.4.x too depending on version;
+    # only the verified mDNS/NetBIOS numbers are listed.
+    windows-server-2019: { level: l1, rules: [win19cis_rule_18_6_4_1, win19cis_rule_18_6_4_2] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_18_6_4_1, win22cis_rule_18_6_4_2] }
+
+  lsa_protection:
+    # RunAsPPL (18.9.26.2). In the ngws profile, NOT default l1/l2 — so under a
+    # cis-l1/cis-l2 baseline the ansible-lockdown role does not apply it and no
+    # skip_rule is needed even when lsa_protection is excluded. Recorded here so
+    # the resolver can honestly report "control excluded; baseline does not
+    # apply it at the selected level, no skip_rule required".
+    windows-server-2022: { level: ngws, rules: [win22cis_rule_18_9_26_2] }
+
+  ntlmv2_only:
+    # LMCompatibilityLevel=5 ("Send NTLMv2 response only. Refuse LM & NTLM"),
+    # rule 2.3.11.7 — level1, identical rule number on both server OSes (same
+    # clean case as smb_signing). This is the exact registry key
+    # vendor/GOAD/ansible/roles/vulns/ntlmdowngrade weakens to level 2 —
+    # neutralizes catalog/vulnerabilities/ntlm-downgrade.yml.
+    windows-server-2019: { level: l1, rules: [win19cis_rule_2_3_11_7] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_2_3_11_7] }
+    windows-server-2025: { level: l1, rules: [win25cis_rule_2_3_11_7], unverified: true }
+
+  # laps and credential_guard are applied by pf_controls directly; their CIS
+  # rule mappings are intentionally omitted until verified per-OS (they are not
+  # exercised by any seed vuln's neutralized_by, so no skip_rule is needed yet).

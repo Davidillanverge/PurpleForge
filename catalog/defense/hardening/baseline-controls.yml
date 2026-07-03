@@ -1,0 +1,14 @@
+# catalog/defense/hardening/baseline-controls.yml
+id: baseline-controls
+name: "Individual controls only (no CIS/STIG benchmark role)"
+description: >
+  No ansible-lockdown role is applied at all — only the individual
+  hardening.controls.* toggles (LAPS, LSA protection, SMB/LDAP signing,
+  disable_llmnr_nbtns_mdns, Protected Users) are set directly by the
+  pf_controls role. Lighter-weight than cis-l1/cis-l2/stig, and never in
+  conflict with a vuln's neutralized_by baseline entries (those only name
+  cis-l1/cis-l2/stig) — only the fixed-toggle conflicts can apply here.
+engine: none
+role_by_os: {}
+tags_by_role: {}
+skip_rule_vars_prefix_by_os: {}

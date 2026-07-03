@@ -1,0 +1,46 @@
+# PurpleForge — generated laboratory artifacts (never versioned, contain secrets/state)
+generated/
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ansible
+*.retry
+.ansible/
+
+# Secrets / credentials the harness may emit
+lab-manifest.json
+*.pem
+*.ppk
+*key*.json
+!specs/**/*.json
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local settings (personal overrides, not shared config)
+.claude/settings.local.json

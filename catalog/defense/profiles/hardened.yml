@@ -1,0 +1,35 @@
+# catalog/defense/profiles/hardened.yml
+# Perfil defensivo 'hardened': CIS L2/STIG + EDR en prevent + ASR enforce +
+# LAPS + Credential Guard, gaps mínimos. Estrés de evasión y de detección.
+profile: hardened
+description: "CIS L2 + EDR en prevent + ASR enforce + LAPS + Credential Guard. Entorno difícil, gaps mínimos."
+defaults:
+  siem:
+    platform: elastic
+    ship_sysmon: true
+    ship_wef: true
+    network_monitoring: [zeek]
+  edr:
+    - product: defender-av
+      mode: prevent
+      settings: { asr_rules: block, tamper_protection: true, network_protection: true }
+      targets: all
+    - product: elastic-defend
+      mode: prevent
+      targets: all
+  hardening:
+    baseline: cis-l2
+    apply_to: all
+    controls:
+      laps: true
+      lsa_protection: true
+      credential_guard: true
+      smb_signing: enforce
+      ldap_signing: enforce
+      disable_llmnr_nbtns_mdns: true
+      ntlmv2_only: true
+      protected_users_group: []
+    intentional_gaps_auto: true
+  deception:
+    honey_accounts: 5
+    canarytokens: [docx, aws-keys]

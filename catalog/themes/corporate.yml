@@ -1,0 +1,82 @@
+# catalog/themes/corporate.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: corporate
+name: "Corporate Espionage"
+description: >
+  A generic mid-size enterprise. Deliberately close to BadBlood's own default
+  flavor (it ships US-corporate department codes and top-1000 US names out of
+  the box) — this theme exists mainly to give a distinct, smaller, curated
+  vocabulary rather than BadBlood's full 1000-entry name lists, plus the
+  extra_groups/honey_account layer BadBlood doesn't have a concept of.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "departments" here
+    - { code: FIN, name: "Finance" }
+    - { code: HRD, name: "Human Resources" }
+    - { code: LEG, name: "Legal" }
+    - { code: ITO, name: "IT Operations" }
+    - { code: SEC, name: "Security" }
+    - { code: SAL, name: "Sales" }
+    - { code: MKT, name: "Marketing" }
+    - { code: ENG, name: "Engineering" }
+    - { code: OPS, name: "Operations" }
+    - { code: EXE, name: "Executive" }
+
+  given_names_male:
+    - James
+    - Michael
+    - Robert
+    - John
+    - David
+    - William
+    - Richard
+    - Joseph
+    - Thomas
+    - Charles
+    - Daniel
+    - Matthew
+    - Anthony
+    - Mark
+    - Steven
+
+  given_names_female:
+    - Mary
+    - Patricia
+    - Jennifer
+    - Linda
+    - Barbara
+    - Susan
+    - Jessica
+    - Karen
+    - Nancy
+    - Lisa
+    - Margaret
+    - Sandra
+    - Ashley
+    - Emily
+    - Michelle
+
+  family_names:
+    - Smith
+    - Johnson
+    - Williams
+    - Brown
+    - Jones
+    - Garcia
+    - Miller
+    - Davis
+    - Rodriguez
+    - Martinez
+    - Anderson
+    - Taylor
+    - Thomas
+    - Moore
+    - Jackson
+
+extra_groups:
+  - { name: "Executive Committee", description: "C-suite — highly privileged" }
+  - { name: "IT Security Operations", description: "SOC/security engineering tier" }
+  - { name: "Privileged Access Management", description: "Tier 0 credential custodians" }
+  - { name: "Vendor Accounts", description: "Third-party/isolated low-trust accounts" }
+
+honey_account_naming: "svc.backup.{n}"

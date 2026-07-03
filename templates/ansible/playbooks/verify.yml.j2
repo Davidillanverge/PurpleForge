@@ -1,0 +1,327 @@
+{#
+  PurpleForge — verify.yml (GENERATED, do not edit).
+  Rendered by scripts/forge.py generate. Run this separately AFTER site.yml,
+  not as part of it — this checks state, it doesn't change any (every task
+  here is read-only: registry reads, Get-AD* queries, no Set-*/win_regedit
+  writes). See README "Validating what actually got applied" for how to read
+  the output and the ad-hoc commands to fall back on for anything this
+  doesn't cover.
+
+  UNTESTED AGAINST A REAL HOST: every check below reuses the exact registry
+  path / AD property name from the task-file or role that sets it (see
+  scripts/forge.py's own comment above render_verify_playbook for the grep
+  audit that confirmed this), but this repository has never had a live
+  Windows VM to run it against. Syntax-checked, cross-referenced, not
+  execution-proven.
+#}
+---
+{% for h in dc_domain_hosts %}
+- name: "PurpleForge | verify | AD topology + population + theme groups ({{ h.domain }})"
+  hosts: "{{ h.name }}"
+  gather_facts: false
+  tasks:
+    - name: "verify | AD domain DNSRoot"
+      ansible.windows.win_shell: |
+        $d = Get-ADDomain
+        if ($d.DNSRoot -eq "{{ h.domain }}") { Write-Output "PASS: domain DNSRoot is {{ h.domain }}" }
+        else { Write-Output "FAIL: expected DNSRoot {{ h.domain }}, got $($d.DNSRoot)" }
+      register: r_domain_{{ loop.index }}
+      changed_when: false
+      ignore_errors: true
+
+    - name: "verify | AD domain DNSRoot | result"
+      ansible.builtin.debug:
+        msg: "{{ '{{' }} r_domain_{{ loop.index }}.stdout {{ '}}' }}"
+
+    - name: "verify | BadBlood population counts (informational — literal names aren't predictable, see lab-report.md)"
+      ansible.windows.win_shell: |
+        $u = (Get-ADUser -Filter *).Count
+        $g = (Get-ADGroup -Filter *).Count
+        $c = (Get-ADComputer -Filter *).Count
+        Write-Output "actual: $u users / $g groups / $c computers (requested via BadBlood: {{ h.badblood_user_count }} / {{ h.badblood_group_count }} / {{ h.badblood_computer_count }} plus AD's own built-in objects and this harness's own theme/vuln accounts)"
+      register: r_pop_{{ loop.index }}
+      changed_when: false
+      ignore_errors: true
+
+    - name: "verify | BadBlood population counts | result"
+      ansible.builtin.debug:
+        msg: "{{ '{{' }} r_pop_{{ loop.index }}.stdout {{ '}}' }}"
+
+{% for g in theme_extra_groups %}
+    - name: "verify | theme group '{{ g.name }}' exists"
+      ansible.windows.win_shell: |
+        if (Get-ADGroup -Identity "{{ g.name }}" -ErrorAction SilentlyContinue) { Write-Output "PASS: group '{{ g.name }}' exists" }
+        else { Write-Output "FAIL: group '{{ g.name }}' not found" }
+      register: r_grp_{{ loop.index }}_{{ loop.index0 }}
+      changed_when: false
+      ignore_errors: true
+
+    - name: "verify | theme group '{{ g.name }}' | result"
+      ansible.builtin.debug:
+        msg: "{{ '{{' }} r_grp_{{ loop.index }}_{{ loop.index0 }}.stdout {{ '}}' }}"
+
+{% endfor %}
+{% endfor %}
+- name: "PurpleForge | verify | hardening — machine-wide controls"
+  hosts: "{{ all_target_hosts | join(':') }}"
+  gather_facts: false
+  tasks:
+    - name: "verify | lsa_protection (RunAsPPL) — {{ 'expected: set to 1' if resolved_controls.lsa_protection else 'expected: absent (gap intentionally open)' }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name RunAsPPL -ErrorAction SilentlyContinue).RunAsPPL
+{% if resolved_controls.lsa_protection %}
+        if ($v -eq 1) { Write-Output "PASS: RunAsPPL is 1" } else { Write-Output "FAIL: expected RunAsPPL=1, got $v" }
+{% else %}
+        if ($null -eq $v) { Write-Output "PASS: RunAsPPL absent (control excluded/off, gap intentionally open)" } else { Write-Output "FAIL: expected RunAsPPL absent, got $v" }
+{% endif %}
+      register: r_lsa
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_lsa.stdout {{ '}}' }}" }
+
+    - name: "verify | smb_signing (RequireSecuritySignature) — expected {{ 1 if resolved_controls.smb_signing in ['enable', 'enforce'] else 0 }}"
+      ansible.windows.win_shell: |
+        $srv = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' -Name RequireSecuritySignature -ErrorAction SilentlyContinue).RequireSecuritySignature
+        $wks = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters' -Name RequireSecuritySignature -ErrorAction SilentlyContinue).RequireSecuritySignature
+        $expected = {{ 1 if resolved_controls.smb_signing in ['enable', 'enforce'] else 0 }}
+        if ($srv -eq $expected -and $wks -eq $expected) { Write-Output "PASS: RequireSecuritySignature is $expected (server+client)" }
+        else { Write-Output "FAIL: expected $expected, got server=$srv client=$wks" }
+      register: r_smb
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_smb.stdout {{ '}}' }}" }
+
+    - name: "verify | ntlmv2_only (LMCompatibilityLevel) — expected {{ 5 if resolved_controls.ntlmv2_only else 2 }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name LMCompatibilityLevel -ErrorAction SilentlyContinue).LMCompatibilityLevel
+        $expected = {{ 5 if resolved_controls.ntlmv2_only else 2 }}
+        if ($v -eq $expected) { Write-Output "PASS: LMCompatibilityLevel is $expected" } else { Write-Output "FAIL: expected $expected, got $v" }
+      register: r_ntlm
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_ntlm.stdout {{ '}}' }}" }
+
+    - name: "verify | credential_guard (EnableVirtualizationBasedSecurity) — expected {{ 1 if resolved_controls.credential_guard else 0 }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' -Name EnableVirtualizationBasedSecurity -ErrorAction SilentlyContinue).EnableVirtualizationBasedSecurity
+        $expected = {{ 1 if resolved_controls.credential_guard else 0 }}
+        if ($v -eq $expected) { Write-Output "PASS: EnableVirtualizationBasedSecurity is $expected" } else { Write-Output "FAIL: expected $expected, got $v" }
+      register: r_cg
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_cg.stdout {{ '}}' }}" }
+
+    - name: "verify | disable_llmnr_nbtns_mdns (mDNS EnableMulticast) — expected {{ 0 if resolved_controls.disable_llmnr_nbtns_mdns else 1 }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' -Name EnableMulticast -ErrorAction SilentlyContinue).EnableMulticast
+        $expected = {{ 0 if resolved_controls.disable_llmnr_nbtns_mdns else 1 }}
+        if ($v -eq $expected) { Write-Output "PASS: EnableMulticast is $expected" } else { Write-Output "FAIL: expected $expected, got $v" }
+      register: r_mdns
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_mdns.stdout {{ '}}' }}" }
+
+    - name: "verify | disable_llmnr_nbtns_mdns (Dnscache EnableMDNS) — expected {{ 0 if resolved_controls.disable_llmnr_nbtns_mdns else 1 }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters' -Name EnableMDNS -ErrorAction SilentlyContinue).EnableMDNS
+        $expected = {{ 0 if resolved_controls.disable_llmnr_nbtns_mdns else 1 }}
+        if ($v -eq $expected) { Write-Output "PASS: EnableMDNS is $expected" } else { Write-Output "FAIL: expected $expected, got $v" }
+      register: r_mdns2
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_mdns2.stdout {{ '}}' }}" }
+
+    - name: "verify | laps (Windows LAPS policy) — {{ 'expected: BackupDirectory=2' if resolved_controls.laps else 'off (pf_controls never explicitly removes this key — absence or a stale value from a prior run are both possible)' }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Policies\LAPS' -Name BackupDirectory -ErrorAction SilentlyContinue).BackupDirectory
+{% if resolved_controls.laps %}
+        if ($v -eq 2) { Write-Output "PASS: LAPS BackupDirectory is 2 (Active Directory)" } else { Write-Output "FAIL: expected BackupDirectory=2, got $v" }
+{% else %}
+        Write-Output "INFO: laps control is off — BackupDirectory currently reads '$v' (pf_controls never actively clears this key, so a non-null value here may just mean a previous run enabled it)"
+{% endif %}
+      register: r_laps
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_laps.stdout {{ '}}' }}" }
+
+{% if dc_target_hosts %}
+- name: "PurpleForge | verify | hardening — DC-only controls"
+  hosts: "{{ dc_target_hosts | join(':') }}"
+  gather_facts: false
+  tasks:
+    - name: "verify | ldap_signing (LDAPServerIntegrity) — expected {{ 2 if resolved_controls.ldap_signing in ['enable', 'enforce'] else 1 }}"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LDAPServerIntegrity -ErrorAction SilentlyContinue).LDAPServerIntegrity
+        $expected = {{ 2 if resolved_controls.ldap_signing in ['enable', 'enforce'] else 1 }}
+        if ($v -eq $expected) { Write-Output "PASS: LDAPServerIntegrity is $expected" } else { Write-Output "FAIL: expected $expected, got $v" }
+      register: r_ldap
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_ldap.stdout {{ '}}' }}" }
+
+{% if resolved_controls.protected_users_group %}
+{% for u in resolved_controls.protected_users_group %}
+    - name: 'verify | Protected Users membership: {{ u }}'
+      ansible.windows.win_shell: |
+        $members = (Get-ADGroupMember -Identity "Protected Users" | Select-Object -ExpandProperty SamAccountName) -join ","
+        if ($members -like "*{{ u.split('\\')[-1] }}*") { Write-Output "PASS: {{ u }} is a Protected Users member" }
+        else { Write-Output "FAIL: {{ u }} not found in Protected Users (members: $members)" }
+      register: r_pu_{{ loop.index }}
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_pu_{{ loop.index }}.stdout {{ '}}' }}" }
+
+{% endfor %}
+{% endif %}
+{% endif %}
+{% if edr_defender %}
+- name: "PurpleForge | verify | EDR (Microsoft Defender Antivirus)"
+  hosts: "{{ edr_defender.targets | join(':') }}"
+  gather_facts: false
+  tasks:
+    - name: "verify | Defender AV — real-time protection, network protection, tamper protection"
+      ansible.windows.win_shell: |
+        $pref = Get-MpPreference
+        $tamper = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Name TamperProtection -ErrorAction SilentlyContinue).TamperProtection
+        $expectedNetProt = "{{ 'Enabled' if edr_defender.network_protection_enabled else 'Disabled' }}"
+        $expectedTamper = {{ 5 if edr_defender.tamper_enabled else 0 }}
+        $ok = $true
+        if ($pref.DisableRealtimeMonitoring) { Write-Output "FAIL: real-time monitoring is disabled"; $ok = $false }
+        if ($pref.EnableNetworkProtection.ToString() -ne $expectedNetProt) { Write-Output "FAIL: expected EnableNetworkProtection=$expectedNetProt, got $($pref.EnableNetworkProtection)"; $ok = $false }
+        if ($tamper -ne $expectedTamper) { Write-Output "FAIL: expected TamperProtection=$expectedTamper, got $tamper"; $ok = $false }
+        if ($ok) { Write-Output "PASS: real-time monitoring on, network protection $expectedNetProt, tamper protection $expectedTamper" }
+      register: r_defender
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_defender.stdout_lines {{ '}}' }}" }
+
+    - name: "verify | Defender AV — ASR rules (expected action: {{ edr_defender.asr_action }})"
+      ansible.windows.win_shell: |
+        $pref = Get-MpPreference
+        $expectedIds = @({{ asr_rule_ids | map('tojson') | join(', ') }})
+        $expectedAction = "{{ 'AuditMode' if edr_defender.asr_action == 'audit' else 'Enabled' }}"
+        $ok = $true
+        foreach ($id in $expectedIds) {
+          $idx = [array]::IndexOf($pref.AttackSurfaceReductionRules_Ids, $id)
+          if ($idx -lt 0) { Write-Output "FAIL: ASR rule $id not configured at all"; $ok = $false; continue }
+          $actual = $pref.AttackSurfaceReductionRules_Actions[$idx].ToString()
+          if ($actual -ne $expectedAction) { Write-Output "FAIL: ASR rule $id expected $expectedAction, got $actual"; $ok = $false }
+        }
+        if ($ok) { Write-Output "PASS: all ASR rules set to $expectedAction" }
+      register: r_asr
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug: { msg: "{{ '{{' }} r_asr.stdout_lines {{ '}}' }}" }
+
+{% endif %}
+{% for v in planned_vulns %}
+- name: "PurpleForge | verify | vuln '{{ v.id }}' on {{ v.run_on }}"
+  hosts: "{{ v.run_on }}"
+  gather_facts: false
+  tasks:
+{% if v.id == "kerberoasting" %}
+    - name: "verify | kerberoasting | SPN present on {{ v.vars.vuln_kerberoast_account }}"
+      ansible.windows.win_shell: |
+        $u = Get-ADUser -Identity "{{ v.vars.vuln_kerberoast_account }}" -Properties ServicePrincipalNames
+        if ($u.ServicePrincipalNames -match "MSSQLSvc") { Write-Output "PASS: {{ v.vars.vuln_kerberoast_account }} has an SPN" }
+        else { Write-Output "FAIL: no MSSQLSvc SPN found on {{ v.vars.vuln_kerberoast_account }}" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "asreproast" %}
+    - name: "verify | asreproast | DoesNotRequirePreAuth on {{ v.vars.vuln_asrep_account }}"
+      ansible.windows.win_shell: |
+        $u = Get-ADUser -Identity "{{ v.vars.vuln_asrep_account }}" -Properties DoesNotRequirePreAuth
+        if ($u.DoesNotRequirePreAuth) { Write-Output "PASS: {{ v.vars.vuln_asrep_account }} has DoesNotRequirePreAuth set" }
+        else { Write-Output "FAIL: DoesNotRequirePreAuth not set on {{ v.vars.vuln_asrep_account }}" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "dcsync-acl" %}
+    - name: "verify | dcsync-acl | replication ACE present for {{ v.vars.vuln_dcsync_account }}"
+      ansible.windows.win_shell: |
+        $domainDN = (Get-ADDomain).DistinguishedName
+        $sid = (Get-ADUser -Identity "{{ v.vars.vuln_dcsync_account }}").SID
+        $account = (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount])
+        $acl = Get-Acl -Path "AD:$domainDN"
+        $found = $acl.Access | Where-Object { $_.IdentityReference -eq $account -and ($_.ObjectType -eq [GUID]'1131f6aa-9c07-11d1-f79f-00c04fc2dcd2' -or $_.ObjectType -eq [GUID]'1131f6ad-9c07-11d1-f79f-00c04fc2dcd2') }
+        if ($found) { Write-Output "PASS: {{ v.vars.vuln_dcsync_account }} has a DS-Replication-Get-Changes[-All] ACE" }
+        else { Write-Output "FAIL: no replication ACE found for {{ v.vars.vuln_dcsync_account }}" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "passwords-in-description" %}
+    - name: "verify | passwords-in-description | description contains password on {{ v.vars.vuln_pwddesc_account }}"
+      ansible.windows.win_shell: |
+        $u = Get-ADUser -Identity "{{ v.vars.vuln_pwddesc_account }}" -Properties Description
+        if ($u.Description -match "password is") { Write-Output "PASS: description on {{ v.vars.vuln_pwddesc_account }} contains a password" }
+        else { Write-Output "FAIL: description does not look like it contains a password: $($u.Description)" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "gpp-cpassword" %}
+    - name: "verify | gpp-cpassword | Groups.xml with cpassword exists in SYSVOL"
+      ansible.windows.win_shell: |
+        $gpo = Get-GPO -Name "{{ v.vars.vuln_gpp_name }}" -ErrorAction SilentlyContinue
+        if (-not $gpo) { Write-Output "FAIL: GPO '{{ v.vars.vuln_gpp_name }}' not found"; exit 0 }
+        $guid = "{$($gpo.Id.ToString().ToUpper())}"
+        $path = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\Policies\$guid\Machine\Preferences\Groups\Groups.xml"
+        if ((Test-Path $path) -and ((Get-Content $path -Raw) -match "cpassword")) { Write-Output "PASS: Groups.xml with cpassword found at $path" }
+        else { Write-Output "FAIL: Groups.xml not found or has no cpassword at $path" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "unconstrained-delegation" %}
+    - name: "verify | unconstrained-delegation | TrustedForDelegation on {{ v.vars.vuln_unconstrained_computer }}"
+      ansible.windows.win_shell: |
+        $c = Get-ADComputer -Identity "{{ v.vars.vuln_unconstrained_computer }}" -Properties TrustedForDelegation
+        if ($c.TrustedForDelegation) { Write-Output "PASS: {{ v.vars.vuln_unconstrained_computer }} has TrustedForDelegation set" }
+        else { Write-Output "FAIL: TrustedForDelegation not set on {{ v.vars.vuln_unconstrained_computer }}" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "constrained-delegation" %}
+    - name: "verify | constrained-delegation | protocol transition + delegation on {{ v.vars.vuln_delegation_account }}"
+      ansible.windows.win_shell: |
+        $u = Get-ADUser -Identity "{{ v.vars.vuln_delegation_account }}" -Properties TrustedToAuthForDelegation, msDS-AllowedToDelegateTo
+        $ok = $u.TrustedToAuthForDelegation -and ($u.'msDS-AllowedToDelegateTo' -contains "{{ v.vars.vuln_delegation_target_spn }}")
+        if ($ok) { Write-Output "PASS: {{ v.vars.vuln_delegation_account }} can delegate to {{ v.vars.vuln_delegation_target_spn }}" }
+        else { Write-Output "FAIL: TrustedToAuthForDelegation=$($u.TrustedToAuthForDelegation), AllowedToDelegateTo=$($u.'msDS-AllowedToDelegateTo')" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "smb-signing-disabled" %}
+    - name: "verify | smb-signing-disabled | RequireSecuritySignature is 0"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' -Name RequireSecuritySignature -ErrorAction SilentlyContinue).RequireSecuritySignature
+        if ($v -eq 0) { Write-Output "PASS: SMB signing not required (RequireSecuritySignature=0)" } else { Write-Output "FAIL: expected 0, got $v" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "ntlm-downgrade" %}
+    - name: "verify | ntlm-downgrade | LmCompatibilityLevel is 2"
+      ansible.windows.win_shell: |
+        $v = (Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue).LmCompatibilityLevel
+        if ($v -eq 2) { Write-Output "PASS: LM/NTLMv1 allowed (LmCompatibilityLevel=2)" } else { Write-Output "FAIL: expected 2, got $v" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% elif v.id == "adcs-esc1" %}
+    - name: "verify | adcs-esc1 | ESC1 certificate template published"
+      ansible.windows.win_shell: |
+        if (Get-ADCSTemplate -DisplayName "ESC1" -ErrorAction SilentlyContinue) { Write-Output "PASS: ESC1 template exists" }
+        else { Write-Output "FAIL: ESC1 template not found" }
+      register: r_vuln
+      changed_when: false
+      ignore_errors: true
+{% else %}
+    - name: "verify | {{ v.id }} | no automated check implemented — see lab-report.md for the intended path and check manually"
+      ansible.builtin.debug:
+        msg: "SKIPPED: no verify.yml check exists yet for '{{ v.id }}'."
+{% endif %}
+    - name: "verify | {{ v.id }} | result"
+      ansible.builtin.debug:
+        msg: "{{ '{{' }} r_vuln.stdout {{ '}}' }}"
+      when: r_vuln is defined
+
+{% endfor %}

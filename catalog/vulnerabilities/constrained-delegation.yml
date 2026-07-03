@@ -1,0 +1,41 @@
+id: constrained-delegation
+name: "Constrained delegation con protocol transition mal configurada"
+severity: critical
+attack:
+  mitre_attack: [T1558]
+  requires_services: []
+  intended_path: >
+    Una cuenta de servicio tiene configurada delegación restringida
+    (msDS-AllowedToDelegateTo) hacia un servicio sensible del DC (ldap/<dc>)
+    con protocol transition habilitado (TrustedToAuthForDelegation). Quien
+    controle las credenciales de esa cuenta (p. ej. tras un Kerberoasting)
+    puede usar S4U2Self para obtener un ticket de servicio a sí misma en
+    nombre de CUALQUIER usuario -incluido un Domain Admin- sin conocer su
+    contraseña, y luego S4U2Proxy para presentarlo al servicio LDAP del DC,
+    obteniendo de facto DCSync.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/constrained-delegation.yml
+  reuses: "patrón documentado (comentado) en vendor/GOAD/ansible/roles/mssql/tasks/main.yml (Set-ADAccountControl -TrustedToAuthForDelegation + msDS-AllowedToDelegateTo)"
+  params: { target_service: "ldap/{{ primary_dc_fqdn }}" }
+detect:
+  data_source: "Security 4769 (TGS) con opción de ticket 'constrained delegation' / S4U; Security 4624 con proceso de logon S4U; Sysmon"
+  signal: "4769 con Transited Services no vacío (S4U2Proxy) para una cuenta con msDS-AllowedToDelegateTo hacia un servicio sensible del DC"
+  siem_rule: templates/detection/{siem}/constrained_delegation
+neutralized_by:
+  # HONESTO: no existe ninguna regla verificada en los roles CIS/STIG fijados
+  # que neutralice esto. CIS 2.2.28/2.2.29 (SeEnableDelegationPrivilege
+  # restringido a Administrators en DC / a nadie en member server) SOLO
+  # controla quién puede CREAR una nueva relación de delegación -no deshace
+  # una ya configurada, que es exactamente el gap que esta vuln inyecta-, así
+  # que no cuenta como neutralizador real (comprobado contra el rol real
+  # durante el diseño de esta vuln, no asumido). La mitigación real es
+  # gobernanza por cuenta (Protected Users, o simplemente no delegar salvo
+  # necesidad), que nuestro modelo de reconciliación no puede derivar como
+  # skip_rule automático hoy -es una etiqueta conceptual, no accionable-.
+  - hardening.controls.protected_users_group_membership
+mitigate:
+  summary: "Retirar msDS-AllowedToDelegateTo/TrustedToAuthForDelegation salvo necesidad justificada; meter la cuenta en Protected Users; usar delegación basada en recursos (RBCD) en vez de protocol transition."
+validate:
+  bloodhound_edge: "AllowedToDelegate"
+  atomic: null

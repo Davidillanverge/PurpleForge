@@ -1,0 +1,26 @@
+---
+# Vuln inject task-file: ntlm-downgrade (T1557.001, T1110.002)
+# Directly reuses vendor/GOAD/ansible/roles/vulns/ntlmdowngrade's technique —
+# same registry key, same weak value (LmCompatibilityLevel=2, "Send LM &
+# NTLM"). This is a machine-wide setting (not a named account), so
+# determinism/idempotency are trivially satisfied: win_regedit only reports
+# changed when the value actually differs. Runs on the target domain's root
+# DC (the same primary_dc every domain-level vuln in this catalog targets).
+- name: "ntlm-downgrade | allow LM/NTLMv1 responses (LmCompatibilityLevel=2)"
+  ansible.windows.win_regedit:
+    path: HKLM:\System\CurrentControlSet\Control\Lsa
+    name: LmCompatibilityLevel
+    data: 2
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "ntlm-downgrade | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      NTLM downgrade gap live on {{ inventory_hostname }}: LM/NTLMv1 responses
+      are accepted; a captured handshake (e.g. via LLMNR/NBT-NS poisoning)
+      cracks far faster than NTLMv2 would allow.

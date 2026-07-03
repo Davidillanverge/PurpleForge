@@ -1,0 +1,59 @@
+---
+# Vuln inject task-file: constrained-delegation (T1558)
+# Reuses the exact pattern vendor/GOAD/ansible/roles/mssql/tasks/main.yml
+# documents in a comment (Set-ADAccountControl -TrustedToAuthForDelegation +
+# Set-ADUser -Add msDS-AllowedToDelegateTo) but on a NAMED, deterministic
+# account, and actually executes it instead of leaving it commented out.
+# Grants the account named by vuln_delegation_account constrained delegation
+# with protocol transition to the primary domain's own DC LDAP service — the
+# classic critical misconfiguration (S4U2Self + S4U2Proxy to LDAP on a DC is
+# equivalent to DCSync). Runs on the primary domain's root DC.
+- name: "constrained-delegation | create delegation-enabled account {{ vuln_delegation_account }}"
+  win_domain_user:
+    name: "{{ vuln_delegation_account }}"
+    firstname: Web
+    surname: App
+    description: "Internal web application service account"
+    password: "{{ vuln_delegation_password }}"
+    password_never_expires: true
+    spn:
+      - "HTTP/{{ vuln_delegation_account }}.{{ domain }}"
+    spn_action: replace
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "constrained-delegation | enable protocol transition + delegate to {{ vuln_delegation_target_spn }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account, [String]$TargetSpn)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties TrustedToAuthForDelegation, msDS-AllowedToDelegateTo
+      $changed = $false
+      if (-not $u.TrustedToAuthForDelegation) {
+        Set-ADAccountControl -Identity $Account -TrustedToAuthForDelegation $true
+        $changed = $true
+      }
+      if ($u.'msDS-AllowedToDelegateTo' -notcontains $TargetSpn) {
+        Set-ADUser -Identity $Account -Add @{'msDS-AllowedToDelegateTo' = $TargetSpn}
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Account: "{{ vuln_delegation_account }}"
+      TargetSpn: "{{ vuln_delegation_target_spn }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "constrained-delegation | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Constrained delegation gap live: {{ vuln_delegation_account }} can
+      S4U2Self any user then S4U2Proxy to {{ vuln_delegation_target_spn }} —
+      impersonating a Domain Admin there is equivalent to DCSync.

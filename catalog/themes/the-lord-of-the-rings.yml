@@ -1,0 +1,70 @@
+# catalog/themes/the-lord-of-the-rings.yml — see medieval-kingdom.yml's header
+# comment for how `vocabulary`/`extra_groups`/`honey_account_naming` are
+# consumed. Same non-literal, flavor-only use of a well-known setting already
+# established by this repo's medieval-kingdom and the-simpsons themes.
+id: the-lord-of-the-rings
+name: "Middle-earth"
+description: >
+  Free Peoples' realms and fellowships standing in for BadBlood's corporate
+  departments/OUs — flavor-only naming, no lore-accurate org chart implied.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "realms/houses" here
+    - { code: SHR, name: "The Shire" }
+    - { code: RIV, name: "Rivendell" }
+    - { code: LOT, name: "Lothlorien" }
+    - { code: GON, name: "Gondor" }
+    - { code: ROH, name: "Rohan" }
+    - { code: ERE, name: "Erebor" }
+    - { code: MRK, name: "Mirkwood" }
+    - { code: ISE, name: "Isengard" }
+
+  given_names_male:
+    - Frodo
+    - Samwise
+    - Meriadoc
+    - Peregrin
+    - Aragorn
+    - Boromir
+    - Faramir
+    - Legolas
+    - Gimli
+    - Gandalf
+    - Elrond
+    - Thranduil
+    - Theoden
+    - Eomer
+    - Bilbo
+    - Denethor
+    - Bard
+
+  given_names_female:
+    - Arwen
+    - Galadriel
+    - Eowyn
+    - Rosie
+    - Goldberry
+    - Ioreth
+    - Lobelia
+
+  family_names:
+    - Baggins
+    - Gamgee
+    - Brandybuck
+    - Took
+    - Gardner
+    - Cotton
+    - Oakenshield
+    - Greenleaf
+    - Telcontar
+    - Bolger
+    - Proudfoot
+    - Underhill
+
+extra_groups:
+  - { name: "Fellowship of the Ring", description: "Highly privileged, Domain Admins-adjacent" }
+  - { name: "Rangers of the North", description: "Audit/oversight tier" }
+  - { name: "Gondor Guard", description: "Security tier" }
+  - { name: "Mordor Watchers", description: "Isolated, low-trust accounts (honeypot-adjacent)" }
+
+honey_account_naming: "ringbearer.{n}"

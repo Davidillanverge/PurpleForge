@@ -1,0 +1,149 @@
+---
+# pf_controls — PurpleForge-authored role applying the fixed
+# defense.hardening.controls.* toggles directly (registry policy / AD
+# module calls), independent of whichever CIS/STIG baseline (if any) is also
+# selected. No upstream role fits this exact bundle of 6 named controls —
+# GOAD's own laps/ role is deeply coupled to GOAD's inventory data model
+# (lab.hosts[dict_key].domain, custom win_gpo_* library modules) and was not
+# reused; this implements native Windows LAPS instead (built into Windows
+# Server 2019+/Windows 10 22H2+ since 2023, no external module).
+#
+# Every task is gated on its own control var and is idempotent (win_regedit/
+# win_domain_group_membership only report changed when the value differs).
+
+# --- LAPS ---
+- name: "pf_controls | laps | extend AD schema for Windows LAPS (root DC only, one-time)"
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module LAPS -ErrorAction Stop
+      if (-not (Get-ADObject -Filter "name -eq 'ms-LAPS-Password'" -ErrorAction SilentlyContinue)) {
+        Update-LapsADSchema -Confirm:$false
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+  when:
+    - pf_controls_laps | bool
+    - pf_controls_laps_schema_host is not none
+    - inventory_hostname == pf_controls_laps_schema_host
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "pf_controls | laps | enable Windows LAPS policy (AD DS backup, 16-char complex passwords, 30-day rotation)"
+  ansible.windows.win_regedit:
+    path: HKLM:\Software\Microsoft\Policies\LAPS
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    - { name: BackupDirectory, data: 2 }     # 2 = Active Directory (on-prem); 1 = Entra ID
+    - { name: PasswordComplexity, data: 4 }
+    - { name: PasswordLength, data: 16 }
+    - { name: PasswordAgeDays, data: 30 }
+  when: pf_controls_laps | bool
+
+# --- LSA protection (RunAsPPL) ---
+- name: "pf_controls | lsa_protection | enable RunAsPPL (LSASS as a protected process)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa
+    name: RunAsPPL
+    data: 1
+    type: dword
+  when: pf_controls_lsa_protection | bool
+
+- name: "pf_controls | lsa_protection | remove RunAsPPL when the control is off (e.g. reconciliation gap)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa
+    name: RunAsPPL
+    state: absent
+  when: not (pf_controls_lsa_protection | bool)
+
+# --- SMB signing ---
+- name: "pf_controls | smb_signing | require SMB signing (server + client)"
+  ansible.windows.win_regedit:
+    path: "{{ item }}"
+    name: RequireSecuritySignature
+    data: "{{ 1 if pf_controls_smb_signing in ['enable', 'enforce'] else 0 }}"
+    type: dword
+  loop:
+    - HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters
+    - HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters
+
+# --- NTLM auth level (LM Compatibility Level) ---
+# Verified against ansible-lockdown CIS rule 2.3.11.7 (see
+# catalog/defense/hardening/control-cis-rules.yml). 5 = "Send NTLMv2 response
+# only. Refuse LM & NTLM" (CIS-recommended); 2 = the same weak value
+# vendor/GOAD/ansible/roles/vulns/ntlmdowngrade sets to enable NTLMv1 capture —
+# explicit, not "leave alone", so the gap is genuinely open when this control
+# is off (matches smb_signing's pattern above).
+- name: "pf_controls | ntlmv2_only | LAN Manager authentication level"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa
+    name: LMCompatibilityLevel
+    data: "{{ 5 if pf_controls_ntlmv2_only | bool else 2 }}"
+    type: dword
+
+# --- LDAP signing (server side only meaningful on a DC) ---
+- name: "pf_controls | ldap_signing | require LDAP server signing (DC only)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters
+    name: LDAPServerIntegrity
+    data: "{{ 2 if pf_controls_ldap_signing in ['enable', 'enforce'] else 1 }}"
+    type: dword
+  when: inventory_hostname in pf_controls_dc_hosts
+
+- name: "pf_controls | ldap_signing | require LDAP client signing"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LDAP
+    name: LDAPClientIntegrity
+    data: "{{ 2 if pf_controls_ldap_signing in ['enable', 'enforce'] else 0 }}"
+    type: dword
+
+# --- LLMNR / NetBIOS / mDNS ---
+- name: "pf_controls | disable_llmnr_nbtns_mdns | LLMNR (multicast name resolution)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient
+    name: EnableMulticast
+    data: "{{ 0 if pf_controls_disable_llmnr_nbtns_mdns | bool else 1 }}"
+    type: dword
+
+- name: "pf_controls | disable_llmnr_nbtns_mdns | NetBIOS over TCP/IP on every adapter"
+  ansible.windows.win_shell: |
+    $target = {{ 2 if pf_controls_disable_llmnr_nbtns_mdns | bool else 0 }}
+    Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.TcpipNetbiosOptions -ne $target } | ForEach-Object {
+      $_ | Invoke-CimMethod -MethodName SetTcpipNetbios -Arguments @{ TcpipNetbiosOptions = $target }
+      Write-Output "changed"
+    }
+  register: pf_controls_netbios
+  changed_when: "'changed' in pf_controls_netbios.stdout"
+
+- name: "pf_controls | disable_llmnr_nbtns_mdns | multicast DNS (mDNS)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters
+    name: EnableMDNS
+    data: "{{ 0 if pf_controls_disable_llmnr_nbtns_mdns | bool else 1 }}"
+    type: dword
+
+# --- Credential Guard ---
+- name: "pf_controls | credential_guard | enable VBS + Credential Guard"
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data if pf_controls_credential_guard | bool else 0 }}"
+    type: dword
+  loop:
+    - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard', name: EnableVirtualizationBasedSecurity, data: 1 }
+    - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: LsaCfgFlags, data: 1 }
+
+# --- Protected Users ---
+- name: "pf_controls | protected_users_group | add named accounts to Protected Users"
+  community.windows.win_domain_group_membership:
+    name: "Protected Users"
+    members: "{{ pf_controls_protected_users_group }}"
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+  when: pf_controls_protected_users_group | length > 0

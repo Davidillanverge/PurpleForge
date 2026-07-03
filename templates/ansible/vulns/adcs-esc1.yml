@@ -1,0 +1,39 @@
+---
+# Vuln inject task-file: adcs-esc1 (T1649)
+# Directly reuses vendor/GOAD/ansible/roles/adcs_templates: its ADCSTemplate
+# PowerShell module + ready-made ESC1.json (a template with
+# ENROLLEE_SUPPLIES_SUBJECT + client-auth EKU, enrollable by Domain Users).
+# forge.py copies those two upstream artifacts into
+# generated/<lab>/ansible/files/adcs/ (see .claude/skills/vuln-injection/SKILL.md);
+# here we only install the ESC1 template — not GOAD's full ESC1-6 sweep — so the
+# lab has exactly the one AD CS gap the spec asked for.
+# Runs on the member-server that provides the `adcs` service (vuln target host),
+# which is where the ADCSTemplate module and the CA live.
+- name: "adcs-esc1 | install ADCSTemplate PowerShell module"
+  win_copy:
+    src: "{{ vuln_files_dir }}/adcs/ADCSTemplate"
+    dest: "C:\\Program Files\\WindowsPowerShell\\Modules\\"
+
+- name: "adcs-esc1 | stage ESC1 template json"
+  win_copy:
+    src: "{{ vuln_files_dir }}/adcs/ESC1.json"
+    dest: "C:\\setup\\ESC1.json"
+
+- name: "adcs-esc1 | publish the ESC1 vulnerable template (Domain Users may enroll)"
+  ansible.windows.win_shell: |
+    if (-not(Get-ADCSTemplate -DisplayName "ESC1")) {
+      New-ADCSTemplate -DisplayName "ESC1" -JSON (Get-Content C:\setup\ESC1.json -Raw) -Identity "{{ domain }}\Domain Users" -Publish
+    }
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+  register: vuln_esc1_result
+  changed_when: "'ESC1' not in vuln_esc1_result.stdout"
+
+- name: "adcs-esc1 | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      AD CS ESC1 gap live: a low-priv user enrolls the ESC1 template supplying a
+      Domain Admin SAN, then authenticates as that DA via PKINIT.

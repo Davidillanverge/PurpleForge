@@ -1,0 +1,35 @@
+# catalog/defense/hardening/cis-l1.yml
+id: cis-l1
+name: "CIS Benchmark — Level 1"
+description: >
+  Baseline, broadly-applicable hardening (CIS Level 1) applied via the pinned
+  vendor/ansible-lockdown/Windows-*-CIS roles, selected by Ansible tags rather
+  than forking the roles. Level 1 is a superset boundary: applying cis-l2 also
+  applies every l1 rule (see cis-l2.yml).
+engine: ansible-lockdown
+role_by_os:
+  windows-server-2019: Windows-2019-CIS
+  windows-server-2022: Windows-2022-CIS
+  windows-server-2025: Windows-2025-CIS
+  windows-10-22h2: Windows-10-CIS
+  windows-11-23h2: Windows-11-CIS
+  # windows-server-2016: NOT SUPPORTED — ansible-lockdown ships no
+  # Windows-2016-CIS role upstream. A spec combining os:windows-server-2016
+  # with hardening.baseline != none is rejected (see .claude/skills/
+  # defensive-controls/SKILL.md).
+tags_by_role:
+  domain-controller: [level1-domaincontroller]
+  member-server: [level1-memberserver]
+  # Windows-10-CIS/Windows-11-CIS use a different, older tag scheme (bare
+  # "level1", not "level1-domaincontroller") — see SKILL.md's "structural
+  # differences between role generations" note.
+  workstation: [level1]
+skip_rule_vars_prefix_by_os:
+  # ansible-lockdown's per-rule skip vars are named "<prefix>_rule_<N>", e.g.
+  # win22cis_rule_2_3_8_1. See catalog/defense/hardening/control-cis-rules.yml
+  # for the concrete rules the reconciliation may need to skip.
+  windows-server-2019: win19cis
+  windows-server-2022: win22cis
+  windows-server-2025: win25cis
+  windows-10-22h2: win10cis
+  windows-11-23h2: win11cis

@@ -1,0 +1,117 @@
+# catalog/themes/medieval-kingdom.yml
+#
+# Consumed by scripts/forge.py's ad-theming rendering (see
+# .claude/skills/ad-theming/SKILL.md): `vocabulary.houses` becomes
+# BadBlood's AD_OU_CreateStructure/3lettercodes.csv (department codes used
+# for Tier1/Tier2/Stage/People sub-OUs AND computer-name prefixes),
+# `vocabulary.given_names_*`/`family_names` become BadBlood's
+# AD_Users_Create/Names/*.txt. `extra_groups` and `honey_account_naming` are
+# consumed by the ad_theming_overlay role, which is PurpleForge-authored
+# curation layered on top of BadBlood's own output (not a BadBlood concept).
+id: medieval-kingdom
+name: "Medieval Kingdom"
+description: >
+  A fractious kingdom of rival houses — the classic Seven-Kingdoms-style
+  fantasy setting vendor/GOAD's own default lab (ad/GOAD/data/config.json)
+  already uses for its host names (kingslanding, winterfell); this theme
+  extends the same flavor to the population layer.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description)
+    - { code: STK, name: "House Stark" }
+    - { code: LAN, name: "House Lannister" }
+    - { code: BAR, name: "House Baratheon" }
+    - { code: TAR, name: "House Targaryen" }
+    - { code: TYR, name: "House Tyrell" }
+    - { code: MAR, name: "House Martell" }
+    - { code: GRE, name: "House Greyjoy" }
+    - { code: ARR, name: "House Arryn" }
+    - { code: TUL, name: "House Tully" }
+    - { code: BOL, name: "House Bolton" }
+
+  given_names_male:          # -> Names/malenames-usa-top1000.txt equivalent
+    - Eddard
+    - Robb
+    - Jon
+    - Brandon
+    - Rickon
+    - Tyrion
+    - Jaime
+    - Tywin
+    - Robert
+    - Stannis
+    - Renly
+    - Joffrey
+    - Tommen
+    - Petyr
+    - Varys
+    - Samwell
+    - Theon
+    - Balon
+    - Euron
+    - Oberyn
+    - Doran
+    - Mace
+    - Loras
+    - Willas
+    - Garlan
+    - Jorah
+    - Barristan
+    - Davos
+    - Edmure
+    - Hoster
+
+  given_names_female:        # -> Names/femalenames-usa-top1000.txt equivalent
+    - Catelyn
+    - Sansa
+    - Arya
+    - Lyanna
+    - Cersei
+    - Myrcella
+    - Margaery
+    - Olenna
+    - Daenerys
+    - Rhaella
+    - Brienne
+    - Shae
+    - Ygritte
+    - Missandei
+    - Yara
+    - Asha
+    - Ellaria
+    - Selyse
+    - Talisa
+    - Roslin
+    - Walda
+    - Meera
+    - Osha
+
+  family_names:              # -> Names/familynames-usa-top1000.txt equivalent
+    - Stark
+    - Lannister
+    - Baratheon
+    - Targaryen
+    - Tyrell
+    - Martell
+    - Greyjoy
+    - Arryn
+    - Tully
+    - Bolton
+    - Frey
+    - Mormont
+    - Karstark
+    - Umber
+    - Reed
+    - Clegane
+    - Payne
+    - Florent
+    - Redwyne
+    - Hightower
+
+extra_groups:
+  - { name: "Small Council", description: "Royal advisors — highly privileged, Domain Admins-adjacent" }
+  - { name: "Kingsguard", description: "Elite protectors of the DCs and Tier 0 assets" }
+  - { name: "Maesters Order", description: "Keepers of records and systems — server/IT admin tier" }
+  - { name: "Nights Watch", description: "Isolated frontier service accounts — low-trust, segregated" }
+
+honey_account_naming: "grand.maester.{n}"   # deception.honey_accounts naming pattern

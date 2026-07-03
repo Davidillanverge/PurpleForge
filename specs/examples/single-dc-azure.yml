@@ -1,0 +1,43 @@
+# PurpleForge — Fase 2 acceptance spec: the minimal case network-topology +
+# infra-azure + ad-topology must handle end-to-end: one domain, one isolated
+# DC, VPN-only access, `terraform plan` clean. No vulnerabilities/reconciliation
+# here on purpose — that's already exercised by the other two example specs.
+lab:
+  name: single-dc-test
+  theme: corporate
+  provider: azure
+  region: westeurope
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 50
+
+forest:
+  - domain: test.local
+    netbios: TEST
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2019
+    domain: test.local
+    count: 1
+
+population:
+  users: 10
+  density: sparse
+  seed: 1
+
+vulnerabilities: []
+
+defense:
+  profile: none
+
+on_conflict: warn
+
+detection_rules: none
+
+validation:
+  bloodhound: false
+  pingcastle: false
+  atomic_red_team: []

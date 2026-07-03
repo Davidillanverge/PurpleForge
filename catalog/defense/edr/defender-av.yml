@@ -1,0 +1,18 @@
+# catalog/defense/edr/defender-av.yml
+id: defender-av
+name: "Microsoft Defender Antivirus"
+description: >
+  Built into every Windows Server/10/11 image — no external console/backend
+  required, so this is the one EDR entry PurpleForge actually implements
+  end-to-end (pf_defender_av role). All other catalog/defense/edr/*.yml
+  entries need a management backend (Elastic Security, Wazuh manager, M365,
+  a LimaCharlie org, etc.) that this project deliberately does not build —
+  see detection-lab's absence from the roadmap.
+backend_required: false
+implementation:
+  engine: pf_defender_av
+  modes:
+    enabled: "Set-MpPreference defaults; real-time protection on, ASR/network-protection per settings"
+    detect: "ASR rules in AuditMode; tamper protection off"
+    prevent: "ASR rules in Enabled (block) mode; tamper protection on"
+  settings_supported: [asr_rules, tamper_protection, network_protection]

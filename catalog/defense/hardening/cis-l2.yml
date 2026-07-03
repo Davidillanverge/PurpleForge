@@ -1,0 +1,24 @@
+# catalog/defense/hardening/cis-l2.yml
+id: cis-l2
+name: "CIS Benchmark — Level 2"
+description: >
+  Stricter hardening for higher-security environments (CIS Level 2), applied
+  on top of Level 1 (both tag sets are selected — ansible-lockdown's l2 rules
+  are additive, not a replacement for l1).
+engine: ansible-lockdown
+role_by_os:
+  windows-server-2019: Windows-2019-CIS
+  windows-server-2022: Windows-2022-CIS
+  windows-server-2025: Windows-2025-CIS
+  windows-10-22h2: Windows-10-CIS
+  windows-11-23h2: Windows-11-CIS
+tags_by_role:
+  domain-controller: [level1-domaincontroller, level2-domaincontroller]
+  member-server: [level1-memberserver, level2-memberserver]
+  workstation: [level1, level2]
+skip_rule_vars_prefix_by_os:
+  windows-server-2019: win19cis
+  windows-server-2022: win22cis
+  windows-server-2025: win25cis
+  windows-10-22h2: win10cis
+  windows-11-23h2: win11cis

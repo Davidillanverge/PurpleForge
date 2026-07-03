@@ -1,0 +1,34 @@
+id: adcs-esc1
+name: "AD CS ESC1 - plantilla de certificado con SAN suplantable"
+severity: critical
+attack:
+  mitre_attack: [T1649]
+  requires_services: [adcs]
+  intended_path: >
+    Usuario de bajo privilegio solicita un certificado con una plantilla
+    vulnerable (ENROLLEE_SUPPLIES_SUBJECT + enrollment abierto a Domain Users)
+    especificando un SAN de Domain Admin -> autentica como DA vía PKINIT.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/adcs-esc1.yml
+  reuses: "vendor/GOAD/ansible/roles/vulns/adcs_templates (módulo ADCSTemplate, New-ADCSTemplate -JSON)"
+  params: { template_name: "KingdomUser", enrollee_supplies_subject: true, grant_enroll_to: "Domain Users" }
+detect:
+  data_source: "AD CS / Security 4886, 4887; Sysmon"
+  signal: "Emisión de certificado con SAN que no coincide con la identidad del solicitante"
+  siem_rule: templates/detection/{siem}/adcs_esc1
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was found for it during
+# Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only
+# lists VERIFIED control->rule mappings). The reconciliation still treats it as
+# 'bundled in this baseline' for warn/exclude-control purposes, but defensive-
+# controls cannot derive a concrete skip_rule for it — only the baseline-level
+# conflict is recorded, not a rule number.
+neutralized_by:
+  - hardening.controls.adcs_template_hardening   # etiqueta libre: retirar ENROLLEE_SUPPLIES_SUBJECT / restringir enrollment
+  - hardening.baseline: [cis-l2]
+mitigate:
+  summary: "Quitar ENROLLEE_SUPPLIES_SUBJECT o restringir enrollment; exigir aprobación del manager; mapeo fuerte de certificados."
+validate:
+  bloodhound_edge: "ADCSESC1"
+  atomic: T1649

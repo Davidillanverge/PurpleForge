@@ -1,0 +1,36 @@
+id: asreproast
+name: "AS-REP Roasting - cuenta con preautenticación Kerberos deshabilitada"
+severity: high
+attack:
+  mitre_attack: [T1558.004]
+  requires_services: []
+  intended_path: >
+    Una cuenta de usuario tiene activo el flag DONT_REQ_PREAUTH
+    (UF_DONT_REQUIRE_PREAUTH). Cualquier atacante, incluso sin credenciales
+    previas, puede solicitar un AS-REP para esa cuenta; la parte del AS-REP
+    cifrada con el hash de la cuenta se crackea offline igual que un TGS de
+    Kerberoasting.
+inject:
+  type: powershell
+  primitive: "vendor/Vulnerable-AD/vulnad.ps1#VulnAD-ASREPRoasting"
+  playbook: templates/ansible/vulns/asreproast.yml
+  params: { count: 2 }
+detect:
+  data_source: "Security 4768 (AS-REQ); Sysmon"
+  signal: "4768 con Pre-Authentication Type = 0 (sin PA_DATA) para una cuenta de usuario"
+  siem_rule: templates/detection/{siem}/asreproast
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was found for it during
+# Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only
+# lists VERIFIED control->rule mappings). The reconciliation still treats it as
+# 'bundled in this baseline' for warn/exclude-control purposes, but defensive-
+# controls cannot derive a concrete skip_rule for it — only the baseline-level
+# conflict is recorded, not a rule number.
+neutralized_by:
+  - hardening.controls.preauth_required_audit   # etiqueta libre: audita/revierte cuentas con DONT_REQ_PREAUTH
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Desactivar DONT_REQ_PREAUTH salvo excepción justificada; contraseña larga/aleatoria en las cuentas con excepción; alertar en 4768 sin preauth."
+validate:
+  bloodhound_edge: "DontReqPreauth"
+  atomic: T1558.004

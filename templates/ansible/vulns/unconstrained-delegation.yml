@@ -1,0 +1,35 @@
+---
+# Vuln inject task-file: unconstrained-delegation (T1187 / T1558.003)
+# No clean upstream primitive exists in Vulnerable-AD or GOAD for this, so it's
+# PurpleForge-authored but follows the same VulnAD-* pattern (Set-AD* via the
+# ActiveDirectory module). Sets TRUSTED_FOR_DELEGATION on the target member
+# server's own computer object — once that host is compromised, any privileged
+# account (incl. a DC via coercion) that authenticates to it leaves a usable TGT
+# cached in LSASS. Runs against the member-server target host.
+- name: "unconstrained-delegation | enable unconstrained delegation on {{ vuln_unconstrained_computer }}$"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$ComputerName)
+      Import-Module ActiveDirectory
+      $c = Get-ADComputer -Identity $ComputerName -Properties TrustedForDelegation
+      if (-not $c.TrustedForDelegation) {
+        Set-ADComputer -Identity $ComputerName -TrustedForDelegation $true
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      ComputerName: "{{ vuln_unconstrained_computer }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "unconstrained-delegation | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Unconstrained delegation gap live on {{ vuln_unconstrained_computer }}:
+      coerce a privileged account (e.g. a DC) to auth here, then extract its
+      cached TGT from LSASS to impersonate it.

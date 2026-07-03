@@ -1,0 +1,34 @@
+# catalog/defense/hardening/stig.yml
+id: stig
+name: "DISA STIG"
+description: >
+  DISA Security Technical Implementation Guide, applied via the pinned
+  vendor/ansible-lockdown/Windows-*-STIG roles.
+engine: ansible-lockdown
+role_by_os:
+  windows-server-2019: Windows-2019-STIG
+  windows-server-2022: Windows-2022-STIG
+  windows-10-22h2: Windows-10-STIG
+  windows-11-23h2: Windows-11-STIG
+  # windows-server-2025: NOT SUPPORTED — no Windows-2025-STIG role exists
+  # upstream yet (checked during Fase 1 vendoring; ansible-lockdown hadn't
+  # published one). windows-server-2016: also unsupported (see cis-l1.yml).
+tags_by_role:
+  # STIG roles select by CATEGORY (severity), not CIS's level1/level2 —
+  # structurally different from the CIS roles above. cat1 = highest severity.
+  # There is no per-role (dc/memberserver/workstation) tag split like CIS has;
+  # applicability is instead handled inside each STIG rule's own `when:`.
+  domain-controller: [cat1, cat2, cat3]
+  member-server: [cat1, cat2, cat3]
+  workstation: [cat1, cat2, cat3]
+skip_rule_vars_prefix_by_os:
+  # IMPORTANT: STIG rules gate on per-STIG-ID vars (e.g. wn22_ac_000020), not
+  # the sequential "<prefix>cis_rule_N_N_N" scheme CIS roles use. NONE of
+  # catalog/defense/hardening/control-cis-rules.yml's mappings apply here —
+  # that file is CIS-only. No STIG skip_rule mapping has been verified yet, so
+  # scripts/forge.py's resolver honestly reports "cannot derive a STIG
+  # skip_rule" instead of guessing when baseline: stig excludes a control.
+  windows-server-2019: wn19
+  windows-server-2022: wn22
+  windows-10-22h2: wn10
+  windows-11-23h2: wn11

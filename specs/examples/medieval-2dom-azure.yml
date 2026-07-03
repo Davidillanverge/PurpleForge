@@ -1,0 +1,101 @@
+# PurpleForge — worked example (see DISENO-purpleforge.md §"Ejemplo trabajado obligatorio")
+# Two-domain medieval-themed forest on Azure, defense.profile: realistic,
+# on_conflict: exclude-control -> hardening.cis-l1 is applied with the specific
+# rules excluded that would neutralize kerberoasting/adcs-esc1/gpp-cpassword/dcsync-acl.
+lab:
+  name: shadow-keep
+  theme: medieval-kingdom
+  provider: azure
+  region: westeurope
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 150
+
+forest:
+  - domain: kingdom.local
+    netbios: KINGDOM
+    functional_level: "2016"
+    domain_controllers: 1
+  - domain: vassals.kingdom.local
+    netbios: VASSALS
+    functional_level: "2016"
+    domain_controllers: 1
+    trust:
+      target: kingdom.local
+      type: parent-child
+
+machines:
+  - role: domain-controller
+    os: windows-server-2019
+    domain: kingdom.local
+    count: 1
+  - role: domain-controller
+    os: windows-server-2019
+    domain: vassals.kingdom.local
+    count: 1
+  - role: member-server
+    os: windows-server-2022
+    domain: kingdom.local
+    services: [adcs, mssql]
+    count: 1
+  - role: workstation
+    os: windows-10-22h2
+    domain: kingdom.local
+    count: 2
+
+population:
+  users: 300
+  density: realistic
+  seed: 1337
+
+vulnerabilities:               # the deliberate gaps
+  - kerberoasting
+  - adcs-esc1
+  - gpp-cpassword
+  - dcsync-acl
+
+defense:
+  profile: realistic
+  # 'profile' fixes defaults for siem/edr/hardening/deception below; the rest
+  # are fine-grained overrides layered on top of the profile.
+
+  siem:
+    platform: elastic
+    ship_sysmon: true
+    ship_wef: true
+    network_monitoring: [zeek]
+
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+    - product: elastic-defend
+      mode: prevent
+      targets: [domain-controller, member-server]
+
+  hardening:
+    baseline: cis-l1
+    apply_to: all
+    controls:
+      laps: true
+      lsa_protection: true
+      credential_guard: false      # would break some intentional credential-theft paths
+      smb_signing: enforce
+      ldap_signing: enforce
+      disable_llmnr_nbtns_mdns: true
+      protected_users_group: [KINGDOM\da-treasury]
+    intentional_gaps_auto: true    # derive skip_rule exclusions from each vuln's neutralized_by
+
+  deception:
+    honey_accounts: 3
+    canarytokens: [docx, aws-keys]
+
+on_conflict: exclude-control
+
+detection_rules: auto
+
+validation:
+  bloodhound: true
+  pingcastle: true
+  atomic_red_team: [T1558.003, T1552.006, T1649]

@@ -1,0 +1,39 @@
+[submodule "vendor/GOAD"]
+	path = vendor/GOAD
+	url = https://github.com/Orange-Cyberdefense/GOAD.git
+[submodule "vendor/attack_range"]
+	path = vendor/attack_range
+	url = https://github.com/splunk/attack_range.git
+[submodule "vendor/BadBlood"]
+	path = vendor/BadBlood
+	url = https://github.com/davidprowe/BadBlood.git
+[submodule "vendor/Vulnerable-AD"]
+	path = vendor/Vulnerable-AD
+	url = https://github.com/WazeHell/vulnerable-AD.git
+[submodule "vendor/ansible-lockdown/Windows-2019-CIS"]
+	path = vendor/ansible-lockdown/Windows-2019-CIS
+	url = https://github.com/ansible-lockdown/Windows-2019-CIS.git
+[submodule "vendor/ansible-lockdown/Windows-2022-CIS"]
+	path = vendor/ansible-lockdown/Windows-2022-CIS
+	url = https://github.com/ansible-lockdown/Windows-2022-CIS.git
+[submodule "vendor/ansible-lockdown/Windows-2025-CIS"]
+	path = vendor/ansible-lockdown/Windows-2025-CIS
+	url = https://github.com/ansible-lockdown/Windows-2025-CIS.git
+[submodule "vendor/ansible-lockdown/Windows-10-CIS"]
+	path = vendor/ansible-lockdown/Windows-10-CIS
+	url = https://github.com/ansible-lockdown/Windows-10-CIS.git
+[submodule "vendor/ansible-lockdown/Windows-11-CIS"]
+	path = vendor/ansible-lockdown/Windows-11-CIS
+	url = https://github.com/ansible-lockdown/Windows-11-CIS.git
+[submodule "vendor/ansible-lockdown/Windows-2019-STIG"]
+	path = vendor/ansible-lockdown/Windows-2019-STIG
+	url = https://github.com/ansible-lockdown/Windows-2019-STIG.git
+[submodule "vendor/ansible-lockdown/Windows-2022-STIG"]
+	path = vendor/ansible-lockdown/Windows-2022-STIG
+	url = https://github.com/ansible-lockdown/Windows-2022-STIG.git
+[submodule "vendor/ansible-lockdown/Windows-10-STIG"]
+	path = vendor/ansible-lockdown/Windows-10-STIG
+	url = https://github.com/ansible-lockdown/Windows-10-STIG.git
+[submodule "vendor/ansible-lockdown/Windows-11-STIG"]
+	path = vendor/ansible-lockdown/Windows-11-STIG
+	url = https://github.com/ansible-lockdown/Windows-11-STIG.git

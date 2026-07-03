@@ -1,0 +1,62 @@
+---
+# Vuln inject task-file: dcsync-acl (T1003.006)
+# Extends GOAD's vulns/acls technique (Set-Acl with an ActiveDirectoryAccessRule
+# ACE) to the two replication extended-right GUIDs that GOAD's own acls role does
+# NOT support (it only maps force-change-password / self-membership). We grant a
+# named low-priv user DS-Replication-Get-Changes + DS-Replication-Get-Changes-All
+# on the domain naming context — exactly the two ACEs mimikatz lsadump::dcsync
+# needs. Idempotent: the ACE is only added if not already present.
+- name: "dcsync-acl | ensure principal {{ vuln_dcsync_account }} exists"
+  win_domain_user:
+    name: "{{ vuln_dcsync_account }}"
+    firstname: Replication
+    surname: Svc
+    description: "Directory replication helper"
+    password: "{{ vuln_dcsync_password }}"
+    password_never_expires: true
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "dcsync-acl | grant DS-Replication-Get-Changes[-All] to {{ vuln_dcsync_account }} on the domain object"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      # The two extended rights that together enable DCSync:
+      $getChanges    = [GUID]'1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'  # DS-Replication-Get-Changes
+      $getChangesAll = [GUID]'1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'  # DS-Replication-Get-Changes-All
+      $domainDN = (Get-ADDomain).DistinguishedName
+      $sid = (Get-ADUser -Identity $Account).SID
+      $acl = Get-Acl -Path "AD:\$domainDN"
+      $changed = $false
+      foreach ($guid in @($getChanges, $getChangesAll)) {
+        $already = $acl.Access | Where-Object {
+          $_.ObjectType -eq $guid -and $_.IdentityReference -eq (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount])
+        }
+        if (-not $already) {
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow, $guid)
+          $acl.AddAccessRule($ace)
+          $changed = $true
+        }
+      }
+      if ($changed) { Set-Acl -Path "AD:\$domainDN" -AclObject $acl }
+      $Ansible.Changed = $changed
+    parameters:
+      Account: "{{ vuln_dcsync_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "dcsync-acl | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      DCSync gap live: {{ vuln_dcsync_account }} holds replication rights on the
+      domain and can dump any NTLM hash (incl. krbtgt) via MS-DRSR.

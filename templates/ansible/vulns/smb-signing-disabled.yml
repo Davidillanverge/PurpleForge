@@ -1,0 +1,38 @@
+---
+# Vuln inject task-file: smb-signing-disabled (T1557.001)
+# PurpleForge-authored, follows the GOAD vulns/smbv1 win_regedit style. Turns
+# OFF the "require SMB signing" registry policy on both the client
+# (LanmanWorkstation) and server (LanmanServer) sides, so captured/coerced NTLM
+# auth can be relayed. This is the exact inverse of the smb_signing hardening
+# control and of CIS rules 2.3.8.x/2.3.9.x — the clean, demonstrable
+# reconciliation case (see catalog/defense/hardening/control-cis-rules.yml).
+# Idempotent: win_regedit only reports changed when the value actually flips.
+- name: "smb-signing-disabled | do not require SMB signing (server side / LanmanServer)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters
+    name: RequireSecuritySignature
+    data: 0
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "smb-signing-disabled | do not require SMB signing (client side / LanmanWorkstation)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters
+    name: RequireSecuritySignature
+    data: 0
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "smb-signing-disabled | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      SMB-signing gap live on {{ inventory_hostname }}: coerced/captured NTLM
+      auth can be relayed (ntlmrelayx) to this host over unsigned SMB.

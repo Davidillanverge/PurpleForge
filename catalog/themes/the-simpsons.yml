@@ -1,0 +1,75 @@
+# catalog/themes/the-simpsons.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: the-simpsons
+name: "Springfield"
+description: >
+  A small-town cast of institutions standing in for BadBlood's corporate
+  departments — same non-literal, flavor-only use of a well-known setting
+  already established in this repo's medieval-kingdom theme (house names).
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "institutions" here
+    - { code: SNP, name: "Springfield Nuclear Power Plant" }
+    - { code: KEM, name: "Kwik-E-Mart" }
+    - { code: SPD, name: "Springfield Police Department" }
+    - { code: SEL, name: "Springfield Elementary" }
+    - { code: MOE, name: "Moe's Tavern" }
+    - { code: KRK, name: "Krusty Krew Entertainment" }
+    - { code: CHU, name: "First Church of Springfield" }
+    - { code: CTY, name: "Springfield City Hall" }
+
+  given_names_male:
+    - Homer
+    - Bart
+    - Ned
+    - Moe
+    - Barney
+    - Krusty
+    - Milhouse
+    - Apu
+    - Lenny
+    - Carl
+    - Clancy
+    - Waylon
+    - Seymour
+    - Otto
+    - Abraham
+    - Kent
+    - Troy
+
+  given_names_female:
+    - Marge
+    - Lisa
+    - Maggie
+    - Edna
+    - Selma
+    - Patty
+    - Helen
+    - Maude
+    - Luann
+    - Agnes
+
+  family_names:
+    - Simpson
+    - Flanders
+    - Wiggum
+    - Szyslak
+    - Krabappel
+    - VanHouten
+    - Nahasapeemapetilon
+    - Leonard
+    - Carlson
+    - Skinner
+    - Bouvier
+    - Muntz
+    - Smithers
+    - Burns
+    - Hibbert
+
+extra_groups:
+  - { name: "Stonecutters", description: "Secret society — highly privileged, Domain Admins-adjacent" }
+  - { name: "Springfield Mafia", description: "Organized crime — isolated, low-trust accounts" }
+  - { name: "Nuclear Safety Inspectors", description: "Audit/oversight tier" }
+  - { name: "Springfield PD", description: "Security tier" }
+
+honey_account_naming: "stonecutter.{n}"
