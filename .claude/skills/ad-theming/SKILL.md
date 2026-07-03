@@ -1,10 +1,12 @@
 ---
 name: ad-theming
 description: >
-  Populates each domain with realistic AD objects via vendor/BadBlood
-  (unmodified) and renames its vocabulary (department codes, user names) to
-  match the spec's lab.theme, deterministically via population.seed. Runs
-  after ad-topology (domains/trusts must exist first), before vuln-injection.
+  Deterministically generates each domain's entire AD population (OU tree,
+  users, groups, computers, memberships, ACL noise) in Python
+  (scripts/population.py), themed from the spec's lab.theme and seeded from
+  population.seed — no BadBlood involved. Runs after ad-topology (domains/
+  trusts must exist first), before vuln-injection, which casts real
+  population objects into vulnerability roles.
 ---
 
 # ad-theming
@@ -12,90 +14,111 @@ description: >
 ## When to use this skill
 
 - During `/generate`, right after `ad-topology`'s inventory/playbook are
-  rendered, to also render the themed BadBlood overlay and
-  `ad-theming.yml` playbook.
+  rendered, to compute the population plan and render
+  `ad-population.yml`.
 - During `/deploy`, after AD topology is up (`ad-topology.yml` has run),
   before vulnerability injection — see CLAUDE.md's deploy order:
-  `infra → ad-topology → ad-theming → hardening → vulns → EDR → snapshot`.
+  `infra → ad-topology → ad-population → hardening → vulns → EDR → snapshot`.
 
-## Reuse, don't fork — how theming actually works
+## Why this isn't BadBlood anymore
 
-`vendor/BadBlood/Invoke-BadBlood.ps1` has no `-Theme` or `-Seed` parameter,
-and there is no upstream project that themes AD population. Rather than
-forking BadBlood or writing a population engine from scratch, this skill
-exploits two things already present in BadBlood's own code, unmodified:
+Earlier versions of this skill wrapped `vendor/BadBlood/Invoke-BadBlood.ps1`
+unmodified, theming it by overwriting the name-list/CSV files it reads and
+seeding its `Get-Random` calls. That design had a hard limit: BadBlood's
+randomness only happens on the live Windows host, at Ansible-runtime — so
+`forge.py` could never know a population's actual usernames, passwords, or
+OU placement ahead of a real deploy. `lab-report.md` had to carry an
+explicit "names aren't predictable" caveat, and vuln-injection had to
+synthesize its own separate `svc-*` accounts rather than reuse anything
+BadBlood created.
 
-1. **`CreateUser`/`CreateComputer` take a `-ScriptDir` parameter** that
-   determines where they load data from:
-   `CreateUsers.ps1` reads
-   `$ScriptDir\Names\{familynames,femalenames,malenames}-usa-top1000.txt`
-   (`get-content ... | get-random`), and `CreateComputers.ps1` reads
-   `(parent of $ScriptDir)\AD_OU_CreateStructure\3lettercodes.csv` for
-   department-code-flavored computer name prefixes.
-   `CreateOUStructure.ps1` reads that same CSV relative to *its own* location
-   (not parameterized) for the Tier1/Tier2/Stage/People sub-OU names —
-   because of this, theming works by **staging a full copy of
-   `vendor/BadBlood`** per lab (`generated/<lab>/ansible/files/badblood/`)
-   and overwriting just those two kinds of files in place
-   (`scripts/forge.py:render_badblood_overlay`), rather than passing
-   `-ScriptDir` around individually. The scripts themselves are copied
-   byte-for-byte from `vendor/BadBlood` — nothing in them is patched.
-   BadBlood's top-level OU skeleton itself (`Admin`, `Tier 0/1/2`, `People`,
-   `Quarantine`, ...) is hardcoded PowerShell arrays inside
-   `CreateOUStructure.ps1`, not data-file-driven, and is intentionally left
-   alone — it's realistic IAM tiering scaffolding independent of theme.
-2. **Every random draw in BadBlood goes through PowerShell's `Get-Random`
-   cmdlet** (never raw `System.Random`), which respects a process-wide
-   `Get-Random -SetSeed <n>`. `templates/ansible/playbooks/ad-theming.yml`
-   sets the seed in the *same* `win_powershell` script block that then calls
-   `Invoke-BadBlood.ps1`, so the whole population run for that domain is
-   reproducible from `population.seed`. Multi-domain labs offset the seed by
-   domain index (`scripts/forge.py:attach_population_vars`) so two domains
-   don't draw an identical population.
+**This is a deliberate, explicit departure from CLAUDE.md's "wrap mature
+upstream projects rather than reinventing" principle, scoped specifically to
+BadBlood** — confirmed with the user during the session that introduced
+`scripts/population.py`. GOAD, Vulnerable-AD, and ansible-lockdown are still
+wrapped exactly as before; only BadBlood's role is replaced.
+`vendor/BadBlood` stays in the repo as a pinned, untouched submodule but is
+no longer invoked by anything.
 
-`-SkipLapsInstall` is always passed to `Invoke-BadBlood.ps1` — LAPS is a
-hardening control owned by `defensive-controls`
-(`defense.hardening.controls.laps`), which lands in a later phase; letting
-BadBlood install its own LAPS schema here would race with that.
+## How it actually works now
 
-## What's actually PurpleForge-authored
+`scripts/population.py`'s `generate_population_plan()` is a pure Python
+function, seeded with a single `random.Random(population.seed + offset)` —
+simpler and *more* deterministic than BadBlood's own split mechanism
+(CSPRNG for passwords, separate `Get-Random` for names, neither reproducible
+from Python). It was written by reading BadBlood's actual PowerShell source
+(`AD_Users_Create/CreateUsers.ps1`, `AD_Groups_Create/CreateGroup.ps1` +
+`AddRandomToGroups.ps1`, `AD_Computers_Create/CreateComputers.ps1`,
+`AD_OU_CreateStructure/CreateOUStructure.ps1`,
+`AD_Permissions_Randomizer/GenerateRandomPermissions.ps1`) and reproducing
+its actual ratios/naming patterns — the goal is to match BadBlood's
+realism, not exceed it (see the module's own docstring for the exact
+ratios: 3%/97% service/person account split, flat-random OU placement, 25%/
+75% admin-group/distlist naming, 80% group-membership participation, etc.).
 
-Everything above is BadBlood unmodified plus data-file substitution. The one
-genuinely new piece is `templates/ansible/roles/ad_theming_overlay`: after
-BadBlood has populated the domain, it creates the theme's `extra_groups`
-(`catalog/themes/<theme>.yml`) as security groups — `Small Council`,
-`Kingsguard`, etc. for `medieval-kingdom` — a concept BadBlood has no
-equivalent for. `deception.honey_accounts`/theme's `honey_account_naming`
-are *not* created here — seeding deception accounts is `defensive-controls`'
-job (a later phase); this skill only exposes the naming pattern in the
-catalog for that skill to consume.
+The one deliberate realism *change* from BadBlood: **every user's password
+is generated and recorded**, never irrecoverable — the whole point of
+replacing BadBlood was to document the full domain (including passwords)
+ahead of deployment, per the user's explicit request.
+
+`render_ad_population()` (`scripts/forge.py`) calls
+`generate_population_plan()` once per populatable domain (root DC + child
+DCs, same as BadBlood-era `attach_population_vars` did, same per-domain
+seed-offset trick), then renders `templates/ansible/playbooks/
+ad-population.yml.j2` — one Ansible play per domain that *applies* the
+already-computed plan via native `community.windows` modules
+(`win_domain_ou`, `win_domain_user`, `win_domain_group`,
+`win_domain_group_membership`, `win_domain_computer`), plus small
+`win_powershell` tasks for the two things no native module covers
+(AS-REP-roastable flag, GenericAll ACL noise — mirroring the `dsacls`
+pattern already used throughout `templates/ansible/vulns/`). The population
+*decision* and the population *application* are now two separate steps —
+this is what lets `resolve_attack_chain()` (see `vuln-injection/SKILL.md`)
+cast real, already-known population objects into vulnerability roles at
+generate time too, instead of creating synthetic `svc-*` accounts.
+
+## What's still PurpleForge-authored on top
+
+Theme `extra_groups` (`catalog/themes/<theme>.yml`) — `Small Council`,
+`Kingsguard`, etc. for `medieval-kingdom` — fold directly into the same
+population plan's group list now (tagged `curated: true`), rather than
+being a separate `ad_theming_overlay` role bolted on afterward (that role
+is retired). `deception.honey_accounts`/theme's `honey_account_naming` are
+still *not* created here — seeding deception accounts remains
+`defensive-controls`' job; this skill only exposes the naming pattern in
+the catalog for that skill to consume.
 
 ## Theme catalog format (`catalog/themes/<id>.yml`)
 
 ```yaml
 id: medieval-kingdom
 vocabulary:
-  houses: [{ code: STK, name: "House Stark" }, ...]   # -> 3lettercodes.csv
-  given_names_male: [Eddard, Robb, ...]                # -> Names/malenames-usa-top1000.txt
-  given_names_female: [Catelyn, Sansa, ...]            # -> Names/femalenames-usa-top1000.txt
-  family_names: [Stark, Lannister, ...]                # -> Names/familynames-usa-top1000.txt
+  houses: [{ code: STK, name: "House Stark" }, ...]   # -> OU tree department codes
+  given_names_male: [Eddard, Robb, ...]
+  given_names_female: [Catelyn, Sansa, ...]
+  family_names: [Stark, Lannister, ...]
 extra_groups: [{ name: "Small Council", description: "..." }, ...]
 honey_account_naming: "grand.maester.{n}"              # consumed by defensive-controls, not here
 ```
 
 `lab-spec`'s semantic checks reject a spec whose `lab.theme` has no matching
 `catalog/themes/<theme>.yml` — adding a theme is adding one YAML file, same
-philosophy as the vulnerability catalog.
+philosophy as the vulnerability catalog. There's currently no field for job
+titles/departments-as-attributes/manager relationships — BadBlood itself
+never set those either, so matching its realism doesn't require them.
 
 ## Population sizing
 
-`population.users` is the direct `UserCount`. `GroupCount`/`ComputerCount`
+`population.users` is the direct user count. `GroupCount`/`ComputerCount`
 scale off it by `population.density`
-(`scripts/forge.py:compute_population_counts`): `sparse` → ×0.15/×0.3,
-`realistic` → ×0.2/×0.4, `messy` → ×0.3/×0.5 (more groups/nesting noise). In
-a multi-domain spec, `population.users` is split evenly across every
-populatable domain (root + child domain controllers) — there's no per-domain
-population override in the schema today.
+(`scripts/forge.py:compute_population_counts`, unchanged from the
+BadBlood-era logic): `sparse` → ×0.15/×0.3, `realistic` → ×0.2/×0.4,
+`messy` → ×0.3/×0.5. In a multi-domain spec, `population.users` is split
+evenly across every populatable domain (root + child domain controllers) —
+there's no per-domain population override in the schema today.
+`population.include_noise_acls` (default `true`) toggles the BadBlood-style
+random `GenericAll` grants — set `false` for a cleaner signal-to-noise
+ratio, e.g. when `attack_chain.mode: ctf`.
 
 ## Testing this skill
 
@@ -103,8 +126,17 @@ No live DC in CI. Validate structurally:
 
 ```bash
 python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
-# check the overlay: line counts and CSV shape
-wc -l generated/shadow-keep/ansible/files/badblood/AD_Users_Create/Names/*.txt
-cat generated/shadow-keep/ansible/files/badblood/AD_OU_CreateStructure/3lettercodes.csv
-cd generated/shadow-keep/ansible && ansible-playbook --syntax-check playbooks/ad-theming.yml
+# inspect the precomputed plan directly — no deploy needed for this check
+python3 -c "
+import json
+m = json.load(open('generated/shadow-keep/lab-manifest.json'))
+for p in m['population_plans']:
+    print(p['domain'], len(p['users']), 'users', len(p['groups']), 'groups', len(p['ous']), 'OUs')
+"
+cd generated/shadow-keep/ansible && ansible-playbook --syntax-check playbooks/ad-population.yml
 ```
+
+For a live deploy, confirm `ad-population.yml` actually created the exact
+graph the plan specifies (`Get-ADUser`/`Get-ADGroupMember` spot checks
+against a few plan entries) — `scripts/forge.py ad-inventory` does this
+comparison automatically now (see its own header comment in `forge.py`).

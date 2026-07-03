@@ -1,6 +1,6 @@
 ---
 # Vuln inject task-file: rbcd-abuse (T1558)
-# Creates a NAMED, deterministic delegate account
+# Uses a NAMED, deterministic delegate account
 # ({{ vuln_rbcd_delegate_account }}, also SPN'd so it's independently
 # obtainable via kerberoasting, matching how a real-world "someone already
 # had this service account's creds" starting point looks) and configures
@@ -9,19 +9,21 @@
 # delegation setup (RawSecurityDescriptor SDDL construction is the
 # well-established pattern for this attribute; there's no simple
 # ActiveDirectory cmdlet parameter for it).
-- name: "rbcd-abuse | create delegate account {{ vuln_rbcd_delegate_account }}"
+#
+# {{ vuln_rbcd_delegate_account }} is either a fresh synthetic account
+# (independent mode) or an existing real population object cast by
+# resolve_attack_chain() (scripts/forge.py) in ctf mode — either way this
+# task only resets its password + SPN, never identity fields (OU,
+# description) win_domain_user wasn't given; ad-population.yml already set
+# those for every population object.
+- name: "rbcd-abuse | reset {{ vuln_rbcd_delegate_account }}'s password + SPN"
   win_domain_user:
     name: "{{ vuln_rbcd_delegate_account }}"
-    firstname: App
-    surname: Proxy
-    description: "Internal application proxy service account"
     password: "{{ vuln_rbcd_delegate_password }}"
     password_never_expires: true
     spn:
       - "HTTP/{{ vuln_rbcd_delegate_account }}.{{ domain }}"
     spn_action: replace
-    groups:
-      - Domain Users
     state: present
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"

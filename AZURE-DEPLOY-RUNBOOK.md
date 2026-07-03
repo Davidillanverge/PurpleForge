@@ -271,8 +271,10 @@ docker exec -w /repo/generated/<your-lab>/ansible pf-ansible \
   ansible-playbook -i inventory/hosts.yml playbooks/site.yml
 ```
 
-This runs AD promotion (with a reboot), BadBlood population, hardening, and
-vuln injection in one pass, and can legitimately take 15-30+ minutes on a
+This runs AD promotion (with a reboot), population (`ad-population.yml`,
+a fully deterministic Python-precomputed plan — see `ad-theming/SKILL.md`),
+hardening, and vuln injection in one pass, and can legitimately take
+15-30+ minutes on a
 small (1 vCPU) VM. If it fails partway, **re-running is safe and expected**
 — every task is idempotent, and each retry picks up where the last one left
 off. A few failure modes you may still hit even with all the fixes below in
@@ -310,15 +312,16 @@ fixed at the source for new deploys; if you're validating a lab generated
 before that fix, set it by hand on the affected account(s):
 `Set-ADUser -Identity <account> -Replace @{'msDS-SupportedEncryptionTypes' = 28}`.
 
-## 7b. Document the live domain: users, groups, NT hashes
+## 7b. Verify the live domain against the plan: users, groups, NT hashes
 
-`lab-report.md` (from step 3) is spec-time — it can't show BadBlood's actual
-usernames/passwords, because BadBlood generates them randomly with
-PowerShell's `Get-Random` on the DC during `site.yml` and never writes them
-anywhere, not even internally. Once the domain is actually up, get the real,
-current picture instead (from the same machine with the WireGuard tunnel up
-— needs `ldap3`, already in `scripts/requirements.txt`, and `nxc`/`netexec`
-for the NT hash dump via DCSync):
+`lab-report.md` (from step 3) already documents every population user's real
+name/password ahead of deployment (`scripts/population.py` decides the
+whole domain in Python before any VM exists) — `ad-inventory` is
+**verification**, not discovery: confirm the live domain actually matches
+what was planned, and pull NT hashes (genuinely only recoverable live, via
+DCSync) for anything this project doesn't itself control. From the same
+machine with the WireGuard tunnel up — needs `ldap3`, already in
+`scripts/requirements.txt`, and `nxc`/`netexec` for the NT hash dump:
 
 ```bash
 python3 scripts/forge.py ad-inventory specs/examples/<your-lab>.yml

@@ -4,14 +4,16 @@
 > usable directly, and crackable offline — `hashcat -m 1000`). This file
 > lives in `generated/{{ lab_name }}/` (gitignored) — never commit it, never
 > share it outside this lab's authorized operators. This is a POST-DEPLOY
-> snapshot, not reproducible from the spec: BadBlood's own per-user
-> passwords are randomly generated with PowerShell's `Get-Random` on the DC
-> during `site.yml` and never written anywhere, not even by BadBlood itself
-> — this file exists because NT hashes (unlike plaintext) genuinely are
-> stored in AD and recoverable via DCSync. Regenerate anytime the domain
-> changes with `python3 scripts/forge.py ad-inventory <spec>`; it always
-> reflects whatever the domain looks like *right now*, not what was
-> originally intended (see `lab-report.md` for that).
+> **verification** snapshot, not a discovery tool — every user's plaintext
+> password is already known and documented ahead of deployment in
+> `lab-report.md`'s Population section (`scripts/population.py` replaced
+> BadBlood, so nothing here is randomly generated on the DC anymore). This
+> command's job is confirming the live domain actually matches
+> `lab-manifest.json`'s `population_plans` (flagging anything missing) and
+> pulling NT hashes for anything genuinely only recoverable live via DCSync
+> — e.g. an operator's own manual changes to the lab after deploy.
+> Regenerate anytime the domain changes with
+> `python3 scripts/forge.py ad-inventory <spec>`.
 
 Queried {{ generated_at }} against `{{ domain }}` via `{{ dc_ip }}`.
 {% if not nxc_available %}

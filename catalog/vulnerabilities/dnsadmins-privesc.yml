@@ -36,3 +36,5 @@ mitigate:
 validate:
   bloodhound_edge: "MemberOf"
   atomic: null
+chain:
+  target_shape: account

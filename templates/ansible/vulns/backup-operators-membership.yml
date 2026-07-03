@@ -1,22 +1,21 @@
 ---
 # Vuln inject task-file: backup-operators-membership (T1078.002 / T1003.003)
-# Creates a NAMED, deterministic service account
-# ({{ vuln_backupop_account }}) and adds it to the domain's built-in
-# "Backup Operators" group — on a DC, that grants SeBackupPrivilege /
-# SeRestorePrivilege, which bypass filesystem/registry ACLs entirely and
-# let its holder copy a live NTDS.dit + SYSTEM hive without needing any
-# directory-replication rights at all (DCSync-equivalent impact via a
-# completely different path).
-- name: "backup-operators-membership | create service account {{ vuln_backupop_account }}"
+# {{ vuln_backupop_account }} is either a fresh synthetic account
+# (independent mode) or an existing real population object cast by
+# resolve_attack_chain() (scripts/forge.py) in ctf mode — either way this
+# task only resets its password, never identity fields (OU, description)
+# win_domain_user wasn't given; ad-population.yml already set those for
+# every population object. Adding it to the domain's built-in "Backup
+# Operators" group is what turns it into a vulnerability — on a DC, that
+# grants SeBackupPrivilege/SeRestorePrivilege, which bypass filesystem/
+# registry ACLs entirely and let its holder copy a live NTDS.dit + SYSTEM
+# hive without needing any directory-replication rights at all
+# (DCSync-equivalent impact via a completely different path).
+- name: "backup-operators-membership | reset {{ vuln_backupop_account }}'s password to a known value"
   win_domain_user:
     name: "{{ vuln_backupop_account }}"
-    firstname: Backup
-    surname: Agent
-    description: "Backup software service account"
     password: "{{ vuln_backupop_password }}"
     password_never_expires: true
-    groups:
-      - Domain Users
     state: present
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"

@@ -20,6 +20,7 @@ import copy
 import hashlib
 import json
 import os
+import random
 import re
 import secrets
 import shutil
@@ -32,6 +33,8 @@ from pathlib import Path
 import jinja2
 import jsonschema
 import yaml
+
+from population import generate_population_plan
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "specs" / "schema" / "lab-spec.schema.json"
@@ -723,59 +726,39 @@ def compute_population_counts(users: int, density: str) -> tuple[int, int, int]:
     return users, max(1, round(users * group_ratio)), max(1, round(users * computer_ratio))
 
 
-def attach_population_vars(groups: dict[str, list[dict]], spec: dict) -> None:
-    """BadBlood populates a domain as a whole (any single DC in it sees the
-    same directory), so it must run exactly once per domain — on that
-    domain's root DC, never on domain_controllers_additional. population.users
-    is spec-wide, so it's split evenly across every populatable domain; each
-    domain gets population.seed + its index for Get-Random -SetSeed, so
-    multi-domain labs don't draw identical 'random' populations twice."""
-    dc_hosts = groups["domain_controllers"] + groups["child_domain_controllers"]
+def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list[dict]], out_dir: Path) -> list[dict]:
+    """Full replacement for BadBlood + render_ad_theming/render_badblood_overlay
+    (both retired): computes one fully deterministic population plan per
+    populatable domain (scripts/population.py, seeded from population.seed +
+    domain index — the same per-domain-seed trick BadBlood-era
+    attach_population_vars used) and renders ad-population.yml.j2, which
+    applies each plan via native community.windows modules. Returns the list
+    of plans (also stored in lab-manifest.json and consumed by
+    resolve_attack_chain() for real-object vulnerability casting)."""
+    dc_hosts = ansible_groups["domain_controllers"] + ansible_groups["child_domain_controllers"]
     per_domain_users = max(1, spec["population"]["users"] // max(1, len(dc_hosts)))
     user_count, group_count, computer_count = compute_population_counts(per_domain_users, spec["population"]["density"])
-    base_seed = spec["population"]["seed"]
+
+    plans = []
     for i, host in enumerate(dc_hosts):
-        host["badblood_user_count"] = user_count
-        host["badblood_group_count"] = group_count
-        host["badblood_computer_count"] = computer_count
-        host["badblood_seed"] = base_seed + i
+        plan = generate_population_plan(
+            theme, spec["population"], host["domain"], spec["population"]["seed"] + i,
+            user_count, group_count, computer_count, generate_password,
+        )
+        plan["run_on"] = host["name"]
+        plan["domain_username"] = host["domain_username"]
+        plan["domain_password"] = host["domain_password"]
+        plans.append(plan)
 
-
-def render_badblood_overlay(theme: dict, dest_dir: Path) -> None:
-    """Overwrites BadBlood's own Names/*.txt + 3lettercodes.csv with
-    theme-derived equivalents at the exact relative paths
-    CreateUsers.ps1/CreateComputers.ps1/CreateOUStructure.ps1 already read
-    from (see .claude/skills/ad-theming/SKILL.md) — BadBlood's scripts
-    themselves are never modified, only the data files they load."""
-    v = theme["vocabulary"]
-    names_dir = dest_dir / "AD_Users_Create" / "Names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    (names_dir / "malenames-usa-top1000.txt").write_text(
-        "\n".join(n.upper() for n in v["given_names_male"]) + "\n", encoding="utf-8"
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "ad-population.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
     )
-    (names_dir / "femalenames-usa-top1000.txt").write_text(
-        "\n".join(n.upper() for n in v["given_names_female"]) + "\n", encoding="utf-8"
-    )
-    (names_dir / "familynames-usa-top1000.txt").write_text(
-        "\n".join(n.upper() for n in v["family_names"]) + "\n", encoding="utf-8"
-    )
-
-    ou_dir = dest_dir / "AD_OU_CreateStructure"
-    ou_dir.mkdir(parents=True, exist_ok=True)
-    csv_lines = ["name,description"] + [f'{h["code"]},{h["name"]}' for h in v["houses"]]
-    (ou_dir / "3lettercodes.csv").write_text("\n".join(csv_lines) + "\n", encoding="utf-8")
-
-
-def render_ad_theming(theme: dict, out_dir: Path) -> None:
-    dst_ansible = out_dir / "ansible"
-    badblood_dst = dst_ansible / "files" / "badblood"
-    if badblood_dst.exists():
-        shutil.rmtree(badblood_dst)
-    shutil.copytree(
-        REPO_ROOT / "vendor" / "BadBlood", badblood_dst, ignore=shutil.ignore_patterns(".git", ".git*")
-    )
-    render_badblood_overlay(theme, badblood_dst)
-    shutil.copy(TEMPLATES_DIR / "ansible" / "playbooks" / "ad-theming.yml", dst_ansible / "playbooks" / "ad-theming.yml")
+    rendered = template.render(lab_name=spec["lab"]["name"], population_plans=plans)
+    (dst / "ad-population.yml").write_text(rendered, encoding="utf-8")
+    return plans
 
 
 # Intentionally weak, dictionary-crackable passwords for the roastable accounts —
@@ -788,35 +771,121 @@ VULN_WEAK_PASSWORD_ALT = "Summer2024!"
 VULN_WEAK_PASSWORD_3 = "Welcome2024!"
 
 
-def build_vuln_vars(vid: str, machines: list[dict], primary_dc: dict) -> dict:
+def resolve_attack_chain(spec: dict, catalog: dict[str, dict], population_plans: list[dict], mode: str) -> dict:
+    """Casts each selected vulnerability whose catalog entry declares a
+    chain.target_shape ('account'/'group_scope') onto a REAL object from the
+    precomputed population (scripts/population.py) — never a naive random
+    pick (see kerberoasting.yml's own header comment on why that would break
+    invariant #5): the RNG here is seeded from population.seed (a distinct
+    offset, same trick population.py itself uses per-domain), so the exact
+    same objects get cast on every re-run given the same spec.
+
+    In 'ctf' mode, deliberately reuses an object already cast by an earlier
+    selected vulnerability (in spec['vulnerabilities'] order) when shapes are
+    compatible — this IS the "cadena de ejecución": two vulnerabilities
+    landing on the same real person means cracking their credential once
+    (vuln A) is what vuln B's grant already presupposes. In 'independent'
+    mode (the default), every vuln gets its own distinct object — the
+    original, unrelated-gaps behavior, just pointed at real users/groups
+    instead of synthetic svc-* accounts.
+
+    Vulns with target_shape 'none' (or when there's no population to cast
+    from) are untouched — build_vuln_vars falls back to today's synthetic
+    naming for those, unchanged."""
+    primary_plan = population_plans[0] if population_plans else None
+    rng = random.Random(spec["population"]["seed"] + 8000)  # distinct offset from population.py's own per-domain seeds
+
+    steps = []
+    chained = []
+    cast_accounts: list[dict] = []  # users already cast into an 'account'-shaped vuln, in cast order
+
+    for vid in spec["vulnerabilities"]:
+        v = catalog[vid]
+        shape = v.get("chain", {}).get("target_shape", "none")
+        cast = None
+        shared_with = None
+
+        if shape == "account" and primary_plan is not None:
+            if mode == "ctf" and cast_accounts:
+                cast = rng.choice(cast_accounts)
+                shared_with = cast["name"]
+            else:
+                pool = [u for u in primary_plan["users"] if u["name"] not in {c["name"] for c in cast_accounts}]
+                cast = rng.choice(pool) if pool else rng.choice(primary_plan["users"])
+                cast_accounts.append(cast)
+        elif shape == "group_scope" and primary_plan is not None:
+            if mode == "ctf" and cast_accounts:
+                # Narrow the reader/writer scope to an account already cast
+                # into an earlier vuln — dsacls' /G grantee accepts a user
+                # or a group name identically, so this is a real, working
+                # narrowing, not just a label.
+                cast = rng.choice(cast_accounts)
+                shared_with = cast["name"]
+            else:
+                bulk_groups = [g for g in primary_plan["groups"] if not g["curated"]]
+                cast = rng.choice(bulk_groups) if bulk_groups else None
+
+        if shared_with:
+            chained.append({"vuln": vid, "shares_target_with": shared_with})
+        steps.append({"id": vid, "target_shape": shape, "cast_name": cast["name"] if cast else None})
+
+    return {"mode": mode, "steps": steps, "chained": chained}
+
+
+# Intentionally weak, dictionary-crackable passwords for the roastable accounts —
+# being crackable offline IS the vulnerability (kerberoasting/asreproast). They
+# are non-secret by design and still only ever written into generated/<lab>/
+# (gitignored). Accounts whose weakness is NOT about the password (dcsync-acl,
+# passwords-in-description) get a strong random one instead. When a vuln is
+# cast onto a real population object (see resolve_attack_chain above), that
+# object already exists with its own strong population-generated password —
+# these same weak/strong choices are applied as a deliberate RESET, not a
+# fresh account's initial password.
+#
+# `forced_password`: when attack_chain's ctf mode reuses the SAME cast_name
+# across multiple account-shaped vulns (a chain — see resolve_attack_chain),
+# each vuln's Ansible task independently resets that shared account's
+# password, in spec['vulnerabilities'] order. Without this, whichever vuln's
+# task happens to run LAST would silently overwrite an EARLIER vuln's
+# password with its own, different constant — invalidating the earlier
+# vuln's documented credential without any error. plan_vuln_injection caches
+# the first password assigned to each cast_name and forces every subsequent
+# vuln sharing that account to reuse the exact same value, so every reset
+# along the chain is idempotent (same value every time) instead of a race.
+def build_vuln_vars(
+    vid: str, machines: list[dict], primary_dc: dict, cast_name: str | None = None, forced_password: str | None = None
+) -> dict:
     if vid == "kerberoasting":
-        return {"vuln_kerberoast_account": "svc-sqlreport", "vuln_kerberoast_password": VULN_WEAK_PASSWORD}
+        return {"vuln_kerberoast_account": cast_name or "svc-sqlreport", "vuln_kerberoast_password": forced_password or VULN_WEAK_PASSWORD}
     if vid == "asreproast":
-        return {"vuln_asrep_account": "svc-legacyapp", "vuln_asrep_password": VULN_WEAK_PASSWORD_ALT}
+        return {"vuln_asrep_account": cast_name or "svc-legacyapp", "vuln_asrep_password": forced_password or VULN_WEAK_PASSWORD_ALT}
     if vid == "laps-read-acl":
-        return {"vuln_laps_reader_group": "Domain Users"}
+        return {"vuln_laps_reader_group": cast_name or "Domain Users"}
     if vid == "shadow-credentials":
         return {
             "vuln_shadowcred_target": "svc-tier0-admin",
             "vuln_shadowcred_target_password": generate_password(),
-            "vuln_shadowcred_writer_group": "Domain Users",
+            "vuln_shadowcred_writer_group": cast_name or "Domain Users",
         }
     if vid == "dnsadmins-privesc":
-        return {"vuln_dnsadmins_account": "svc-dns-operator", "vuln_dnsadmins_password": generate_password()}
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        return {"vuln_dnsadmins_account": cast_name or "svc-dns-operator", "vuln_dnsadmins_password": password}
     if vid == "rbcd-abuse":
         members = [m for m in machines if m["role"] == "member-server"]
         computer = members[0]["name"] if members else primary_dc["name"]
         return {
-            "vuln_rbcd_delegate_account": "svc-app-proxy",
-            "vuln_rbcd_delegate_password": VULN_WEAK_PASSWORD_3,
+            "vuln_rbcd_delegate_account": cast_name or "svc-app-proxy",
+            "vuln_rbcd_delegate_password": forced_password or VULN_WEAK_PASSWORD_3,
             "vuln_rbcd_target_computer": computer,
         }
     if vid == "backup-operators-membership":
-        return {"vuln_backupop_account": "svc-backup-agent", "vuln_backupop_password": generate_password()}
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        return {"vuln_backupop_account": cast_name or "svc-backup-agent", "vuln_backupop_password": password}
     if vid == "dcsync-acl":
-        return {"vuln_dcsync_account": "svc-replication", "vuln_dcsync_password": generate_password()}
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        return {"vuln_dcsync_account": cast_name or "svc-replication", "vuln_dcsync_password": password}
     if vid == "passwords-in-description":
-        return {"vuln_pwddesc_account": "temp-contractor", "vuln_pwddesc_password": generate_password()}
+        return {"vuln_pwddesc_account": cast_name or "temp-contractor", "vuln_pwddesc_password": forced_password or generate_password()}
     if vid == "gpp-cpassword":
         return {"vuln_gpp_name": "Workstations - Local Admin Password"}
     if vid == "unconstrained-delegation":
@@ -825,9 +894,10 @@ def build_vuln_vars(vid: str, machines: list[dict], primary_dc: dict) -> dict:
         return {"vuln_unconstrained_computer": computer}
     if vid == "constrained-delegation":
         dc_fqdn = f"{primary_dc['name']}.{primary_dc['domain']}"
+        password = forced_password or (VULN_WEAK_PASSWORD_3 if cast_name else generate_password())
         return {
-            "vuln_delegation_account": "svc-webapp",
-            "vuln_delegation_password": generate_password(),
+            "vuln_delegation_account": cast_name or "svc-webapp",
+            "vuln_delegation_password": password,
             "vuln_delegation_target_spn": f"ldap/{dc_fqdn}",
         }
     # adcs-esc1 and any future service-scoped vuln need no extra vars beyond the
@@ -836,7 +906,8 @@ def build_vuln_vars(vid: str, machines: list[dict], primary_dc: dict) -> dict:
 
 
 def plan_vuln_injection(
-    spec: dict, catalog: dict[str, dict], machines: list[dict], groups: dict[str, list[dict]], reconciliation: dict
+    spec: dict, catalog: dict[str, dict], machines: list[dict], groups: dict[str, list[dict]],
+    reconciliation: dict, attack_chain: dict | None = None,
 ) -> list[dict]:
     """Resolves, per selected vuln: which host the inject play targets, the
     deterministic per-vuln vars, and the neutralization status carried over from
@@ -853,6 +924,8 @@ def plan_vuln_injection(
 
     excluded = {c["vuln"] for c in reconciliation.get("excluded_controls", [])}
     warned = {c.get("vuln") for c in reconciliation.get("warnings", [])}
+    cast_names = {s["id"]: s["cast_name"] for s in (attack_chain or {}).get("steps", [])}
+    cast_password_cache: dict[str, str] = {}  # cast_name -> password, see build_vuln_vars' forced_password doc
 
     planned = []
     for vid in spec["vulnerabilities"]:
@@ -872,6 +945,14 @@ def plan_vuln_injection(
         else:
             status = "clear (no selected hardening control neutralizes this vuln)"
 
+        cast_name = cast_names.get(vid)
+        forced_password = cast_password_cache.get(cast_name) if cast_name else None
+        vvars = build_vuln_vars(vid, machines, primary_dc, cast_name, forced_password)
+
+        password_key = (VULN_CREDENTIAL_VARS.get(vid) or (None, None))[1]
+        if cast_name and password_key and password_key in vvars and cast_name not in cast_password_cache:
+            cast_password_cache[cast_name] = vvars[password_key]
+
         planned.append({
             "id": vid,
             "name": v["name"],
@@ -881,7 +962,7 @@ def plan_vuln_injection(
             "target_domain": target_domain,
             "intended_path": " ".join(v["attack"]["intended_path"].split()),
             "neutralization": status,
-            "vars": build_vuln_vars(vid, machines, primary_dc),
+            "vars": vvars,
         })
     return planned
 
@@ -1160,7 +1241,6 @@ def render_ansible(
     machines: list[dict],
     admin_password: str,
     ansible_password: str,
-    theme: dict,
     out_dir: Path,
 ) -> dict[str, list[dict]]:
     src = TEMPLATES_DIR / "ansible"
@@ -1172,14 +1252,12 @@ def render_ansible(
     shutil.copy(src / "playbooks" / "ad-topology.yml", dst / "playbooks" / "ad-topology.yml")
 
     groups = build_ansible_groups(spec, machines, admin_password)
-    attach_population_vars(groups, spec)
 
     template = jinja2.Template((src / "inventory" / "hosts.yml.j2").read_text(encoding="utf-8"), keep_trailing_newline=True)
     rendered = template.render(
         lab_name=spec["lab"]["name"],
         ansible_password=ansible_password,
         groups=groups,
-        ad_theming_extra_groups=theme["extra_groups"],
         local_admin_username=WINDOWS_ADMIN_USERNAME,
     )
     (dst / "inventory" / "hosts.yml").write_text(rendered, encoding="utf-8")
@@ -1412,16 +1490,6 @@ def render_lab_report(
     deception_plan: dict,
     out_dir: Path,
 ) -> None:
-    population_by_domain = []
-    for h in ansible_groups.get("domain_controllers", []) + ansible_groups.get("child_domain_controllers", []):
-        population_by_domain.append({
-            "domain": h["domain"],
-            "users": h.get("badblood_user_count"),
-            "groups": h.get("badblood_group_count"),
-            "computers": h.get("badblood_computer_count"),
-            "seed": h.get("badblood_seed"),
-        })
-
     # "Administrator" here is the domain's real RID-500 account, not a fresh
     # object win_domain creates: promoting the first DC of a new forest seeds
     # it from whatever local account did the promotion, which is always
@@ -1458,8 +1526,7 @@ def render_lab_report(
         "machines": machines,
         "forest": spec["forest"],
         "population": spec["population"],
-        "population_by_domain": population_by_domain,
-        "theme_extra_groups": theme["extra_groups"],
+        "population_plans": manifest["population_plans"],
         "domain_admin_rows": domain_admin_rows,
         "winrm_username": WINRM_AUTOMATION_USERNAME,
         "winrm_password": ansible_password,
@@ -1471,6 +1538,7 @@ def render_lab_report(
         "edr_plan": edr_plan,
         "deception_plan": deception_plan,
         "reconciliation": manifest["reconciliation"],
+        "attack_chain": manifest["attack_chain"],
     }
 
     # Markdown tables break on a blank line between rows (unlike the YAML
@@ -1534,9 +1602,11 @@ def render_verify_playbook(
     resolved_controls: dict,
     edr_plan: list[dict],
     planned_vulns: list[dict],
+    population_plans: list[dict],
     out_dir: Path,
 ) -> None:
     dc_domain_hosts = ansible_groups.get("domain_controllers", []) + ansible_groups.get("child_domain_controllers", [])
+    population_by_domain = {p["domain"]: p for p in population_plans}
 
     apply_to = set(hardening_plan.get("apply_to", [])) or expand_role_or_all(None)
     all_target_hosts = [m["name"] for m in machines if m["role"] in apply_to]
@@ -1560,6 +1630,7 @@ def render_verify_playbook(
 
     context = {
         "dc_domain_hosts": dc_domain_hosts,
+        "population_by_domain": population_by_domain,
         "theme_extra_groups": theme["extra_groups"],
         "all_target_hosts": all_target_hosts,
         "dc_target_hosts": dc_target_hosts,
@@ -1651,11 +1722,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
         network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
     )
     theme = load_theme(spec["lab"]["theme"])
-    ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, theme, out_dir)
-    render_ad_theming(theme, out_dir)
+    ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, out_dir)
+    population_plans = render_ad_population(theme, spec, ansible_groups, out_dir)
 
     catalog = load_vuln_catalog()
-    planned_vulns = plan_vuln_injection(spec, catalog, machines, ansible_groups, reconciliation)
+    attack_chain_mode = spec.get("attack_chain", {}).get("mode", "independent")
+    attack_chain = resolve_attack_chain(spec, catalog, population_plans, attack_chain_mode)
+    planned_vulns = plan_vuln_injection(spec, catalog, machines, ansible_groups, reconciliation, attack_chain)
     render_vuln_injection(spec, planned_vulns, out_dir)
 
     resolved_defense = manifest["defense_resolved"]
@@ -1668,6 +1741,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     manifest["machines_flat"] = machines
     manifest["ansible_groups"] = ansible_groups
     manifest["theme"] = theme["id"]
+    manifest["population_plans"] = population_plans
+    manifest["attack_chain"] = attack_chain
     manifest["vulnerabilities_planned"] = planned_vulns
     manifest["hardening_plan"] = hardening_plan
     manifest["edr_plan"] = edr_plan
@@ -1682,7 +1757,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
     render_verify_playbook(
         machines, ansible_groups, theme, hardening_plan,
-        resolved_defense["hardening"].get("controls", {}), edr_plan, planned_vulns, out_dir,
+        resolved_defense["hardening"].get("controls", {}), edr_plan, planned_vulns, population_plans, out_dir,
     )
 
     print(f"OK: generated {spec_path.name} -> {out_dir.relative_to(REPO_ROOT) if out_dir.is_relative_to(REPO_ROOT) else out_dir}")
@@ -1691,7 +1766,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print("  wrote ansible/playbooks/verify.yml (post-deploy check, run separately after site.yml — see README)")
     print(f"  wrote terraform/{provider}/ (terraform.tfvars.json has generated secrets — gitignored, never commit)")
     print("  wrote ansible/ (inventory/hosts.yml has generated secrets — gitignored, never commit)")
-    print(f"  wrote ansible/files/badblood/ (theme '{theme['id']}' overlay on vendor/BadBlood)")
+    total_users = sum(len(p["users"]) for p in population_plans)
+    total_groups = sum(len(p["groups"]) for p in population_plans)
+    total_computers = sum(len(p["computers"]) for p in population_plans)
+    print(f"  wrote ansible/playbooks/ad-population.yml (theme '{theme['id']}', {total_users} users / {total_groups} groups / {total_computers} computers, deterministic — no BadBlood)")
+    if attack_chain["mode"] == "ctf":
+        print(f"  attack_chain: ctf mode — {len(attack_chain['steps'])} vuln(s) cast onto real population objects, {len(attack_chain.get('chained', []))} chained")
     if planned_vulns:
         print(f"  wrote ansible/playbooks/vuln-injection.yml + ansible/vulns/ ({len(planned_vulns)} vuln(s))")
         for v in planned_vulns:
@@ -1711,15 +1791,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------------------
 # ad-inventory: a POST-DEPLOY report, genuinely different from lab-report.md
-# (which is spec-time/pre-deploy). BadBlood's own per-user passwords are
-# randomly generated with PowerShell's Get-Random on the Windows host during
-# `site.yml` and never written anywhere — not even by BadBlood itself, not
-# recoverable by this script either. The only honest way to document "users
-# with password" after a real deploy is what's actually recoverable from the
-# live domain: NT hashes via a DCSync-style dump (pass-the-hash usable,
-# crackable offline), not plaintext. Queries the domain directly — LDAP
-# (ldap3) for users/groups, `nxc`/netexec for the hash dump — rather than
-# guessing anything from the spec.
+# (which is spec-time/pre-deploy). Since scripts/population.py replaced
+# BadBlood, every user's plaintext password IS already known and documented
+# ahead of deployment (lab-report.md's Population section) — this command's
+# job is no longer "discover what an unpredictable population turned out to
+# be," it's verification: confirm the live domain actually matches what
+# lab-manifest.json's population_plans said would be created, and pull NT
+# hashes via a DCSync-style dump for anything this project doesn't itself
+# control (e.g. an operator's own manual changes to the lab after deploy).
+# Queries the domain directly — LDAP (ldap3) for users/groups, `nxc`/netexec
+# for the hash dump — rather than guessing anything from the spec.
 # ---------------------------------------------------------------------------
 
 def query_ad_inventory(dc_ip: str, domain: str, admin_user: str, admin_password: str) -> dict:
@@ -1844,6 +1925,17 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
         u["privileged"] = bool(privileged_groups & set(u["groups"]))
     for g in data["groups"]:
         g["privileged"] = g["name"] in privileged_groups
+
+    # Verification, not discovery: population_plans already says exactly who
+    # SHOULD exist — flag anything missing (a failed/partial ad-population.yml
+    # run) rather than just reporting whatever LDAP happens to return.
+    planned_names = {
+        u["name"] for p in manifest.get("population_plans", []) if p["domain"] == domain for u in p["users"]
+    }
+    live_names = {u["username"] for u in data["users"]}
+    missing = planned_names - live_names
+    if planned_names and missing:
+        print(f"warning: {len(missing)} of {len(planned_names)} planned population users were NOT found live — ad-population.yml may not have completed.", file=sys.stderr)
 
     template = jinja2.Template(
         (TEMPLATES_DIR / "ad-inventory.md.j2").read_text(encoding="utf-8"), keep_trailing_newline=True

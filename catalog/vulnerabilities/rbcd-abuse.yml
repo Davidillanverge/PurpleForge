@@ -35,3 +35,5 @@ mitigate:
 validate:
   bloodhound_edge: "AllowedToAct"
   atomic: null
+chain:
+  target_shape: account

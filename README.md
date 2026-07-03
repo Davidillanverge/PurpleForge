@@ -9,8 +9,8 @@ alongside the intentional vulnerabilities.
 PurpleForge does not reinvent Windows/AD deployment or endpoint hardening. It
 wraps and reuses mature upstream projects, pinned as git submodules in
 `vendor/`: **GOAD v3** (IaC + AD engine), **Splunk Attack Range** (design
-reference for instrumentation), **BadBlood** (realistic population),
-**Vulnerable-AD** (vulnerability primitives), and **ansible-lockdown**
+reference for instrumentation), **Vulnerable-AD** (vulnerability
+primitives), and **ansible-lockdown**
 (CIS/STIG hardening roles).
 
 See `DISENO-purpleforge.md` for the full design rationale and
@@ -124,7 +124,7 @@ it, `generate` still renders every file, it just skips the plan step.
 > **Status:** `lab-spec` (validation/reconciliation/manifest) and, for Azure,
 > `network-topology` + `infra-azure` + `ad-topology` + `ad-theming` +
 > `vuln-injection` + `defensive-controls` (Terraform + Ansible generation,
-> themed/seeded BadBlood population, catalog-driven vulnerability injection,
+> themed/seeded deterministic population (`scripts/population.py`), catalog-driven vulnerability injection,
 > ansible-lockdown hardening with reconciliation-derived skip_rules, EDR,
 > deception) are implemented end-to-end — see `PROMPT-claude-code.md`
 > §"Orden de trabajo" for the phase-by-phase roadmap. **`detection-lab` is
@@ -237,29 +237,30 @@ still applies.
 
 ## Theming and population
 
-`lab.theme` + `population` drive a themed, deterministic BadBlood run per
-domain — no fork of `vendor/BadBlood`, only data-file substitution:
+`lab.theme` + `population` drive a themed, fully deterministic population —
+OU tree, users (with passwords), groups, and computers — computed entirely
+in Python (`scripts/population.py`) before any deployment happens:
 
 ```yaml
 lab:      { theme: medieval-kingdom, ... }
 population: { users: 300, density: realistic, seed: 1337 }
 ```
 
-`population.users` becomes BadBlood's `UserCount` directly;
-`GroupCount`/`ComputerCount` scale off it by `density`. `catalog/themes/<theme>.yml`'s
-vocabulary (department "house" codes, given/family name pools) overwrites
-BadBlood's own `Names/*.txt`/`3lettercodes.csv` at the exact paths its
-scripts already read from, and `Get-Random -SetSeed population.seed` (offset
-per domain in a multi-domain forest) makes the whole run reproducible —
-BadBlood consistently draws randomness through `Get-Random`, which honors a
-process-wide seed. See `.claude/skills/ad-theming/SKILL.md` for the full
-mechanism, including the one genuinely new piece (no BadBlood equivalent):
-`extra_groups`, theme-specific privileged groups layered on top after
-BadBlood populates the domain.
+`population.users` is the direct user count; `GroupCount`/`ComputerCount`
+scale off it by `density`. `catalog/themes/<theme>.yml`'s vocabulary
+(department "house" codes, given/family name pools) feeds the generator
+directly, and `random.Random(population.seed)` (offset per domain in a
+multi-domain forest) makes the whole plan reproducible. This replaced an
+earlier BadBlood-wrapping design — `vendor/BadBlood` stays in the repo
+pinned but unused; see `.claude/skills/ad-theming/SKILL.md` for the full
+mechanism and why the replacement happened. Theme `extra_groups`
+(theme-specific privileged groups) fold directly into the same population
+plan, tagged `curated: true`.
 
 ```bash
 python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
-cat generated/shadow-keep/ansible/files/badblood/AD_OU_CreateStructure/3lettercodes.csv
+# every user/group/computer/OU is already in lab-manifest.json's population_plans
+python3 -c "import json; m=json.load(open('generated/shadow-keep/lab-manifest.json')); print(len(m['population_plans'][0]['users']), 'users')"
 ```
 
 ## Vulnerability catalog
@@ -359,20 +360,20 @@ vulnerability-injection account's password — so it lives in
 `generated/<lab>/` (gitignored) right alongside the manifest, never
 committed, never shared outside the lab's authorized operators.
 
-**What it deliberately does NOT show**: the literal usernames/group names
-BadBlood will create, or the honey accounts' passwords. Both are randomized
-at *deploy time* on the Windows host itself (BadBlood through PowerShell's
-`Get-Random`, honey accounts through an Ansible `lookup()` plugin) — Python
-can't reproduce .NET's RNG sequence from the same integer seed, so claiming
-otherwise here would be exactly the kind of unverified claim this project
-has repeatedly caught and corrected (see Defensive controls, above). Only
-the *counts* and the seed itself are known ahead of deployment; query the
-live domain for the real names after `/deploy` — see `ad-inventory`, next.
+**It does show every population user's real name and password** — unlike
+BadBlood-era PurpleForge, the whole population is a deterministic Python
+computation (`scripts/population.py`), so nothing here is randomized on the
+Windows host at deploy time. The one thing still not knowable ahead of
+deployment is the honey accounts' passwords, randomized at *deploy time* via
+an Ansible `lookup()` plugin — query the live domain for those after
+`/deploy`, see `ad-inventory`, next.
 
 ## Post-deploy AD inventory (`forge.py ad-inventory`)
 
-`lab-report.md` is spec-time and can never show the real usernames — but
-once the lab is actually deployed and reachable (WireGuard tunnel up),
+`lab-report.md` already documents every population user's plaintext
+password ahead of deployment — `ad-inventory` is **verification**, not
+discovery: once the lab is actually deployed and reachable (WireGuard
+tunnel up),
 
 ```bash
 python3 scripts/forge.py ad-inventory specs/examples/<lab>.yml
@@ -380,23 +381,23 @@ python3 scripts/forge.py ad-inventory specs/examples/<lab>.yml
 ```
 
 queries the live domain directly (LDAP via `ldap3` for every user + group +
-membership, `nxc`/netexec for an NTDS hash dump via DCSync) and renders
-every user (NT hash, group memberships, tagged `VULN:<id>` if it's one of
-the injected vulnerability accounts, tagged `PRIV` if it's in a privileged
-group) and every group (description, full member list). This is
-deliberately NOT plaintext passwords: BadBlood's own per-user passwords are
-randomly generated with PowerShell's `Get-Random` on the DC and never
-written anywhere — not recoverable by this project or anyone else after the
-fact. NT hashes genuinely are stored in AD and DCSync-recoverable, and are
-directly usable (pass-the-hash) or crackable offline (`hashcat -m 1000`),
-so this is the honest equivalent for a live domain. Same sensitivity as
-`lab-report.md` — gitignored, never commit it, re-run anytime the domain
-changes (it always reflects current state, not original intent).
+membership, `nxc`/netexec for an NTDS hash dump via DCSync), confirms the
+live domain actually matches `lab-manifest.json`'s `population_plans`
+(flagging anything missing — a failed/partial `ad-population.yml` run), and
+renders every user (NT hash, group memberships, tagged `VULN:<id>` if it's
+one of the injected vulnerability accounts, tagged `PRIV` if it's in a
+privileged group) and every group (description, full member list). NT
+hashes are pulled here (not from the spec-time report) because they
+genuinely are stored in AD and DCSync-recoverable regardless of what this
+project computed — directly usable (pass-the-hash) or crackable offline
+(`hashcat -m 1000`). Same sensitivity as `lab-report.md` — gitignored, never
+commit it, re-run anytime the domain changes (it always reflects current
+state, not original intent).
 
 ## Deploy order: `site.yml` is the entry point
 
 `generate` also writes `ansible/playbooks/site.yml`, importing
-`ad-topology.yml` → `ad-theming.yml` → `defensive-controls.yml` →
+`ad-topology.yml` → `ad-population.yml` → `defensive-controls.yml` →
 `vuln-injection.yml` (only if the spec has any vulnerabilities) in that
 order — this is what makes "hardening applies before vulnerabilities are
 injected" (CLAUDE.md's deploy-order invariant) actually true rather than
@@ -529,7 +530,8 @@ ansible-playbook -i inventory/hosts.yml playbooks/verify.yml
 ```
 
 It checks, per host, exactly what `lab-report.md` says was requested: AD
-DNSRoot + BadBlood population counts and each theme's `extra_groups` on the
+DNSRoot + population counts (against `lab-manifest.json`'s
+`population_plans`) and each theme's `extra_groups` on the
 domain controllers; every fixed hardening control from `defense.hardening`
 (LSA PPL, SMB signing, NTLMv2-only, Credential Guard, LLMNR/NBT-NS/mDNS,
 LAPS, plus LDAP signing and Protected Users membership on DCs only); Defender
@@ -553,7 +555,7 @@ ansible domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
 ansible child_domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
   -a "Get-ADTrust -Filter *"
 
-# Population (BadBlood) — counts only, literal names aren't predictable from the spec (see Theming)
+# Population — real names/passwords already in lab-report.md; this just confirms the live counts match
 ansible domain_controllers:child_domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
   -a "'{0} users, {1} groups, {2} computers' -f (Get-ADUser -Filter *).Count,(Get-ADGroup -Filter *).Count,(Get-ADComputer -Filter *).Count"
 

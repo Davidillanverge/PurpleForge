@@ -34,3 +34,5 @@ mitigate:
 validate:
   bloodhound_edge: "DCSync"
   atomic: T1003.006
+chain:
+  target_shape: account

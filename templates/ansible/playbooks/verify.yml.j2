@@ -33,17 +33,17 @@
       ansible.builtin.debug:
         msg: "{{ '{{' }} r_domain_{{ loop.index }}.stdout {{ '}}' }}"
 
-    - name: "verify | BadBlood population counts (informational — literal names aren't predictable, see lab-report.md)"
+    - name: "verify | population counts match the precomputed plan (scripts/population.py)"
       ansible.windows.win_shell: |
         $u = (Get-ADUser -Filter *).Count
         $g = (Get-ADGroup -Filter *).Count
         $c = (Get-ADComputer -Filter *).Count
-        Write-Output "actual: $u users / $g groups / $c computers (requested via BadBlood: {{ h.badblood_user_count }} / {{ h.badblood_group_count }} / {{ h.badblood_computer_count }} plus AD's own built-in objects and this harness's own theme/vuln accounts)"
+        Write-Output "actual: $u users / $g groups / $c computers (plan expected: {{ population_by_domain[h.domain].users | length if h.domain in population_by_domain else '?' }} / {{ population_by_domain[h.domain].groups | length if h.domain in population_by_domain else '?' }} / {{ population_by_domain[h.domain].computers | length if h.domain in population_by_domain else '?' }} plus AD's own built-in objects and any vuln-injection accounts cast onto them)"
       register: r_pop_{{ loop.index }}
       changed_when: false
       ignore_errors: true
 
-    - name: "verify | BadBlood population counts | result"
+    - name: "verify | population counts | result"
       ansible.builtin.debug:
         msg: "{{ '{{' }} r_pop_{{ loop.index }}.stdout {{ '}}' }}"
 

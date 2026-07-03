@@ -37,3 +37,5 @@ mitigate:
 validate:
   bloodhound_edge: "MemberOf"
   atomic: T1003.003
+chain:
+  target_shape: account

@@ -32,3 +32,5 @@ mitigate:
 validate:
   bloodhound_edge: "ADCSESC1"
   atomic: T1649
+chain:
+  target_shape: none

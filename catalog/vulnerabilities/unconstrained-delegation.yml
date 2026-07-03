@@ -38,3 +38,6 @@ mitigate:
 validate:
   bloodhound_edge: "AllowedToDelegate"
   atomic: T1187
+chain:
+  # none: targets a machine (unchanged by this feature), not a casted account/group.
+  target_shape: none

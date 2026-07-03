@@ -34,3 +34,8 @@ mitigate:
 validate:
   bloodhound_edge: "HasSPN"
   atomic: T1558.003
+chain:
+  # account: this vuln targets a single named account (the population
+  # generator's own object, not a synthetic one — see scripts/population.py
+  # and resolve_attack_chain() in scripts/forge.py).
+  target_shape: account

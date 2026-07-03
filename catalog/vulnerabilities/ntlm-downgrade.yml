@@ -39,3 +39,5 @@ mitigate:
 validate:
   bloodhound_edge: null
   atomic: T1110.002
+chain:
+  target_shape: none

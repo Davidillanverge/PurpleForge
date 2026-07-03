@@ -56,41 +56,44 @@
 | {{ d.domain }} | {{ d.netbios }} | {{ d.functional_level }} | {{ d.domain_controllers }} | {{ (d.trust.type ~ " -> " ~ d.trust.target) if d.trust else "—" }} |
 {% endfor %}
 
-## Population (BadBlood)
+## Population
 
 Requested: {{ population.users }} users, density `{{ population.density }}`, seed `{{ population.seed }}`.
+Fully deterministic and known ahead of deployment — `scripts/population.py`
+replaces BadBlood entirely, so (unlike a BadBlood-based population) every
+name, password, OU, and group membership below is exactly what
+`ad-population.yml` will create, not a live-discovery-only artifact.
 
-| Domain | Users | Groups | Computers | Seed used |
-|---|---|---|---|---|
-{% for p in population_by_domain %}
-| {{ p.domain }} | {{ p.users }} | {{ p.groups }} | {{ p.computers }} | {{ p.seed }} |
+{% for p in population_plans %}
+### {{ p.domain }}
+
+{{ p.users | length }} users, {{ p.groups | length }} groups ({{ p.groups | selectattr('curated') | list | length }} curated by theme `{{ theme_id }}`, {{ p.groups | rejectattr('curated') | list | length }} bulk), {{ p.computers | length }} computers, {{ p.ous | length }} OUs.
+
+#### Users
+
+| Name | Password | OU | Notes |
+|---|---|---|---|
+{% for u in p.users %}
+| {{ u.name }} | `{{ u.password }}` | {{ u.ou }} | {{ "service account" if u.is_service_account }}{{ ", AS-REP roastable" if u.asrep_roastable }}{{ ", password in description" if u.password_in_description }} |
 {% endfor %}
 
-> **The literal usernames/group names above are NOT predictable from this
-> report.** BadBlood draws all of its randomness through PowerShell's
-> `Get-Random`, seeded via `Get-Random -SetSeed` at deploy time on the
-> Windows host itself — .NET's RNG algorithm differs from Python's, so the
-> same integer seed does not reproduce the same name sequence here. Only the
-> counts and the seed (for re-running BadBlood identically later) are known
-> ahead of deployment. Query the live domain (`Get-ADUser -Filter *`) for the
-> real names after `/deploy`.
+#### Groups
 
-## AD groups created by this harness (not BadBlood)
-
-Theme `{{ theme_id }}`'s curated groups, created by the `ad_theming_overlay`
-role — deterministic, unlike BadBlood's bulk population above:
-
-{% if theme_extra_groups %}
-| Group | Description |
-|---|---|
-{% for g in theme_extra_groups %}
-| {{ g.name }} | {{ g.description }} |
+| Name | Curated | OU | Description |
+|---|---|---|---|
+{% for g in p.groups %}
+| {{ g.name }} | {{ "yes" if g.curated else "no" }} | {{ g.ou if g.ou else "(domain root)" }} | {{ g.description }} |
 {% endfor %}
 
-{% else %}
-None defined by this theme.
+#### Computers
 
-{% endif %}
+| Name | OU | Extra SPN |
+|---|---|---|
+{% for c in p.computers %}
+| {{ c.name }} | {{ c.ou }} | {{ "yes" if c.extra_spn else "no" }} |
+{% endfor %}
+
+{% endfor %}
 {% if deception_plan.honey_accounts %}
 Plus {{ deception_plan.honey_accounts | length }} deception honey account(s) on `{{ deception_plan.run_on }}` — see Credentials below for names (passwords are randomized by an Ansible lookup at deploy time, not knowable from this report either).
 
@@ -204,6 +207,26 @@ No EDR configured.
 
 {% else %}
 None selected.
+
+{% endif %}
+## Suggested attack path
+
+{% if attack_chain and attack_chain.steps %}
+Mode: `{{ attack_chain.mode }}`{% if attack_chain.mode == "independent" %} — every vuln below targets its own distinct real object, no deliberate overlap{% else %} — vulns may deliberately share a target (see "Chained" below), so exploiting one is a real prerequisite for the next{% endif %}.
+
+{% for s in attack_chain.steps %}
+{{ loop.index }}. `{{ s.id }}`{{ " → targets `" ~ s.cast_name ~ "`" if s.cast_name else "" }}{{ " (not tied to a casted account/group)" if s.target_shape == "none" else "" }}
+{% endfor %}
+
+{% if attack_chain.chained %}
+Chained (same real object reused across steps):
+{% for c in attack_chain.chained %}
+- `{{ c.vuln }}` shares its target (`{{ c.shares_target_with }}`) with an earlier step — cracking/obtaining that credential once is what this step's grant already presupposes.
+{% endfor %}
+
+{% endif %}
+{% else %}
+No vulnerabilities selected.
 
 {% endif %}
 {% if reconciliation.warnings or reconciliation.excluded_controls %}

@@ -39,3 +39,5 @@ mitigate:
 validate:
   bloodhound_edge: "AllowedToDelegate"
   atomic: null
+chain:
+  target_shape: account

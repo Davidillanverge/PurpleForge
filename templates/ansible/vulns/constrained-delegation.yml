@@ -8,19 +8,21 @@
 # with protocol transition to the primary domain's own DC LDAP service — the
 # classic critical misconfiguration (S4U2Self + S4U2Proxy to LDAP on a DC is
 # equivalent to DCSync). Runs on the primary domain's root DC.
-- name: "constrained-delegation | create delegation-enabled account {{ vuln_delegation_account }}"
+#
+# {{ vuln_delegation_account }} is either a fresh synthetic account
+# (independent mode) or an existing real population object cast by
+# resolve_attack_chain() (scripts/forge.py) in ctf mode — either way this
+# task only resets its password + SPN, never identity fields (OU,
+# description) win_domain_user wasn't given; ad-population.yml already set
+# those for every population object.
+- name: "constrained-delegation | reset {{ vuln_delegation_account }}'s password + SPN"
   win_domain_user:
     name: "{{ vuln_delegation_account }}"
-    firstname: Web
-    surname: App
-    description: "Internal web application service account"
     password: "{{ vuln_delegation_password }}"
     password_never_expires: true
     spn:
       - "HTTP/{{ vuln_delegation_account }}.{{ domain }}"
     spn_action: replace
-    groups:
-      - Domain Users
     state: present
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"

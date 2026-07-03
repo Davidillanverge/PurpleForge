@@ -26,6 +26,7 @@
       "uniqueItems": true
     },
     "defense": { "$ref": "#/$defs/defense" },
+    "attack_chain": { "$ref": "#/$defs/attack_chain" },
     "on_conflict": {
       "type": "string",
       "description": "How to resolve a hardening control that would neutralize a selected vulnerability (see catalog vuln 'neutralized_by').",
@@ -183,7 +184,12 @@
         },
         "seed": {
           "type": "integer",
-          "description": "Propagated to BadBlood/theming for deterministic, reproducible population."
+          "description": "Drives PurpleForge's own deterministic population generator (scripts/population.py) and theming — same seed always produces the same OU tree/users/groups/computers."
+        },
+        "include_noise_acls": {
+          "type": "boolean",
+          "description": "Whether to add BadBlood-style random GenericAll grants (realistic misconfiguration clutter) on top of the deliberately-injected vulnerabilities. Default true (matches prior BadBlood-based behavior); set false for a cleaner signal-to-noise ratio, e.g. when attack_chain.mode is ctf.",
+          "default": true
         }
       }
     },
@@ -312,6 +318,19 @@
             "type": "string",
             "pattern": "^T[0-9]{4}(\\.[0-9]{3})?$"
           }
+        }
+      }
+    },
+
+    "attack_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "'independent' (default): every selected vulnerability targets its own real population object, no deliberate overlap. 'ctf': resolve_attack_chain() prefers reusing the same real object across multiple selected vulnerabilities where their target_shape is compatible, so exploiting one is a real prerequisite for the next.",
+          "enum": ["independent", "ctf"],
+          "default": "independent"
         }
       }
     }

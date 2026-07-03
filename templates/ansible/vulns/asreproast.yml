@@ -1,21 +1,21 @@
 ---
 # Vuln inject task-file: asreproast (T1558.004)
 # Reuses Vulnerable-AD's VulnAD-ASREPRoasting technique (Set-ADAccountControl
-# -DoesNotRequirePreAuth $true) but on a NAMED deterministic account rather than
-# a random user. userAccountControl's DONT_REQ_PREAUTH bit isn't cleanly
-# settable through win_domain_user, so we create the account with that module
-# (idempotent) then flip the flag with the exact Set-ADAccountControl call
-# Vulnerable-AD uses (win_powershell reports Changed only when it actually flips).
-- name: "asreproast | create account {{ vuln_asrep_account }}"
+# -DoesNotRequirePreAuth $true) but on a NAMED deterministic account rather
+# than a random user — {{ vuln_asrep_account }} is either a fresh synthetic
+# account (independent mode) or an existing real population object cast by
+# resolve_attack_chain() (scripts/forge.py) in ctf mode. Either way this task
+# only resets its password to the crackable value below and never touches
+# identity fields (OU, description, etc.) win_domain_user wasn't given —
+# ad-population.yml already created every population object with those set.
+# userAccountControl's DONT_REQ_PREAUTH bit isn't cleanly settable through
+# win_domain_user, so a separate win_powershell task flips it with the exact
+# Set-ADAccountControl call Vulnerable-AD uses.
+- name: "asreproast | reset {{ vuln_asrep_account }}'s password to the crackable value"
   win_domain_user:
     name: "{{ vuln_asrep_account }}"
-    firstname: Legacy
-    surname: App
-    description: "Legacy application service account"
     password: "{{ vuln_asrep_password }}"
     password_never_expires: true
-    groups:
-      - Domain Users
     state: present
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"

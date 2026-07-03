@@ -1,0 +1,203 @@
+{#
+  PurpleForge — ad-population playbook for {{ lab_name }} (GENERATED, do not edit).
+
+  Replaces vendor/BadBlood entirely. Every OU/user/group/computer/membership/
+  ACL-noise-grant below was already decided deterministically in Python
+  (scripts/population.py, seeded from population.seed) before this file was
+  even rendered — this playbook only APPLIES that precomputed plan, via
+  native community.windows modules, to the domain once its root DC exists.
+  Unlike BadBlood (which draws its randomness on the Windows host itself at
+  Ansible-runtime and never persists per-user passwords anywhere), every
+  object here — including every user's password — is already recorded in
+  lab-manifest.json's population_plan and documented in lab-report.md.
+
+  Runs once per domain, against that domain's root DC only (never against
+  domain_controllers_additional — population is a property of the domain as
+  a whole; any single DC in it sees the same directory).
+#}
+---
+{% for p in population_plans %}
+- name: "PurpleForge | ad-population | apply precomputed population for {{ p.domain }} ({{ p.users | length }} users / {{ p.groups | length }} groups / {{ p.computers | length }} computers / {{ p.ous | length }} OUs)"
+  hosts: {{ p.run_on }}
+  gather_facts: false
+  vars:
+    domain_username: {{ p.domain_username }}
+    domain_password: "{{ p.domain_password }}"
+    # tojson on the whole list (not a per-item Jinja for-loop block emitting
+    # YAML list-item syntax) — verified on a real deploy that a for-loop
+    # block producing zero lines (e.g. no computer happened to roll
+    # extra_spn) leaves the YAML key with no value at all, which parses as
+    # null, not [] — breaking `loop:` ("requires a list, got... None")
+    # downstream. tojson always emits a syntactically complete value, empty
+    # or not.
+    pf_pop_ous: {{ p.ous | tojson }}
+    pf_pop_users: {{ p.users | tojson }}
+    pf_pop_groups: {{ p.groups | tojson }}
+    pf_pop_computers: {{ p.computers | tojson }}
+    pf_pop_computers_extra_spn: {{ p.computers | selectattr('extra_spn') | map(attribute='name') | list | tojson }}
+    pf_pop_memberships: {{ p.memberships | tojson }}
+    pf_pop_acl_noise: {{ p.acl_noise | tojson }}
+  tasks:
+    - name: "ad-population | create OU tree"
+      # community.windows.win_domain_ou's own implementation always does an
+      # unscoped `Get-ADOrganizationalUnit -Filter '*' -Properties '*'` (every
+      # OU in the whole domain, every property incl. nTSecurityDescriptor) as
+      # its existence check, on EVERY loop iteration — verified on a real
+      # deploy that this is not just slow but genuinely fails ("Either the
+      # target name is incorrect or the server has rejected the client
+      # credentials", a real .NET/LDAP exception, not a credentials problem —
+      # confirmed by successfully authenticating with the exact same
+      # credentials manually) once the domain has on the order of a hundred+
+      # OUs, on a 1-vCPU DC. A single ad-hoc (non-looped) call to the same
+      # module succeeds fine — this is specific to the cost of that full-scan
+      # query compounding across a couple hundred loop iterations. Targeted
+      # `-Identity` lookup by DN (this task) is O(1) per item instead.
+      #
+      # Explicit -Credential inside the script (not ansible_become/runas):
+      # verified on the same real deploy that runas'ing 190 CreateProcessAsUser
+      # calls in a tight loop intermittently throws "the user name or password
+      # is incorrect" (Win32 1326) for the exact same credential that just
+      # succeeded on the previous iteration — not reproducible with a single
+      # call. Building the PSCredential explicitly and passing it straight to
+      # the AD cmdlets (the same mechanism win_domain_user/win_domain_group/
+      # win_domain_computer already use internally, already proven reliable
+      # across the rest of this playbook) sidesteps runas entirely.
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param([String]$Name, [String]$Path, [String]$Username, [String]$Password)
+          Import-Module ActiveDirectory
+          $secPassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($Username, $secPassword)
+          $dn = "OU=$Name,$Path"
+          $existing = Get-ADOrganizationalUnit -Identity $dn -Credential $cred -ErrorAction SilentlyContinue
+          if (-not $existing) {
+            New-ADOrganizationalUnit -Name $Name -Path $Path -ProtectedFromAccidentalDeletion $false -Credential $cred
+            $Ansible.Changed = $true
+          } else {
+            $Ansible.Changed = $false
+          }
+        parameters:
+          Name: "{{ '{{ item.name }}' }}"
+          Path: "{{ '{{ item.path }}' }}"
+          Username: "{{ '{{ domain_username }}' }}"
+          Password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_ous }}' }}"
+      loop_control:
+        label: "{{ '{{ item.name }}' }}"
+
+    - name: "ad-population | create users"
+      win_domain_user:
+        name: "{{ '{{ item.name }}' }}"
+        password: "{{ '{{ item.password }}' }}"
+        password_never_expires: true
+        description: "{{ '{{ item.description }}' }}"
+        path: "{{ '{{ item.ou }}' }}"
+        state: present
+        domain_username: "{{ '{{ domain_username }}' }}"
+        domain_password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_users }}' }}"
+      loop_control:
+        label: "{{ '{{ item.name }}' }}"
+
+    - name: "ad-population | mark AS-REP-roastable users (BadBlood noise: DoesNotRequirePreAuth)"
+      # Explicit -Credential, not ansible_become/runas — see the OU-creation
+      # task's comment above for why looped runas is unreliable here.
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param([String]$Account, [String]$Username, [String]$Password)
+          $secPassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($Username, $secPassword)
+          Set-ADAccountControl -Identity $Account -DoesNotRequirePreAuth $true -Credential $cred
+        parameters:
+          Account: "{{ '{{ item.name }}' }}"
+          Username: "{{ '{{ domain_username }}' }}"
+          Password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_users | selectattr(\'asrep_roastable\') | list }}' }}"
+      loop_control:
+        label: "{{ '{{ item.name }}' }}"
+
+    - name: "ad-population | create groups"
+      win_domain_group:
+        name: "{{ '{{ item.name }}' }}"
+        scope: global
+        category: security
+        description: "{{ '{{ item.description }}' }}"
+        path: "{{ '{{ item.ou }}' }}"
+        state: present
+        domain_username: "{{ '{{ domain_username }}' }}"
+        domain_password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_groups }}' }}"
+      loop_control:
+        label: "{{ '{{ item.name }}' }}"
+
+    - name: "ad-population | create computers"
+      community.windows.win_domain_computer:
+        name: "{{ '{{ item.name }}' }}"
+        dns_hostname: "{{ '{{ item.name }}' }}.{{ p.domain }}"
+        ou: "{{ '{{ item.ou }}' }}"
+        enabled: true
+        state: present
+        domain_username: "{{ '{{ domain_username }}' }}"
+        domain_password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_computers }}' }}"
+      loop_control:
+        label: "{{ '{{ item.name }}' }}"
+
+    - name: "ad-population | give ~10% of computers an extra HOST SPN (BadBlood noise)"
+      # Explicit -Credential, not ansible_become/runas — see the OU-creation
+      # task's comment above for why looped runas is unreliable here.
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param([String]$ComputerName, [String]$Username, [String]$Password)
+          $secPassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($Username, $secPassword)
+          Set-ADComputer -Identity "$ComputerName$" -Add @{servicePrincipalName = "HOST/$ComputerName"} -Credential $cred
+        parameters:
+          ComputerName: "{{ '{{ item }}' }}"
+          Username: "{{ '{{ domain_username }}' }}"
+          Password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_computers_extra_spn }}' }}"
+      loop_control:
+        label: "{{ '{{ item }}' }}"
+
+    - name: "ad-population | apply group memberships (BadBlood-ratio nesting/padding noise)"
+      win_domain_group_membership:
+        name: "{{ '{{ item.group }}' }}"
+        members:
+          - "{{ '{{ item.member }}' }}"
+        state: present
+        domain_username: "{{ '{{ domain_username }}' }}"
+        domain_password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_memberships }}' }}"
+      loop_control:
+        label: "{{ '{{ item.member }} -> {{ item.group }}' }}"
+
+    - name: "ad-population | apply BadBlood-style GenericAll noise ACLs"
+      # dsacls.exe is a separate process, not a PowerShell cmdlet, so it can't
+      # take a -Credential object directly — Start-Process -Credential runs it
+      # as the domain admin without relying on ansible_become/runas (see the
+      # OU-creation task's comment above for why looped runas is unreliable
+      # here). Best-effort noise (not a deliberate vuln primitive), so
+      # $Ansible.Changed is always true rather than diffing dsacls output.
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding()]
+          param([String]$Grantee, [String]$TargetDN, [String]$Username, [String]$Password)
+          $secPassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($Username, $secPassword)
+          $domainNb = ($Username -split '\\')[0]
+          $argList = @($TargetDN, '/I:S', '/G', "$($domainNb)\$($Grantee):GA")
+          Start-Process -FilePath dsacls.exe -ArgumentList $argList -Credential $cred -Wait -NoNewWindow -RedirectStandardOutput NUL -RedirectStandardError NUL
+          $Ansible.Changed = $true
+        parameters:
+          Grantee: "{{ '{{ item.grantee }}' }}"
+          TargetDN: "{{ '{{ item.target }}' }}"
+          Username: "{{ '{{ domain_username }}' }}"
+          Password: "{{ '{{ domain_password }}' }}"
+      loop: "{{ '{{ pf_pop_acl_noise }}' }}"
+      loop_control:
+        label: "{{ '{{ item.grantee }} -> {{ item.target }}' }}"
+{% endfor %}
