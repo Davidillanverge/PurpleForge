@@ -346,6 +346,28 @@ export ARM_SUBSCRIPTION_ID=... ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_CLIENT_SE
 python3 scripts/forge.py destroy specs/examples/<your-lab>.yml --yes
 ```
 
+**If `destroy` fails with `Cannot modify extensions in the VM when the VM is
+not running` and/or `Operation 'powerOff' is not allowed on VM '...' since
+the VM is either deallocated or marked to be deallocated`**: `lab.auto_shutdown`
+(every lab has one — CLAUDE.md invariant #4) already fired and deallocated
+the VMs before you got to `destroy`. Terraform's own destroy sequence
+deletes each `azurerm_virtual_machine_extension` first (needs the VM
+*running*) and powers off the Linux bastion explicitly (needs it *not
+already* deallocated) — both fail outright on an already-deallocated VM,
+it's not a retry-and-it-goes-away transient. Start every VM back up, wait
+for `PowerState/running` on all of them, then retry `destroy` — it'll
+complete cleanly the second time, same command:
+
+```bash
+SUB=<your-subscription-id>
+RG=<your-lab>
+for vm in <your-lab>-bastion dc01 mbr01 ws01; do   # your actual VM names, from lab-report.md
+  az rest --method post --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Compute/virtualMachines/$vm/start?api-version=2023-07-01"
+done
+# poll until every one reports PowerState/running (not "starting"), THEN:
+python3 scripts/forge.py destroy specs/examples/<your-lab>.yml --yes
+```
+
 `forge.py destroy` independently confirms via the ARM REST API (`az rest`,
 not `az group show`) that the resource group is actually gone, not just
 that `terraform destroy` exited 0. *(Already fixed at the source: an
@@ -386,6 +408,7 @@ no longer exists, and `docker ps` clutter is just confusing next time.
 | `cannot boot Hypervisor Generation '1'` | Gen2-only size family + Gen1 image | Already fixed for 2016/2019/2022/2025 (`windows.tf`) — check the real SKU list before adding another OS, the Gen2 suffix isn't consistent |
 | `cannot boot with OS image or disk ... check disk controller types` | NVMe-only size (`F*v7`) + an OS image (2016 confirmed) with no NVMe support — a different axis from Hypervisor Generation | Override just that role in `vm_size_overrides` to a SCSI-compatible size, e.g. `Standard_DC1s_v3` |
 | `KDC_ERR_ETYPE_NOSUPP` kerberoasting/AS-REP-roasting/exploiting delegation, for EVERY principal in the domain | Fully-patched KDC no longer treats unset `msDS-SupportedEncryptionTypes` as RC4-crackable by default | Already fixed at the source (vuln-injection sets it to 28) — see `vuln-injection/SKILL.md` |
+| `destroy` fails with `Cannot modify extensions ... VM is not running` / `powerOff ... VM is either deallocated` | `lab.auto_shutdown` already deallocated the VMs before you ran `destroy` | Start every VM, wait for `PowerState/running`, retry `destroy` — see step 8 |
 | `Provider produced inconsistent result after apply` / spurious `already exists` | ARM read-after-write lag on this subscription | Step 4 — `-refresh=false`, import + retry |
 | WinRM times out cross-subnet, works same-subnet | Windows Firewall Public-profile `LocalSubnet` scope | Already fixed (`windows.tf` bootstrap script) |
 | `'add_route' is undefined` | Missing GOAD inventory default | Already fixed (`hosts.yml.j2`) |
