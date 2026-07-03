@@ -1,0 +1,44 @@
+# AD inventory — {{ lab_name }}
+
+> **Contains real NT password hashes from a live deployment** (pass-the-hash
+> usable directly, and crackable offline — `hashcat -m 1000`). This file
+> lives in `generated/{{ lab_name }}/` (gitignored) — never commit it, never
+> share it outside this lab's authorized operators. This is a POST-DEPLOY
+> snapshot, not reproducible from the spec: BadBlood's own per-user
+> passwords are randomly generated with PowerShell's `Get-Random` on the DC
+> during `site.yml` and never written anywhere, not even by BadBlood itself
+> — this file exists because NT hashes (unlike plaintext) genuinely are
+> stored in AD and recoverable via DCSync. Regenerate anytime the domain
+> changes with `python3 scripts/forge.py ad-inventory <spec>`; it always
+> reflects whatever the domain looks like *right now*, not what was
+> originally intended (see `lab-report.md` for that).
+
+Queried {{ generated_at }} against `{{ domain }}` via `{{ dc_ip }}`.
+{% if not nxc_available %}
+> **NT hashes are NOT included below** — `nxc`/`netexec` wasn't found on
+> PATH when this was generated. Install it (`pipx install netexec`) and
+> re-run `ad-inventory` to add them.
+{% endif %}
+
+## Users ({{ users | length }})
+
+`VULN` marks an account intentionally injected as an exploitable gap (see
+`lab-report.md` for the full attack-path description) — its NT hash is the
+literal crackable/exploitable material for that vulnerability, not
+incidental. `PRIV` marks membership in a privileged group (Domain Admins,
+Enterprise Admins, Administrators, Schema Admins, or one of this lab's own
+themed privileged groups).
+
+| Username | Enabled | NT hash | Groups | Notes |
+|---|---|---|---|---|
+{% for u in users -%}
+| {{ u.username }} | {{ "yes" if u.enabled else "no" }} | {{ ("`" + u.nt_hash + "`") if u.nt_hash else "—" }} | {{ u.groups | join(", ") if u.groups else "—" }} | {{ "`VULN:" + u.vuln_id + "` " if u.vuln_id }}{{ "`PRIV`" if u.privileged }} |
+{% endfor %}
+
+## Groups ({{ groups | length }})
+
+{% for g in groups %}
+### {{ g.name }}{{ " `PRIV`" if g.privileged }}{{ " — " + g.description if g.description }}
+
+{{ g.members | length }} member(s){{ ": " + (g.members | join(", ")) if g.members else "" }}
+{% endfor %}

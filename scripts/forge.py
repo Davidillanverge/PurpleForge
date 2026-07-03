@@ -20,11 +20,13 @@ import copy
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import string
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jinja2
@@ -1681,6 +1683,160 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# ad-inventory: a POST-DEPLOY report, genuinely different from lab-report.md
+# (which is spec-time/pre-deploy). BadBlood's own per-user passwords are
+# randomly generated with PowerShell's Get-Random on the Windows host during
+# `site.yml` and never written anywhere — not even by BadBlood itself, not
+# recoverable by this script either. The only honest way to document "users
+# with password" after a real deploy is what's actually recoverable from the
+# live domain: NT hashes via a DCSync-style dump (pass-the-hash usable,
+# crackable offline), not plaintext. Queries the domain directly — LDAP
+# (ldap3) for users/groups, `nxc`/netexec for the hash dump — rather than
+# guessing anything from the spec.
+# ---------------------------------------------------------------------------
+
+def query_ad_inventory(dc_ip: str, domain: str, admin_user: str, admin_password: str) -> dict:
+    from ldap3 import ALL, SIMPLE, SUBTREE, Connection, Server
+
+    upn = f"{admin_user}@{domain}"
+    base_dn = ",".join(f"DC={p}" for p in domain.split("."))
+    server = Server(dc_ip, port=389, get_info=ALL, connect_timeout=15)
+    conn = Connection(server, user=upn, password=admin_password, authentication=SIMPLE, receive_timeout=30)
+    if not conn.bind():
+        raise SpecError(f"LDAP bind to {dc_ip} as {upn} failed: {conn.result}")
+
+    def dn_to_name(dn: str) -> str:
+        return dn.split(",", 1)[0].split("=", 1)[1]
+
+    conn.search(
+        base_dn, "(&(objectClass=user)(objectCategory=person))", SUBTREE,
+        attributes=["sAMAccountName", "userAccountControl", "memberOf", "description"],
+    )
+    users = []
+    for e in conn.entries:
+        uac = int(e.userAccountControl.value)
+        member_of = [dn_to_name(dn) for dn in e.memberOf.values] if "memberOf" in e else []
+        users.append({
+            "username": str(e.sAMAccountName),
+            "enabled": not (uac & 2),  # ADS_UF_ACCOUNTDISABLE
+            "description": str(e.description) if "description" in e and e.description else "",
+            "groups": sorted(member_of),
+        })
+
+    conn.search(base_dn, "(objectClass=group)", SUBTREE, attributes=["sAMAccountName", "description", "member"])
+    groups = []
+    for e in conn.entries:
+        members = [dn_to_name(dn) for dn in e.member.values] if "member" in e else []
+        groups.append({
+            "name": str(e.sAMAccountName),
+            "description": str(e.description) if "description" in e and e.description else "",
+            "members": sorted(members),
+        })
+    conn.unbind()
+
+    hashes: dict[str, dict] = {}
+    nxc_bin = shutil.which("nxc") or shutil.which("netexec")
+    if nxc_bin:
+        result = subprocess.run(
+            [nxc_bin, "smb", dc_ip, "-d", domain, "-u", admin_user, "-p", admin_password, "--ntds", "drsuapi"],
+            capture_output=True, text=True, timeout=300,
+        )
+        # nxc's own line format: "SMB   <ip>   445   <hostname>   <domain\>user:rid:lmhash:nthash:::"
+        for line in result.stdout.splitlines():
+            m = re.search(r"(?:^|\s)(?:[^\s\\]+\\)?([^\s:]+):(\d+):([0-9a-fA-F]{32}):([0-9a-fA-F]{32}):::", line)
+            if m:
+                hashes[m.group(1)] = {"rid": m.group(2), "nt_hash": m.group(4)}
+
+    return {"users": users, "groups": groups, "hashes": hashes, "nxc_available": bool(nxc_bin)}
+
+
+def cmd_ad_inventory(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    spec = load_yaml(spec_path)
+    lab_name = spec["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+
+    inventory_path = lab_dir / "ansible" / "inventory" / "hosts.yml"
+    manifest_path = lab_dir / "lab-manifest.json"
+    if not inventory_path.exists() or not manifest_path.exists():
+        print(f"error: {lab_dir} has no generated inventory/manifest — run `generate` (and deploy) first.", file=sys.stderr)
+        return 2
+
+    inventory = load_yaml(inventory_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    dcs = inventory.get("all", {}).get("children", {}).get("domain_controllers", {}).get("hosts", {})
+    if not dcs:
+        print("error: no domain_controllers found in the generated inventory.", file=sys.stderr)
+        return 2
+    dc_host = next(iter(dcs.values()))
+    dc_ip = dc_host["ansible_host"]
+    domain = dc_host["domain"]
+    admin_user = dc_host["domain_username"].split("\\")[-1]
+    admin_password = dc_host["domain_password"]
+
+    print(f"Querying live domain {domain} via {dc_ip} ...")
+    try:
+        data = query_ad_inventory(dc_ip, domain, admin_user, admin_password)
+    except SpecError as e:
+        print(f"error: {e}\n  Is the WireGuard tunnel up, and is this lab actually deployed?", file=sys.stderr)
+        return 1
+    except ImportError:
+        print("error: ldap3 not installed — pip install -r scripts/requirements.txt", file=sys.stderr)
+        return 2
+    if not data["nxc_available"]:
+        print(
+            "warning: `nxc`/`netexec` not found on PATH — NT hashes will be omitted. "
+            "Install it (pipx install netexec) to include them.",
+            file=sys.stderr,
+        )
+
+    vuln_accounts: dict[str, str] = {}
+    for v in manifest.get("vulnerabilities_planned", []):
+        for k, val in v.get("vars", {}).items():
+            if k.endswith("_account"):
+                vuln_accounts[val] = v["id"]
+
+    builtin_privileged = {"Domain Admins", "Enterprise Admins", "Administrators", "Schema Admins"}
+    theme_privileged: set[str] = set()
+    theme_id = manifest.get("theme")
+    if theme_id:
+        try:
+            theme = load_theme(theme_id)
+            theme_privileged = {g["name"] for g in theme.get("extra_groups", [])}
+        except SpecError:
+            pass  # theme file missing/moved since generate — privileged-group tagging just degrades to builtins only
+    privileged_groups = builtin_privileged | theme_privileged
+
+    for u in data["users"]:
+        u["nt_hash"] = data["hashes"].get(u["username"], {}).get("nt_hash")
+        u["vuln_id"] = vuln_accounts.get(u["username"])
+        u["privileged"] = bool(privileged_groups & set(u["groups"]))
+    for g in data["groups"]:
+        g["privileged"] = g["name"] in privileged_groups
+
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ad-inventory.md.j2").read_text(encoding="utf-8"), keep_trailing_newline=True
+    )
+    rendered = template.render(
+        lab_name=lab_name,
+        domain=domain,
+        dc_ip=dc_ip,
+        users=sorted(data["users"], key=lambda u: u["username"].lower()),
+        groups=sorted(data["groups"], key=lambda g: g["name"].lower()),
+        nxc_available=data["nxc_available"],
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
+    out_path = lab_dir / "ad-inventory.md"
+    out_path.write_text(rendered, encoding="utf-8")
+    print(f"OK: wrote {out_path} ({len(data['users'])} users, {len(data['groups'])} groups, {len(data['hashes'])} NT hashes)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="forge.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1703,6 +1859,14 @@ def main() -> int:
     p_destroy.add_argument("--yes", action="store_true", help="Pass -auto-approve to terraform destroy (default: terraform's own interactive confirmation prompt)")
     p_destroy.add_argument("--check-only", action="store_true", help="Run 'terraform plan -destroy' instead of actually destroying anything")
     p_destroy.set_defaults(func=cmd_destroy)
+
+    p_ad_inventory = sub.add_parser(
+        "ad-inventory",
+        help="Query a LIVE deployed lab's domain (LDAP + DCSync via nxc) and render generated/<lab>/ad-inventory.md: users, groups, NT hashes",
+    )
+    p_ad_inventory.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
+    p_ad_inventory.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_ad_inventory.set_defaults(func=cmd_ad_inventory)
 
     args = parser.parse_args()
     return args.func(args)

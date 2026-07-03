@@ -363,7 +363,31 @@ can't reproduce .NET's RNG sequence from the same integer seed, so claiming
 otherwise here would be exactly the kind of unverified claim this project
 has repeatedly caught and corrected (see Defensive controls, above). Only
 the *counts* and the seed itself are known ahead of deployment; query the
-live domain for the real names after `/deploy`.
+live domain for the real names after `/deploy` — see `ad-inventory`, next.
+
+## Post-deploy AD inventory (`forge.py ad-inventory`)
+
+`lab-report.md` is spec-time and can never show the real usernames — but
+once the lab is actually deployed and reachable (WireGuard tunnel up),
+
+```bash
+python3 scripts/forge.py ad-inventory specs/examples/<lab>.yml
+# writes generated/<lab>/ad-inventory.md
+```
+
+queries the live domain directly (LDAP via `ldap3` for every user + group +
+membership, `nxc`/netexec for an NTDS hash dump via DCSync) and renders
+every user (NT hash, group memberships, tagged `VULN:<id>` if it's one of
+the injected vulnerability accounts, tagged `PRIV` if it's in a privileged
+group) and every group (description, full member list). This is
+deliberately NOT plaintext passwords: BadBlood's own per-user passwords are
+randomly generated with PowerShell's `Get-Random` on the DC and never
+written anywhere — not recoverable by this project or anyone else after the
+fact. NT hashes genuinely are stored in AD and DCSync-recoverable, and are
+directly usable (pass-the-hash) or crackable offline (`hashcat -m 1000`),
+so this is the honest equivalent for a live domain. Same sensitivity as
+`lab-report.md` — gitignored, never commit it, re-run anytime the domain
+changes (it always reflects current state, not original intent).
 
 ## Deploy order: `site.yml` is the entry point
 

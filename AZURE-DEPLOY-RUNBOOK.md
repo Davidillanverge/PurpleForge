@@ -310,6 +310,30 @@ fixed at the source for new deploys; if you're validating a lab generated
 before that fix, set it by hand on the affected account(s):
 `Set-ADUser -Identity <account> -Replace @{'msDS-SupportedEncryptionTypes' = 28}`.
 
+## 7b. Document the live domain: users, groups, NT hashes
+
+`lab-report.md` (from step 3) is spec-time — it can't show BadBlood's actual
+usernames/passwords, because BadBlood generates them randomly with
+PowerShell's `Get-Random` on the DC during `site.yml` and never writes them
+anywhere, not even internally. Once the domain is actually up, get the real,
+current picture instead (from the same machine with the WireGuard tunnel up
+— needs `ldap3`, already in `scripts/requirements.txt`, and `nxc`/`netexec`
+for the NT hash dump via DCSync):
+
+```bash
+python3 scripts/forge.py ad-inventory specs/examples/<your-lab>.yml
+# writes generated/<your-lab>/ad-inventory.md — every user (NT hash, group
+# memberships, tagged VULN if it's one of the injected accounts, tagged PRIV
+# if privileged) and every group (description, full member list)
+```
+
+Re-run it anytime — it always reflects live domain state, not what was
+originally intended, so it's also useful mid-exercise to see what's changed
+(new group memberships from a successful escalation, etc.). NT hashes are
+pass-the-hash usable directly and crackable offline (`hashcat -m 1000`) —
+this file is even more sensitive than `lab-report.md`, same gitignore
+coverage (`generated/`).
+
 ## 8. Verify, then teardown when done
 
 ```bash

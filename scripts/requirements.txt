@@ -1,3 +1,4 @@
 PyYAML>=6.0
 jsonschema>=4.20
 Jinja2>=3.1
+ldap3>=2.9   # ad-inventory: post-deploy live AD query (users/groups), see scripts/forge.py
