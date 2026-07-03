@@ -50,11 +50,19 @@ network layer entirely rather than patching it.
   opt-in only, direct SSH from `bastion_ssh_allowed_cidrs` (empty by
   default — no rule is created at all unless explicitly set).
 - **One subnet per forest domain** (`network_plan.domains.<domain>.subnet`),
-  each with an NSG that allows WinRM (5985/5986) *only* from the management
-  subnet, allows intra-subnet traffic (AD auth/replication), explicitly
-  denies inbound from `Internet`, and ends with a `deny-all-inbound`
-  baseline. No Windows host NIC in these subnets ever gets a
-  `azurerm_public_ip`/`aws_eip` attached — see `templates/terraform/azure/windows.tf`.
+  each with an NSG that allows *all* traffic (any port/protocol) from the
+  management subnet, allows intra-subnet traffic (AD auth/replication),
+  explicitly denies inbound from `Internet`, and ends with a
+  `deny-all-inbound` baseline. No Windows host NIC in these subnets ever
+  gets a `azurerm_public_ip`/`aws_eip` attached — see
+  `templates/terraform/azure/windows.tf`. The management-subnet rule isn't
+  narrowed to WinRM specifically (an earlier version of this rule was) —
+  the management subnet is only ever reachable via the WireGuard bastion in
+  the first place, so anything landing here already came through the
+  tunnel; narrowing the destination port doesn't add isolation, it just
+  blocks legitimate operator traffic (SMB, RDP, etc.) with no other path in
+  anyway. CLAUDE.md invariant #1 is enforced by `source_address_prefix`
+  being the management subnet, not by the destination port.
 - **The WireGuard bastion** — an Ubuntu VM, the *only* host with a public IP
   in the whole lab. The server keypair is generated locally on first boot
   (`wg genkey`/`wg pubkey` inside

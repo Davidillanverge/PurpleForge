@@ -24,11 +24,15 @@ docker run --rm python:3.10-slim python3 --version   # confirms docker works, pr
 Rather than fighting your system Python, run Ansible inside a container (see
 step 6) — this is faster and more reliable than a pyenv/venv dance.
 
-**If `az vm ...` or `az network ... show-effective-...` subcommands throw a
-Python traceback (`KeyError: 'disks'` or similar)**, that's a broken
+**If `az vm ...`, `az network ... show-effective-...`, or `az group
+show`/`az group list` subcommands throw a Python traceback (`KeyError:
+'disks'`, `ModuleNotFoundError: No module named
+'azure.mgmt.resource.resources.v20XX...'`, or similar)**, that's a broken
 azure-cli command-loading path in some environments, unrelated to your
-credentials. Don't debug it — every diagnostic in this runbook uses
-`az rest --method get/post <ARM REST URL>` instead, which never hits that
+credentials — and it's exactly what makes `forge.py destroy`'s own
+post-teardown verification untrustworthy (see step 8). Don't debug it —
+every diagnostic in this runbook uses `az rest --method get/post <ARM REST
+URL>` instead, which never hits that
 code path.
 
 ## 1. Write and validate the spec
@@ -285,11 +289,41 @@ docker exec -w /repo/generated/<your-lab>/ansible pf-ansible \
 ```
 
 ```bash
-python3 scripts/forge.py destroy specs/examples/<your-lab>.yml
+export ARM_SUBSCRIPTION_ID=... ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_CLIENT_SECRET=...
+python3 scripts/forge.py destroy specs/examples/<your-lab>.yml --yes
 ```
 
-`forge.py destroy` independently confirms via `az group show` that the
-resource group is actually gone, not just that `terraform destroy` exited 0.
+`forge.py destroy` independently confirms via the ARM REST API (`az rest`,
+not `az group show`) that the resource group is actually gone, not just
+that `terraform destroy` exited 0. *(Already fixed at the source: an
+earlier version used `az group show`, which crashes with
+`ModuleNotFoundError: No module named 'azure.mgmt.resource.resources.v20XX...'`
+in some environments — the same broken azure-cli command-loading path as
+the `az vm`/`az network` subcommands from step 0 — and printed a misleading
+`OK: destroyed and verified` right after its own `warning: could not
+confirm ...`. If you're on a checkout from before that fix, don't trust
+that "OK"; confirm by hand instead:)*
+
+```bash
+SUB=<your-subscription-id>
+az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/<your-lab>?api-version=2021-04-01"
+# expect: ERROR ... "ResourceGroupNotFound" — that 404 IS the confirmation.
+# Anything else (a 200 with provisioningState, or a different error) means
+# it's not actually gone yet.
+```
+
+### Clean up local session state too
+
+Nothing in Azure, but left dangling on your machine and easy to forget:
+
+```bash
+docker stop pf-ansible && docker rm pf-ansible   # the ansible-core container from step 6
+sudo wg-quick down pf-lab                        # (or pf-office, whatever you named it in step 5)
+```
+
+Neither costs anything or blocks a future deploy if left running, but the
+WireGuard interface will otherwise sit there pointing at a bastion IP that
+no longer exists, and `docker ps` clutter is just confusing next time.
 
 ## Quick-reference: symptom → cause
 
@@ -305,4 +339,4 @@ resource group is actually gone, not just that `terraform destroy` exited 0.
 | `found unknown escape character` parsing `hosts.yml` | Unescaped `\` in a double-quoted YAML scalar | Already fixed (`yaml_scalar()` in `forge.py`) |
 | Tamper-protection task fails | Intune-only Windows platform limitation | Already fixed to fail gracefully, not fixable further |
 | NTLM rejected against a DC only | Channel Binding Token mismatch | Already fixed (`ansible_winrm_transport: basic`) |
-| `az vm ...` / `az network ... show-effective-...` crashes with a Python traceback | Broken azure-cli command-loading path (some environments) | Use `az rest` against the ARM REST API instead |
+| `az vm ...` / `az network ... show-effective-...` / `az group show` crashes with a Python traceback | Broken azure-cli command-loading path (some environments) | Use `az rest` against the ARM REST API instead — already fixed at the source in `forge.py destroy`'s own verification |

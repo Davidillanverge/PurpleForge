@@ -468,8 +468,8 @@ sudo wg set wg0 peer <your-client-pubkey> allowed-ips <your-tunnel-ip>/32
 
 Point your local WireGuard client at `<bastion_public_ip>:51820` with that
 server public key. Only once connected can you reach the management subnet
-and, through it, WinRM (5985/5986) on the Windows hosts — there is no other
-path to them.
+and, through it, every port on the Windows hosts (WinRM, SMB, RDP, ...) —
+there is no other path to them.
 
 ### 4. Deploy AD topology, theming, hardening, and vulnerabilities
 

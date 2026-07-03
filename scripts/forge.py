@@ -19,6 +19,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import secrets
 import shutil
 import string
@@ -1207,20 +1208,46 @@ def verify_azure_teardown(lab_name: str) -> bool:
     """Returns True unless we have positive evidence the resource group is
     still there (never returns a false "confirmed gone" on an ambiguous
     az CLI error, e.g. an auth failure — that's reported as "could not
-    verify", not silently treated as success)."""
+    verify", not silently treated as success).
+
+    Uses `az rest` against the ARM REST API directly, not `az group show` —
+    verified on a real deploy that `az group show`/`az group list` (and
+    separately `az vm ...`/`az network ... show-effective-...`) crash with a
+    Python traceback (`ModuleNotFoundError:
+    azure.mgmt.resource.resources.v20XX...` or similar) in some environments,
+    an azure-cli command-loading bug unrelated to credentials. That crash's
+    non-zero exit code and traceback stderr don't match the "gone" or
+    "still there" checks below, so it fell into the (correctly) ambiguous
+    branch — but every real deploy that hit it, hit it, making this the
+    common case there rather than a rare edge case worth just flagging.
+    `az rest` is a thin REST passthrough with its own minimal argument
+    parsing that doesn't exercise the broken command-loading path."""
     az_bin = shutil.which("az")
     if not az_bin:
         print("warning: az CLI not found; cannot verify teardown — check the Azure portal manually.", file=sys.stderr)
         return True
 
-    result = subprocess.run([az_bin, "group", "show", "-n", lab_name], capture_output=True, text=True)
+    sub = os.environ.get("ARM_SUBSCRIPTION_ID")
+    if not sub:
+        acct = subprocess.run([az_bin, "account", "show", "--query", "id", "-o", "tsv"], capture_output=True, text=True)
+        sub = acct.stdout.strip() if acct.returncode == 0 else None
+    if not sub:
+        print(
+            "warning: could not determine the subscription id (set ARM_SUBSCRIPTION_ID); "
+            "cannot verify teardown — check the Azure portal manually.",
+            file=sys.stderr,
+        )
+        return True
+
+    url = f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{lab_name}?api-version=2021-04-01"
+    result = subprocess.run([az_bin, "rest", "--method", "get", "--url", url], capture_output=True, text=True)
     if result.returncode == 0:
         print(f"WARNING: resource group '{lab_name}' still exists after destroy — remaining resources:", file=sys.stderr)
         subprocess.run([az_bin, "resource", "list", "--resource-group", lab_name, "-o", "table"])
         return False
 
     stderr_lower = result.stderr.lower()
-    if "could not be found" in stderr_lower or "resourcegroupnotfound" in stderr_lower:
+    if "resourcegroupnotfound" in stderr_lower:
         print(f"  verified: resource group '{lab_name}' no longer exists — no leftover Azure cost from this lab.")
         return True
 
