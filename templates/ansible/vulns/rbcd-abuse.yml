@@ -1,0 +1,89 @@
+---
+# Vuln inject task-file: rbcd-abuse (T1558)
+# Creates a NAMED, deterministic delegate account
+# ({{ vuln_rbcd_delegate_account }}, also SPN'd so it's independently
+# obtainable via kerberoasting, matching how a real-world "someone already
+# had this service account's creds" starting point looks) and configures
+# {{ vuln_rbcd_target_computer }}$'s msDS-AllowedToActOnBehalfOfOtherIdentity
+# to allow delegation FROM it — the standard resource-based constrained
+# delegation setup (RawSecurityDescriptor SDDL construction is the
+# well-established pattern for this attribute; there's no simple
+# ActiveDirectory cmdlet parameter for it).
+- name: "rbcd-abuse | create delegate account {{ vuln_rbcd_delegate_account }}"
+  win_domain_user:
+    name: "{{ vuln_rbcd_delegate_account }}"
+    firstname: App
+    surname: Proxy
+    description: "Internal application proxy service account"
+    password: "{{ vuln_rbcd_delegate_password }}"
+    password_never_expires: true
+    spn:
+      - "HTTP/{{ vuln_rbcd_delegate_account }}.{{ domain }}"
+    spn_action: replace
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "rbcd-abuse | ensure {{ vuln_rbcd_delegate_account }} supports being kerberoasted (RC4+AES ticket encryption)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties msDS-SupportedEncryptionTypes
+      if ($u.'msDS-SupportedEncryptionTypes' -ne 28) {
+        Set-ADUser -Identity $Account -Replace @{'msDS-SupportedEncryptionTypes' = 28}
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_rbcd_delegate_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "rbcd-abuse | allow {{ vuln_rbcd_delegate_account }} to act on behalf of others against {{ vuln_rbcd_target_computer }}$"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$DelegateAccount, [String]$TargetComputer)
+      Import-Module ActiveDirectory
+      $delegateSid = (Get-ADUser -Identity $DelegateAccount).SID.Value
+      $target = Get-ADComputer -Identity $TargetComputer -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+      $alreadySet = $false
+      if ($target.'msDS-AllowedToActOnBehalfOfOtherIdentity') {
+        $currentSd = New-Object Security.AccessControl.RawSecurityDescriptor(
+          $target.'msDS-AllowedToActOnBehalfOfOtherIdentity', 0)
+        $alreadySet = ($currentSd.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -eq $delegateSid }).Count -gt 0
+      }
+      if (-not $alreadySet) {
+        $sddl = "O:BAD:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;$delegateSid)"
+        $sd = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+        $sdBytes = New-Object byte[] ($sd.BinaryLength)
+        $sd.GetBinaryForm($sdBytes, 0)
+        Set-ADComputer -Identity $TargetComputer -Replace @{'msDS-AllowedToActOnBehalfOfOtherIdentity' = $sdBytes}
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      DelegateAccount: "{{ vuln_rbcd_delegate_account }}"
+      TargetComputer: "{{ vuln_rbcd_target_computer }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "rbcd-abuse | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      RBCD gap live: {{ vuln_rbcd_delegate_account }} (kerberoastable) can
+      S4U2Self any user then S4U2Proxy to
+      {{ vuln_rbcd_target_computer }}$ — equivalent to local Administrator
+      on that host.

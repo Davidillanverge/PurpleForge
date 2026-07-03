@@ -159,6 +159,20 @@ inspection, `--syntax-check`, or code review:
   have a live lab, actually run the attack (`nxc`/Impacket/whatever the
   catalog's own `validate.atomic`/`bloodhound_edge` implies) against it
   before calling the vuln done.
+- **A schema/attribute-name typo in a `-Filter`/comparison guard fails
+  silently as "unchanged", not as an error.** `laps-read-acl`'s original
+  version guarded the `dsacls` grant behind `Get-ADObject -Filter {
+  lDAPDisplayName -eq "ms-LAPS-Password" }` (wrong — the real
+  `lDAPDisplayName` is `msLAPS-Password`, no hyphen after `ms`). Every
+  `site.yml` run reported `ok` (via the task's own `Write-Warning` +
+  `$Ansible.Changed = $false` fallback) — no failure, no red flag, just a
+  vuln that silently never applied on any real deploy despite passing every
+  syntax check and generating cleanly. Caught only by re-running the actual
+  task against a live domain and independently checking the ACL with
+  `dsacls` from outside Ansible's own success/failure reporting. If a task
+  guards on a schema/object lookup by name, verify that name against
+  `Get-ADObject -SearchBase (Get-ADRootDSE).schemaNamingContext` (or
+  equivalent) on a real DC, not from memory or a doc snippet.
 
 ## Testing this skill
 

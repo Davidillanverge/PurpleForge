@@ -278,9 +278,13 @@ mitigate: { summary: "..." }
 validate: { bloodhound_edge: ADCSESC1, atomic: T1649 }
 ```
 
-Seven seed entries ship today: `kerberoasting`, `asreproast`, `adcs-esc1`,
-`unconstrained-delegation`, `gpp-cpassword`, `dcsync-acl`,
-`passwords-in-description`.
+15 entries ship today: `kerberoasting`, `asreproast`, `adcs-esc1`,
+`unconstrained-delegation`, `constrained-delegation`, `gpp-cpassword`,
+`dcsync-acl`, `passwords-in-description`, `smb-signing-disabled`,
+`ntlm-downgrade`, `laps-read-acl`, `shadow-credentials`,
+`dnsadmins-privesc`, `rbcd-abuse`, `backup-operators-membership` — see
+`vuln-injection/SKILL.md`'s "Adding a vuln" section for the checklist to add
+another.
 
 ## Vulnerability injection
 

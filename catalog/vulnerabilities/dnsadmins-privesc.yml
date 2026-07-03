@@ -1,0 +1,38 @@
+id: dnsadmins-privesc
+name: "DnsAdmins - cuenta de servicio en el grupo con capacidad de carga de DLL arbitraria en el DC"
+severity: critical
+attack:
+  mitre_attack: [T1574.002]
+  requires_services: []
+  intended_path: >
+    Una cuenta de servicio con nombre plausible (svc-dns-operator) es
+    miembro del grupo integrado "DnsAdmins". Ese grupo puede configurar el
+    parámetro ServerLevelPluginDll del servicio DNS (dnscmd
+    /config /serverlevelplugindll <ruta UNC a una DLL>), que el servicio DNS
+    -ejecutándose como SYSTEM en el controlador de dominio- carga al
+    reiniciarse. Quien controle svc-dns-operator apunta ese parámetro a una
+    DLL maliciosa en un recurso compartido, reinicia el servicio DNS (o
+    espera al próximo reinicio) y obtiene ejecución de código como SYSTEM en
+    el DC.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/dnsadmins-privesc.yml
+  params: { group: DnsAdmins }
+detect:
+  data_source: "Security 4732 (miembro añadido a un grupo con ámbito de seguridad local/global) filtrado a DnsAdmins; Sysmon Event ID 7 (carga de imagen) del proceso dns.exe cargando una DLL fuera de System32"
+  signal: "4732 con grupo=DnsAdmins añadiendo una cuenta que no es parte de la administración delegada de DNS Tier 1"
+  siem_rule: templates/detection/{siem}/dnsadmins_privesc
+# HONESTO: ninguna regla CIS/STIG fijada vacía o restringe la pertenencia a
+# un grupo integrado -es dato del entorno, no un ajuste de registro/GPO-.
+# Microsoft mitigó la carga de DLL arbitraria por defecto en actualizaciones
+# recientes de Windows Server (el parámetro TCP/IP "DnsAdminsGroupSDDL"/
+# el fix del CVE asociado exige un ajuste explícito para reactivarlo), pero
+# eso es un parche de plataforma, no un control togglable de este esquema
+# -por eso no aparece como neutralized_by real, solo como nota informativa.
+neutralized_by:
+  - hardening.controls.privileged_group_membership_governance
+mitigate:
+  summary: "Mantener DnsAdmins vacío salvo administración de DNS estrictamente delegada; auditar su pertenencia periódicamente; verificar el parche de la plataforma que exige habilitar explícitamente la carga de plugin DLL antes de asumir explotabilidad."
+validate:
+  bloodhound_edge: "MemberOf"
+  atomic: null

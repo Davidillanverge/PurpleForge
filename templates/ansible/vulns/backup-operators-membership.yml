@@ -1,0 +1,52 @@
+---
+# Vuln inject task-file: backup-operators-membership (T1078.002 / T1003.003)
+# Creates a NAMED, deterministic service account
+# ({{ vuln_backupop_account }}) and adds it to the domain's built-in
+# "Backup Operators" group — on a DC, that grants SeBackupPrivilege /
+# SeRestorePrivilege, which bypass filesystem/registry ACLs entirely and
+# let its holder copy a live NTDS.dit + SYSTEM hive without needing any
+# directory-replication rights at all (DCSync-equivalent impact via a
+# completely different path).
+- name: "backup-operators-membership | create service account {{ vuln_backupop_account }}"
+  win_domain_user:
+    name: "{{ vuln_backupop_account }}"
+    firstname: Backup
+    surname: Agent
+    description: "Backup software service account"
+    password: "{{ vuln_backupop_password }}"
+    password_never_expires: true
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "backup-operators-membership | add {{ vuln_backupop_account }} to Backup Operators"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $already = (Get-ADGroupMember -Identity "Backup Operators" | Where-Object { $_.SamAccountName -eq $Account })
+      if (-not $already) {
+        Add-ADGroupMember -Identity "Backup Operators" -Members $Account
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_backupop_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "backup-operators-membership | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Backup Operators gap live: {{ vuln_backupop_account }} can log on to
+      the domain controller and use SeBackupPrivilege/SeRestorePrivilege
+      (diskshadow + robocopy, or ntdsutil) to extract NTDS.dit and the
+      SYSTEM hive, dumping every domain account's NT hash offline — without
+      needing directory-replication rights at all.

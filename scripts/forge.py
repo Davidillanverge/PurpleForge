@@ -785,6 +785,7 @@ def render_ad_theming(theme: dict, out_dir: Path) -> None:
 # passwords-in-description) get a strong random one instead.
 VULN_WEAK_PASSWORD = "Password123!"
 VULN_WEAK_PASSWORD_ALT = "Summer2024!"
+VULN_WEAK_PASSWORD_3 = "Welcome2024!"
 
 
 def build_vuln_vars(vid: str, machines: list[dict], primary_dc: dict) -> dict:
@@ -792,6 +793,26 @@ def build_vuln_vars(vid: str, machines: list[dict], primary_dc: dict) -> dict:
         return {"vuln_kerberoast_account": "svc-sqlreport", "vuln_kerberoast_password": VULN_WEAK_PASSWORD}
     if vid == "asreproast":
         return {"vuln_asrep_account": "svc-legacyapp", "vuln_asrep_password": VULN_WEAK_PASSWORD_ALT}
+    if vid == "laps-read-acl":
+        return {"vuln_laps_reader_group": "Domain Users"}
+    if vid == "shadow-credentials":
+        return {
+            "vuln_shadowcred_target": "svc-tier0-admin",
+            "vuln_shadowcred_target_password": generate_password(),
+            "vuln_shadowcred_writer_group": "Domain Users",
+        }
+    if vid == "dnsadmins-privesc":
+        return {"vuln_dnsadmins_account": "svc-dns-operator", "vuln_dnsadmins_password": generate_password()}
+    if vid == "rbcd-abuse":
+        members = [m for m in machines if m["role"] == "member-server"]
+        computer = members[0]["name"] if members else primary_dc["name"]
+        return {
+            "vuln_rbcd_delegate_account": "svc-app-proxy",
+            "vuln_rbcd_delegate_password": VULN_WEAK_PASSWORD_3,
+            "vuln_rbcd_target_computer": computer,
+        }
+    if vid == "backup-operators-membership":
+        return {"vuln_backupop_account": "svc-backup-agent", "vuln_backupop_password": generate_password()}
     if vid == "dcsync-acl":
         return {"vuln_dcsync_account": "svc-replication", "vuln_dcsync_password": generate_password()}
     if vid == "passwords-in-description":
@@ -1350,6 +1371,10 @@ VULN_CREDENTIAL_VARS = {
     "dcsync-acl": ("vuln_dcsync_account", "vuln_dcsync_password"),
     "passwords-in-description": ("vuln_pwddesc_account", "vuln_pwddesc_password"),
     "constrained-delegation": ("vuln_delegation_account", "vuln_delegation_password"),
+    "shadow-credentials": ("vuln_shadowcred_target", "vuln_shadowcred_target_password"),
+    "dnsadmins-privesc": ("vuln_dnsadmins_account", "vuln_dnsadmins_password"),
+    "rbcd-abuse": ("vuln_rbcd_delegate_account", "vuln_rbcd_delegate_password"),
+    "backup-operators-membership": ("vuln_backupop_account", "vuln_backupop_password"),
 }
 
 VULN_CREDENTIAL_NOTES = {
@@ -1358,6 +1383,7 @@ VULN_CREDENTIAL_NOTES = {
     "smb-signing-disabled": "No account — machine-wide registry policy (RequireSecuritySignature=0).",
     "ntlm-downgrade": "No account — machine-wide registry policy (LmCompatibilityLevel=2).",
     "adcs-esc1": "No account — publishes the ESC1 certificate template (ENROLLEE_SUPPLIES_SUBJECT) for enrollment by Domain Users.",
+    "laps-read-acl": "No named account — grants CONTROL_ACCESS read on msLAPS-Password (domain-wide) to an existing group, `Domain Users` by default.",
 }
 
 

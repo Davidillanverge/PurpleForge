@@ -1,0 +1,50 @@
+---
+# Vuln inject task-file: dnsadmins-privesc (T1574.002)
+# Creates a NAMED, deterministic service account
+# ({{ vuln_dnsadmins_account }}) and adds it to the built-in "DnsAdmins"
+# group (created automatically when the DNS server role is installed, which
+# GOAD's domain_controller role always does) — DnsAdmins members can point
+# the DNS service's ServerLevelPluginDll at an arbitrary DLL, which the
+# service (running as SYSTEM on the DC) loads on next restart.
+- name: "dnsadmins-privesc | create service account {{ vuln_dnsadmins_account }}"
+  win_domain_user:
+    name: "{{ vuln_dnsadmins_account }}"
+    firstname: DNS
+    surname: Operator
+    description: "DNS record management service account"
+    password: "{{ vuln_dnsadmins_password }}"
+    password_never_expires: true
+    groups:
+      - Domain Users
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "dnsadmins-privesc | add {{ vuln_dnsadmins_account }} to DnsAdmins"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $already = (Get-ADGroupMember -Identity DnsAdmins | Where-Object { $_.SamAccountName -eq $Account })
+      if (-not $already) {
+        Add-ADGroupMember -Identity DnsAdmins -Members $Account
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_dnsadmins_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "dnsadmins-privesc | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      DnsAdmins gap live: {{ vuln_dnsadmins_account }} can set the DNS
+      service's ServerLevelPluginDll to an arbitrary UNC path and, on the
+      service's next restart, get code execution as SYSTEM on the domain
+      controller.

@@ -1,0 +1,68 @@
+# PurpleForge — throwaway live-verification lab for the 5 newest catalog
+# vulnerabilities (laps-read-acl, shadow-credentials, dnsadmins-privesc,
+# rbcd-abuse, backup-operators-membership). 1 DC + 1 member-server (rbcd-abuse
+# needs a non-DC delegation target) is the minimal shape that exercises all
+# five; hardening.controls.laps MUST be true here (unlike the disposable spec
+# used earlier) or laps-read-acl has nothing to read.
+lab:
+  name: vuln-catalog-test
+  theme: corporate
+  provider: azure
+  region: eastus   # hard 4-total-vCPU-per-region quota on this subscription; Standard_F1as_v7 (1 vCPU) is the only unrestricted SKU here — see AZURE-DEPLOY-RUNBOOK.md
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 50
+
+forest:
+  - domain: test.local
+    netbios: TEST
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2022
+    domain: test.local
+    count: 1
+  - role: member-server
+    os: windows-server-2022
+    domain: test.local
+    count: 1
+
+population:
+  users: 10
+  density: sparse
+  seed: 1
+
+vulnerabilities:
+  - laps-read-acl
+  - shadow-credentials
+  - dnsadmins-privesc
+  - rbcd-abuse
+  - backup-operators-membership
+
+defense:
+  profile: none
+  hardening:
+    baseline: baseline-controls
+    apply_to: all
+    controls:
+      laps: true
+    intentional_gaps_auto: true
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+  deception:
+    honey_accounts: 0
+    canarytokens: []
+
+on_conflict: exclude-control
+
+detection_rules: none
+
+validation:
+  bloodhound: false
+  pingcastle: false
+  atomic_red_team: []

@@ -1,0 +1,39 @@
+id: laps-read-acl
+name: "LAPS - grupo de bajo privilegio con permisos de lectura sobre la contraseña de administrador local"
+severity: high
+attack:
+  mitre_attack: [T1552]
+  requires_services: []
+  intended_path: >
+    Una ACE de tipo CONTROL_ACCESS (lectura del atributo confidencial
+    msLAPS-Password, el atributo de Windows LAPS) ha sido delegada a un
+    grupo de bajo privilegio (por defecto en este catálogo, "Domain Users")
+    en la raíz del dominio, con herencia hacia todos los equipos. Cualquier
+    miembro de ese grupo puede leer la contraseña de administrador local
+    rotada por LAPS de cualquier equipo, obteniendo control administrativo
+    local inmediato -y, si esa contraseña se reutiliza o el equipo tiene
+    sesiones de una cuenta privilegiada, un salto lateral o vertical directo.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/laps-read-acl.yml
+  params: { reader_group: "Domain Users" }
+detect:
+  data_source: "Security 4662 (Directory Service Access) filtrado por el GUID del atributo msLAPS-Password; auditoría periódica de BloodHound (arista ReadLAPSPassword)"
+  signal: "4662 con acceso de lectura al atributo confidencial msLAPS-Password por una cuenta fuera del grupo de administración delegada de LAPS"
+  siem_rule: templates/detection/{siem}/laps_read_acl
+# HONESTO: esta vulnerabilidad depende de que el esquema de Windows LAPS ya
+# exista (hardening.controls.laps: true lo extiende una vez, vía pf_controls
+# -- ver defensive-controls/SKILL.md). Es decir, hardening.controls.laps NO
+# neutraliza este gap: es su PRERREQUISITO para que la vulnerabilidad tenga
+# efecto real (sin el atributo msLAPS-Password en el esquema, la ACE no
+# protege ni expone nada). Ninguna regla CIS/STIG fijada neutraliza una ACE
+# mal delegada -es higiene de permisos, no un ajuste de registro/GPO- así que
+# no hay ninguna entrada real de neutralized_by; la etiqueta de abajo es
+# puramente conceptual (gobernanza de delegación de permisos sobre LAPS).
+neutralized_by:
+  - hardening.controls.laps_delegation_governance
+mitigate:
+  summary: "Delegar la lectura de msLAPS-Password (o del legacy ms-Mcs-AdmPwd) únicamente al grupo de administración específico que lo necesita, nunca a Domain Users/Authenticated Users; auditar periódicamente con dsacls o el cmdlet Get-LapsADPassword -Identity; revisar la ACL de la raíz del dominio y de cada OU con LAPS habilitado."
+validate:
+  bloodhound_edge: "ReadLAPSPassword"
+  atomic: null

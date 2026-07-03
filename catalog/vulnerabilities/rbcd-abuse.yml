@@ -1,0 +1,37 @@
+id: rbcd-abuse
+name: "Resource-Based Constrained Delegation mal configurada hacia un miembro del dominio"
+severity: critical
+attack:
+  mitre_attack: [T1558]
+  requires_services: []
+  intended_path: >
+    El atributo msDS-AllowedToActOnBehalfOfOtherIdentity del equipo miembro
+    del dominio ya permite la delegación desde una cuenta de servicio
+    existente (svc-app-proxy). Quien controle las credenciales de
+    svc-app-proxy puede usar S4U2Self para obtener un ticket de servicio a
+    sí misma en nombre de CUALQUIER usuario -incluido un Domain Admin- y
+    luego S4U2Proxy para presentarlo al equipo objetivo, obteniendo acceso
+    equivalente a Administrador local en él (y, si es un DC, control total).
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/rbcd-abuse.yml
+  params: { target_computer_role: member-server }
+detect:
+  data_source: "Security 4742 (cuenta de equipo modificada) sobre el equipo objetivo sobre el atributo msDS-AllowedToActOnBehalfOfOtherIdentity; Security 4769 con Transited Services no vacío (S4U2Proxy)"
+  signal: "4742 con msDS-AllowedToActOnBehalfOfOtherIdentity establecido hacia un SID que no corresponde a una relación de delegación documentada"
+  siem_rule: templates/detection/{siem}/rbcd_abuse
+# HONESTO: no se reclama neutralización por baseline CIS/STIG -no se ha
+# verificado ninguna regla de los roles ansible-lockdown fijados que
+# restrinja RBCD ni delegación a nivel de objeto AD (son ajustes de
+# registro/GPO del sistema operativo, no ACLs de directorio)-. La única
+# entrada real es el control fijo protected_users_group: meter
+# svc-app-proxy en Protected Users bloquea que actúe como origen de
+# CUALQUIER delegación (constrained, unconstrained o basada en recursos),
+# comportamiento documentado de Microsoft, no una regla CIS concreta.
+neutralized_by:
+  - hardening.controls.protected_users_group_membership
+mitigate:
+  summary: "Retirar msDS-AllowedToActOnBehalfOfOtherIdentity salvo necesidad justificada y documentada; meter la cuenta delegante en Protected Users; auditar periódicamente todos los equipos del dominio con este atributo establecido (arista AllowedToAct de BloodHound)."
+validate:
+  bloodhound_edge: "AllowedToAct"
+  atomic: null

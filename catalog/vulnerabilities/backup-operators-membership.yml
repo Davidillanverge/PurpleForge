@@ -1,0 +1,39 @@
+id: backup-operators-membership
+name: "Backup Operators - cuenta de servicio con capacidad de volcado de NTDS.dit vía SeBackupPrivilege"
+severity: critical
+attack:
+  mitre_attack: [T1078.002, T1003.003]
+  requires_services: []
+  intended_path: >
+    Una cuenta de servicio con nombre plausible (svc-backup-agent) es
+    miembro del grupo integrado "Backup Operators" del dominio, que en un
+    controlador de dominio concede SeBackupPrivilege y SeRestorePrivilege
+    -derechos que ignoran las ACL del sistema de archivos y del registro-.
+    Quien controle svc-backup-agent puede iniciar sesión en el DC (local o
+    remotamente) y usar diskshadow/robocopy/ntdsutil para copiar NTDS.dit y
+    el hive SYSTEM en caliente sin necesitar derechos de replicación de
+    directorio, extrayendo offline el hash NT de cada cuenta del dominio -
+    impacto equivalente a un DCSync completo sin tocar msDS-Replication.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/backup-operators-membership.yml
+  params: { group: "Backup Operators" }
+detect:
+  data_source: "Security 4732 (miembro añadido a Backup Operators); Security 4673/4674 (uso de privilegio sensible: SeBackupPrivilege/SeRestorePrivilege) en un DC; creación de procesos diskshadow.exe/vssadmin.exe/ntdsutil.exe por una cuenta fuera del equipo de backup autorizado"
+  signal: "4673 con privilegio SeBackupPrivilege usado por una cuenta que no es la cuenta de servicio de backup documentada, en un controlador de dominio"
+  siem_rule: templates/detection/{siem}/backup_operators_membership
+# HONESTO: ninguna regla CIS/STIG fijada vacía o restringe la pertenencia a
+# un grupo integrado -es dato del entorno, no un ajuste de registro/GPO-, y
+# hardening.controls.protected_users_group NO neutraliza esto: Protected
+# Users restringe mecanismos de AUTENTICACIÓN (NTLM/delegación/caché de
+# credenciales), no el USO de un privilegio ya concedido tras una sesión
+# Kerberos normal -verificado contra el comportamiento documentado de
+# Protected Users, no asumido-. No existe ningún control togglable en este
+# esquema que lo neutralice.
+neutralized_by:
+  - hardening.controls.privileged_group_membership_governance
+mitigate:
+  summary: "Mantener Backup Operators vacío domain-wide; usar una solución de backup dedicada con cuenta gMSA no interactiva en vez de membresía de grupo con capacidad de logon; alertar en cualquier cambio de pertenencia a Backup Operators y en el uso de SeBackupPrivilege en un DC."
+validate:
+  bloodhound_edge: "MemberOf"
+  atomic: T1003.003

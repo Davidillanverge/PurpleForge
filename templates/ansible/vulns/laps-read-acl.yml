@@ -1,0 +1,50 @@
+---
+# Vuln inject task-file: laps-read-acl (T1552)
+# Grants {{ vuln_laps_reader_group }} (a real, built-in group by default —
+# "Domain Users") read (CONTROL_ACCESS) rights over msLAPS-Password at the
+# domain root, inherited to every computer object — the classic
+# over-broad-delegation mistake made through the AD Delegation of Control
+# wizard. dsacls (not a raw ActiveDirectorySecurity object edit) because
+# it's built into every DC and directly expresses "grant CA on this named
+# confidential attribute", exactly the primitive this vuln is about.
+#
+# Depends on the Windows LAPS schema attribute (msLAPS-Password) already
+# existing — extended once by pf_controls when hardening.controls.laps is
+# true (see defensive-controls/SKILL.md). If it doesn't exist yet, the ACE
+# below is inert (nothing to protect or expose): the single script below
+# checks first and reports clearly via Write-Warning instead of silently
+# no-oping or hard-failing the rest of vuln-injection.
+- name: "laps-read-acl | grant {{ vuln_laps_reader_group }} read access to msLAPS-Password domain-wide (if the LAPS schema exists)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$ReaderGroup)
+      $schemaNC = (Get-ADRootDSE).schemaNamingContext
+      $attr = Get-ADObject -SearchBase $schemaNC -Filter { lDAPDisplayName -eq "msLAPS-Password" }
+      if (-not $attr) {
+        Write-Warning "msLAPS-Password not in schema yet — enable hardening.controls.laps first, then re-run site.yml for this gap to take effect."
+        $Ansible.Changed = $false
+        return
+      }
+      $dn = (Get-ADDomain).DistinguishedName
+      $domainNb = (Get-ADDomain).NetBIOSName
+      $before = & dsacls.exe $dn 2>&1 | Out-String
+      & dsacls.exe $dn /I:S /G "$($domainNb)\$($ReaderGroup):CA;msLAPS-Password" | Out-Null
+      $after = & dsacls.exe $dn 2>&1 | Out-String
+      $Ansible.Changed = ($before -ne $after)
+    parameters:
+      ReaderGroup: "{{ vuln_laps_reader_group }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "laps-read-acl | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      LAPS ACL gap live (if the LAPS schema was already present — see the
+      previous task's warning otherwise): any member of
+      {{ vuln_laps_reader_group }} can read msLAPS-Password for every
+      computer in the domain, i.e. direct local administrator access on any
+      LAPS-managed host.
