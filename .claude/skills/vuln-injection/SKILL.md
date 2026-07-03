@@ -92,36 +92,73 @@ their having been decided.
 
 ## Adding a vuln
 
-Add `catalog/vulnerabilities/<id>.yml` (with `detect`/`mitigate`/
-`neutralized_by`/`mitre_attack` — enforced by review, see CLAUDE.md) and a
-`templates/ansible/vulns/<id>.yml` task-file. If it needs deterministic
-per-vuln vars (account/computer names), extend `build_vuln_vars` in
-`scripts/forge.py`; if it targets a service host, give it
-`attack.requires_services`. No other generator changes are required.
+The mechanical part is small — a catalog entry + a task-file, no generator
+changes required for the common case:
 
-## Kerberos-ticket vulns need `msDS-SupportedEncryptionTypes` set explicitly
+1. **`catalog/vulnerabilities/<id>.yml`** — `detect`/`mitigate`/
+   `neutralized_by`/`mitre_attack` are enforced by review (see CLAUDE.md).
+   `neutralized_by` must be *checked against the actual pinned
+   ansible-lockdown role*, not assumed — see the "HONESTO"/"verified against
+   the real role" comments already in `kerberoasting.yml`/
+   `constrained-delegation.yml` for the pattern: if no real CIS/STIG rule
+   neutralizes it, say so explicitly rather than inventing a plausible-
+   sounding `hardening.controls.*` label that `defensive-controls` can't
+   actually turn into a `skip_rule`.
+2. **`templates/ansible/vulns/<id>.yml`** — the injection task-file, included
+   by the rendered `vuln-injection.yml`. Reuse an existing upstream
+   technique where one exists (see the table above) rather than authoring
+   from scratch; either way the artifact must be **named and deterministic**
+   (`svc-<something>`, not a randomly-picked existing user) — this is what
+   keeps re-running `site.yml` idempotent (invariant #5). Pick the account's
+   password deliberately: dictionary-crackable (`Password123!`-style) if the
+   weak password itself IS the vuln, a real `generate_password()` random
+   secret otherwise.
+3. **If it needs deterministic per-vuln vars** (account/computer names),
+   extend `build_vuln_vars` in `scripts/forge.py`; **if it targets a service
+   host** (ADCS, MSSQL, ...), give it `attack.requires_services` — `lab-spec`
+   already validates a matching host exists, you don't need to re-check that
+   here.
 
-**Verified on a real deploy, only caught by actually cracking the injected
-account, not by inspection**: `kerberoasting`, `asreproast`, and
-`constrained-delegation` (via its S4U2Self/S4U2Proxy exchange) all depend on
-the KDC actually issuing a ticket for the target account. Leaving
-`msDS-SupportedEncryptionTypes` unset on that account — the traditional
-assumption for "a weak/legacy account defaults to RC4, which is what makes
-it crackable" — no longer means what it used to on a fully-patched Windows
-Server 2016 KDC: every principal in the domain (not just the injected
-account) got `KDC_ERR_ETYPE_NOSUPP` for every ticket request, tested with
-`nxc --kerberoasting`/`--asreproast`. Microsoft's ongoing RC4 deprecation
-work appears to have changed the *effective* default for "unset" on current
-cumulative updates. Every Kerberos-ticket-issuing vuln's task-file now
-explicitly sets `msDS-SupportedEncryptionTypes = 28` (`RC4_HMAC_MD5 (4) +
-AES128 (8) + AES256 (16)`) on its injected account via `Set-ADUser -Replace`
-— RC4 keeps offline cracking fast (the actual point of these vulns), AES is
-included so the ticket request still succeeds even where RC4 is disabled
-outright at the KDC/domain level. **If you add a new vuln whose exploitation
-involves requesting a Kerberos ticket for a specific account** (kerberoasting-
-and AS-REP-roasting-style vulns, delegation abuse, anything that ends in a
-crackable `$krb5tgs$`/`$krb5asrep$` hash), set this the same way — don't
-assume a blank value is exploitable just because it always used to be.
+Before considering it done, check these — every one below was a real bug
+caught only by actually running the result against a live domain, not by
+inspection, `--syntax-check`, or code review:
+
+- **If exploitation involves requesting a Kerberos ticket for a specific
+  account** (kerberoasting/AS-REP-roasting-style vulns, delegation abuse,
+  anything that ends in a crackable `$krb5tgs$`/`$krb5asrep$` hash): set
+  `msDS-SupportedEncryptionTypes = 28` (`RC4_HMAC_MD5 (4) + AES128 (8) +
+  AES256 (16)`) explicitly on the account via `Set-ADUser -Replace` — see
+  `kerberoasting.yml`'s task for the exact pattern. **Leaving it unset does
+  NOT mean "defaults to RC4-crackable" anymore.** Verified on a real,
+  fully-patched Windows Server 2016 deploy: every principal in the domain
+  (not just the injected account, even `Administrator`) got
+  `KDC_ERR_ETYPE_NOSUPP` for every ticket request tested with `nxc
+  --kerberoasting`/`--asreproast` — Microsoft's ongoing RC4 deprecation work
+  appears to have changed what "unset" effectively means on current
+  cumulative updates.
+- **If any new inventory/task var can contain a literal backslash**
+  (`DOMAIN\user`-style values are the recurring case, e.g. a delegation
+  target or an impersonation account), route it through `yaml_scalar()` in
+  `scripts/forge.py` rather than a raw Jinja `"{{ var }}"` in a `.j2`
+  template. An unescaped `\` inside a double-quoted YAML scalar
+  (`"DOMAIN\Administrator"`) is a hard parse failure (`found unknown escape
+  character`), not a warning — verified on a real deploy that this broke
+  *every* generated lab's inventory, not just the one being worked on at the
+  time, because the bug was in the shared template. See `ad-topology/
+  SKILL.md` for the full story; `yaml_scalar()`'s `json.dumps`-based quoting
+  handles this and any other special character correctly, a raw f-string
+  interpolation doesn't.
+- **`--syntax-check` does not descend into `include_tasks`**, so it will not
+  catch a broken task-file — see "Testing this skill" below for the actual
+  way to validate one.
+- **Test the exploit for real, not just that Ansible ran cleanly.** `site.yml`
+  completing without errors proves the AD objects got created — it does
+  NOT prove they're actually exploitable (the encryption-types bug above is
+  the concrete example: the account existed, had the right SPN/flags, and
+  `ansible-playbook` reported success, and it was still uncrackable). If you
+  have a live lab, actually run the attack (`nxc`/Impacket/whatever the
+  catalog's own `validate.atomic`/`bloodhound_edge` implies) against it
+  before calling the vuln done.
 
 ## Testing this skill
 
@@ -137,4 +174,6 @@ ansible-playbook --syntax-check -i inventory/hosts.yml playbooks/vuln-injection.
 task-files themselves, statically `import_tasks` them from a throwaway
 playbook and syntax-check that (this is how Phase 4 verified all seven).
 Confirm `lab-manifest.json.vulnerabilities_planned` lists each vuln with its
-`run_on` host and `neutralization` status.
+`run_on` host and `neutralization` status. **None of this replaces testing
+against a live domain** — see the last checklist item above; syntax
+validity and actual exploitability are two different, both-necessary checks.
