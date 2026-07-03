@@ -28,6 +28,38 @@
     domain_password: "{{ domain_password }}"
   register: vuln_kerberoast_result
 
+# Verified on a real deploy (a fully-patched Windows Server 2016 image) that
+# leaving msDS-SupportedEncryptionTypes unset — the traditional assumption
+# for "this account is a weak/legacy kerberoastable target" — no longer
+# makes an account kerberoastable at all on current cumulative updates: the
+# KDC returned KDC_ERR_ETYPE_NOSUPP for EVERY principal in the domain,
+# including this one and even Administrator, i.e. Microsoft's RC4
+# deprecation work changed what "unset" effectively means. Explicitly
+# setting it (28 = RC4_HMAC_MD5 + AES128 + AES256) is what actually made the
+# account roastable again — RC4 in the mix keeps offline cracking fast (the
+# point of this vuln), AES is included so the request still succeeds even if
+# a given host has RC4 disabled entirely at the KDC/domain level.
+- name: "kerberoasting | ensure {{ vuln_kerberoast_account }} actually supports being kerberoasted (RC4+AES ticket encryption)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties msDS-SupportedEncryptionTypes
+      if ($u.'msDS-SupportedEncryptionTypes' -ne 28) {
+        Set-ADUser -Identity $Account -Replace @{'msDS-SupportedEncryptionTypes' = 28}
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_kerberoast_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
 - name: "kerberoasting | record intended path"
   ansible.builtin.debug:
     msg: >-

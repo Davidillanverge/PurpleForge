@@ -296,6 +296,20 @@ place, because they're genuine platform/environment behavior, not bugs:
   control (real-time protection, network protection, ASR rules) is
   unaffected and will show as applied.
 
+`site.yml` completing cleanly proves the AD objects for your
+`vulnerabilities:` got created — it does NOT prove they're actually
+exploitable. **If a Kerberos-ticket-based vuln (`kerberoasting`,
+`asreproast`, `constrained-delegation`) gives `KDC_ERR_ETYPE_NOSUPP` when you
+actually try it** (e.g. `nxc ldap <dc-ip> -d <domain> -u <user> -p <pass>
+--kerberoasting out.txt --kdcHost <dc-fqdn>.<domain>`), and this happens for
+*every* principal in the domain, not just your injected account — that's not
+a spec/config problem, it's the same real-deploy finding as
+`vuln-injection/SKILL.md` documents: a fully-patched KDC no longer treats
+"unset `msDS-SupportedEncryptionTypes`" as RC4-crackable by default. Already
+fixed at the source for new deploys; if you're validating a lab generated
+before that fix, set it by hand on the affected account(s):
+`Set-ADUser -Identity <account> -Replace @{'msDS-SupportedEncryptionTypes' = 28}`.
+
 ## 8. Verify, then teardown when done
 
 ```bash
@@ -347,6 +361,7 @@ no longer exists, and `docker ps` clutter is just confusing next time.
 | `SkuNotAvailable ... Capacity Restrictions` or `exceeding approved Total Regional Cores quota` | Subscription/region vCPU cap or SKU restriction | Step 2 — try another region/size, it's not always a dead end |
 | `cannot boot Hypervisor Generation '1'` | Gen2-only size family + Gen1 image | Already fixed for 2016/2019/2022/2025 (`windows.tf`) — check the real SKU list before adding another OS, the Gen2 suffix isn't consistent |
 | `cannot boot with OS image or disk ... check disk controller types` | NVMe-only size (`F*v7`) + an OS image (2016 confirmed) with no NVMe support — a different axis from Hypervisor Generation | Override just that role in `vm_size_overrides` to a SCSI-compatible size, e.g. `Standard_DC1s_v3` |
+| `KDC_ERR_ETYPE_NOSUPP` kerberoasting/AS-REP-roasting/exploiting delegation, for EVERY principal in the domain | Fully-patched KDC no longer treats unset `msDS-SupportedEncryptionTypes` as RC4-crackable by default | Already fixed at the source (vuln-injection sets it to 28) — see `vuln-injection/SKILL.md` |
 | `Provider produced inconsistent result after apply` / spurious `already exists` | ARM read-after-write lag on this subscription | Step 4 — `-refresh=false`, import + retry |
 | WinRM times out cross-subnet, works same-subnet | Windows Firewall Public-profile `LocalSubnet` scope | Already fixed (`windows.tf` bootstrap script) |
 | `'add_route' is undefined` | Missing GOAD inventory default | Already fixed (`hosts.yml.j2`) |

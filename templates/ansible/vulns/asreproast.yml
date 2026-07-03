@@ -20,6 +20,32 @@
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"
 
+# See kerberoasting.yml's comment on the equivalent task — same real-deploy
+# finding, same fix, applies equally to AS-REQ (pre-auth-less) ticket
+# issuance as to TGS-REQ (SPN) ticket issuance: an account with
+# msDS-SupportedEncryptionTypes left unset got KDC_ERR_ETYPE_NOSUPP on a
+# fully-patched Windows Server 2016 KDC.
+- name: "asreproast | ensure {{ vuln_asrep_account }} actually supports being AS-REP roasted (RC4+AES ticket encryption)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties msDS-SupportedEncryptionTypes
+      if ($u.'msDS-SupportedEncryptionTypes' -ne 28) {
+        Set-ADUser -Identity $Account -Replace @{'msDS-SupportedEncryptionTypes' = 28}
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_asrep_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
 - name: "asreproast | disable Kerberos pre-authentication on {{ vuln_asrep_account }}"
   ansible.windows.win_powershell:
     script: |

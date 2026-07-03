@@ -99,6 +99,30 @@ per-vuln vars (account/computer names), extend `build_vuln_vars` in
 `scripts/forge.py`; if it targets a service host, give it
 `attack.requires_services`. No other generator changes are required.
 
+## Kerberos-ticket vulns need `msDS-SupportedEncryptionTypes` set explicitly
+
+**Verified on a real deploy, only caught by actually cracking the injected
+account, not by inspection**: `kerberoasting`, `asreproast`, and
+`constrained-delegation` (via its S4U2Self/S4U2Proxy exchange) all depend on
+the KDC actually issuing a ticket for the target account. Leaving
+`msDS-SupportedEncryptionTypes` unset on that account — the traditional
+assumption for "a weak/legacy account defaults to RC4, which is what makes
+it crackable" — no longer means what it used to on a fully-patched Windows
+Server 2016 KDC: every principal in the domain (not just the injected
+account) got `KDC_ERR_ETYPE_NOSUPP` for every ticket request, tested with
+`nxc --kerberoasting`/`--asreproast`. Microsoft's ongoing RC4 deprecation
+work appears to have changed the *effective* default for "unset" on current
+cumulative updates. Every Kerberos-ticket-issuing vuln's task-file now
+explicitly sets `msDS-SupportedEncryptionTypes = 28` (`RC4_HMAC_MD5 (4) +
+AES128 (8) + AES256 (16)`) on its injected account via `Set-ADUser -Replace`
+— RC4 keeps offline cracking fast (the actual point of these vulns), AES is
+included so the ticket request still succeeds even where RC4 is disabled
+outright at the KDC/domain level. **If you add a new vuln whose exploitation
+involves requesting a Kerberos ticket for a specific account** (kerberoasting-
+and AS-REP-roasting-style vulns, delegation abuse, anything that ends in a
+crackable `$krb5tgs$`/`$krb5asrep$` hash), set this the same way — don't
+assume a blank value is exploitable just because it always used to be.
+
 ## Testing this skill
 
 No live DC in CI. Validate structurally:

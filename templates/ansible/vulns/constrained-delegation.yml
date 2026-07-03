@@ -26,12 +26,19 @@
     domain_password: "{{ domain_password }}"
 
 - name: "constrained-delegation | enable protocol transition + delegate to {{ vuln_delegation_target_spn }}"
+  # msDS-SupportedEncryptionTypes is set here too, not just for kerberoasting/
+  # asreproast: exploiting this vuln (S4U2Self then S4U2Proxy) is itself a
+  # sequence of TGS requests, subject to the same real-deploy finding — a
+  # fully-patched Windows Server 2016 KDC returned KDC_ERR_ETYPE_NOSUPP for
+  # every account with this attribute left unset, not just ones targeted by
+  # kerberoasting specifically. See kerberoasting.yml's comment for the
+  # full explanation.
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
       param([String]$Account, [String]$TargetSpn)
       Import-Module ActiveDirectory
-      $u = Get-ADUser -Identity $Account -Properties TrustedToAuthForDelegation, msDS-AllowedToDelegateTo
+      $u = Get-ADUser -Identity $Account -Properties TrustedToAuthForDelegation, msDS-AllowedToDelegateTo, msDS-SupportedEncryptionTypes
       $changed = $false
       if (-not $u.TrustedToAuthForDelegation) {
         Set-ADAccountControl -Identity $Account -TrustedToAuthForDelegation $true
@@ -39,6 +46,10 @@
       }
       if ($u.'msDS-AllowedToDelegateTo' -notcontains $TargetSpn) {
         Set-ADUser -Identity $Account -Add @{'msDS-AllowedToDelegateTo' = $TargetSpn}
+        $changed = $true
+      }
+      if ($u.'msDS-SupportedEncryptionTypes' -ne 28) {
+        Set-ADUser -Identity $Account -Replace @{'msDS-SupportedEncryptionTypes' = 28}
         $changed = $true
       }
       $Ansible.Changed = $changed
