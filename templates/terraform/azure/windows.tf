@@ -25,19 +25,26 @@ locals {
   # "-pro" since MicrosoftWindowsDesktop/Windows-10/win10-22h2-pro DOES have
   # published versions and needs no such substitution.
   #
-  # windows-server-2022 deliberately maps to the "-g2" (Hyper-V Generation 2)
-  # SKU, not the bare "2022-Datacenter": verified against a real deploy that
-  # newer VM size families (e.g. Fasv7, used when var.vm_size_overrides picks
-  # a size to fit a subscription's low regional core quota) are Gen2-only and
-  # reject the plain "2022-Datacenter" SKU outright ("cannot boot Hypervisor
-  # Generation '1'", https://aka.ms/azuregen2vm). Gen2 images run on both
-  # Gen1- and Gen2-capable sizes, so this is a strict widening, not a
-  # narrowing, of which vm_size_overrides values work.
+  # Every windows-server-* maps to its Hyper-V Generation 2 SKU, not the
+  # bare "<year>-Datacenter": verified against a real deploy that newer VM
+  # size families (e.g. Fasv7, used when var.vm_size_overrides picks a size
+  # to fit a subscription's low regional core quota) are Gen2-only and
+  # reject a Gen1 SKU outright ("cannot boot Hypervisor Generation '1'",
+  # https://aka.ms/azuregen2vm). Gen2 images run on both Gen1- and
+  # Gen2-capable sizes, so this is a strict widening, not a narrowing, of
+  # which vm_size_overrides values work. **The Gen2 SKU suffix is NOT
+  # consistent across Windows Server versions** — verified by listing
+  # Microsoft.Compute/locations/<region>/publishers/MicrosoftWindowsServer/
+  # artifacttypes/vmimage/offers/WindowsServer/skus directly (not `az vm
+  # image list`, broken in some environments — see AZURE-DEPLOY-RUNBOOK.md):
+  # 2016/2019 use "-gensecond" ("2016-datacenter-gensecond"), 2022/2025 use
+  # "-g2" ("2022-datacenter-g2"). Don't assume one pattern for a new OS
+  # entry without checking that same listing first.
   os_image_map = {
-    "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-Datacenter" }
-    "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-Datacenter" }
+    "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-datacenter-gensecond" }
+    "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-datacenter-gensecond" }
     "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-datacenter-g2" }
-    "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-Datacenter" }
+    "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-datacenter-g2" }
     "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro" }
     "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-avd" }
   }

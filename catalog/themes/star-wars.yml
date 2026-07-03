@@ -1,0 +1,75 @@
+# catalog/themes/star-wars.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: star-wars
+name: "Galactic Republic"
+description: >
+  Factions and organizations from a galaxy far, far away standing in for
+  BadBlood's corporate departments — same non-literal, flavor-only use of a
+  well-known setting already established in this repo's other themes.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "factions" here
+    - { code: IMP, name: "Galactic Empire" }
+    - { code: REB, name: "Rebel Alliance" }
+    - { code: JED, name: "Jedi Order" }
+    - { code: SIT, name: "Sith Order" }
+    - { code: TRD, name: "Trade Federation" }
+    - { code: BHG, name: "Bounty Hunters Guild" }
+    - { code: CLN, name: "Clone Army" }
+    - { code: SEN, name: "Galactic Senate" }
+
+  given_names_male:
+    - Luke
+    - Han
+    - Obi-Wan
+    - Anakin
+    - Yoda
+    - Lando
+    - Boba
+    - Mace
+    - Qui-Gon
+    - Wedge
+    - Poe
+    - Finn
+    - Kylo
+    - Palpatine
+    - Chewbacca
+    - Vader
+
+  given_names_female:
+    - Leia
+    - Padme
+    - Rey
+    - Ahsoka
+    - Jyn
+    - Sabine
+    - Hera
+    - Mon
+    - Bo-Katan
+    - Shmi
+
+  family_names:
+    - Skywalker
+    - Solo
+    - Kenobi
+    - Organa
+    - Fett
+    - Calrissian
+    - Amidala
+    - Tano
+    - Erso
+    - Wren
+    - Syndulla
+    - Mothma
+    - Antilles
+    - Dameron
+    - Ren
+    - Windu
+
+extra_groups:
+  - { name: "Jedi Council", description: "High Jedi leadership — highly privileged, Domain Admins-adjacent" }
+  - { name: "Sith Lords", description: "Secret Sith hierarchy — highly privileged, Domain Admins-adjacent" }
+  - { name: "Rebel Alliance Command", description: "Rebellion leadership — privileged coordination tier" }
+  - { name: "Bounty Hunters Guild", description: "Contracted outsiders — isolated, low-trust accounts" }
+
+honey_account_naming: "clone_trooper.{n}"

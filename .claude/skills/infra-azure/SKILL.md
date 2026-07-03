@@ -129,19 +129,45 @@ add the variable once in `variables.tf` and wire `scripts/forge.py`'s
   check the OS image's Hypervisor Generation matches the new size — see the
   Gen2 note below, hit on the very deploy that found this SKU.
 - **`windows-server-2022`/`-2019`/`-2016`/`-2025` marketplace images and
-  Hypervisor Generation**: `local.os_image_map`'s plain `"2022-Datacenter"`
-  SKU is Gen1-only. Newer VM size families (confirmed: `Fasv7`; likely any
+  Hypervisor Generation**: `local.os_image_map`'s plain `"<year>-Datacenter"`
+  SKUs are Gen1-only. Newer VM size families (confirmed: `Fasv7`; likely any
   size introduced after Gen2 became the default, e.g. most `v5`/`v6`/`v7`
-  families) are Gen2-only and reject it outright at VM creation with `"The
+  families) are Gen2-only and reject them outright at VM creation with `"The
   selected VM size 'X' cannot boot Hypervisor Generation '1'"`
   (https://aka.ms/azuregen2vm) — not a quota/capacity error, a hard
-  incompatibility. Fixed by mapping to the `"2022-datacenter-g2"` SKU instead
-  (same family, `WindowsServer` offers publish both `-g2` and non-`-g2`
-  variants of every Datacenter SKU) — Gen2 images run on both Gen1- and
-  Gen2-capable sizes, so this is a strict widening, not a narrowing, of which
-  `vm_size_overrides` values work. If you add windows-server-2025 or another
-  new OS to `os_image_map`, check for the same `-g2` variant before assuming
-  the bare SKU name works with whatever size you pick.
+  incompatibility. Fixed by mapping every entry to its Gen2 SKU (Gen2 images
+  run on both Gen1- and Gen2-capable sizes, so this is a strict widening, not
+  a narrowing, of which `vm_size_overrides` values work) — **but the Gen2
+  suffix is NOT the same string across versions**, verified on a real deploy
+  after the first fix (2022 only) didn't catch 2016: `2016`/`2019` use
+  `-gensecond` (`"2016-datacenter-gensecond"`), `2022`/`2025` use `-g2`
+  (`"2022-datacenter-g2"`). If you add another OS to `os_image_map`, list the
+  real SKUs first rather than guessing the pattern:
+  `az rest --method get --url "https://management.azure.com/subscriptions/
+  <sub>/providers/Microsoft.Compute/locations/<region>/publishers/
+  MicrosoftWindowsServer/artifacttypes/vmimage/offers/WindowsServer/skus
+  ?api-version=2023-07-03"` (not `az vm image list` — broken command-loading
+  path in some environments, same as elsewhere in this file).
+- **Disk controller type is a SEPARATE compatibility axis from Hypervisor
+  Generation — fixing Gen2 doesn't guarantee a VM size actually boots.**
+  Verified on a real deploy: `Standard_F1as_v7` (Gen2, used to fit a low
+  vCPU quota — see the quota note above) rejected the Gen2
+  `2016-datacenter-gensecond` image outright with `"The VM size
+  'Standard_F1as_v7' cannot boot with OS image or disk ... check disk
+  controller types"` — every `Fsv7`-family size's `DiskControllerTypes`
+  capability is `NVMe` *only* (no SCSI fallback), and Windows Server 2016's
+  image doesn't support NVMe regardless of which SKU variant you pick.
+  `Microsoft.Compute/skus`' `capabilities[].DiskControllerTypes` (`NVMe`,
+  or absent — absent means classic/SCSI-only, not "any") tells you this
+  before you hit the error; check it alongside `HyperVGenerations` and
+  `restrictions[]` when picking a size for an older OS. When no
+  NVMe-capable size's disk controller matches the OS image, override just
+  that role in `var.vm_size_overrides` to a different unrestricted 1-vCPU
+  size — `Standard_DC1s_v3` (a confidential-compute series VM, but usable as
+  an ordinary VM without opting into confidential-compute features) is one
+  such SCSI-compatible option, confirmed working for a `windows-server-2016`
+  domain controller in `eastus` on the same subscription where every
+  `F*v7` size failed for it.
 - **WinRM bootstrap**: reuses Ansible's own
   `ConfigureRemotingForAnsible.ps1` via `CustomScriptExtension`, exactly as
   `vendor/GOAD/template/provider/azure/windows.tf` does. It creates a

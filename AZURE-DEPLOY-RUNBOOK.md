@@ -74,7 +74,7 @@ for s in data['value']:
     if 'eastus' not in [l.lower() for l in s.get('locations',[])]: continue
     caps={c['name']:c['value'] for c in s.get('capabilities',[])}
     if caps.get('vCPUs')=='1' and not s.get('restrictions'):
-        print(s['name'], caps.get('MemoryGB'), 'GB')
+        print(s['name'], caps.get('MemoryGB'), 'GB, DiskControllerTypes=', caps.get('DiskControllerTypes'))
 "
 ```
 
@@ -84,6 +84,19 @@ restrictions change. Pick a region with **both** enough quota headroom and an
 unrestricted small SKU; `swedencentral` and `eastus` are both known-good for
 different reasons (see `infra-azure/SKILL.md`), but *this subscription's*
 numbers are what matter, not last time's.
+
+**`DiskControllerTypes` matters as much as `HyperVGenerations` for older
+OSes.** `F*v7`-family sizes (including `Standard_F1as_v7`) only support
+`NVMe`, and `windows-server-2016`'s image doesn't support NVMe regardless of
+which SKU variant you use — VM creation fails with `"cannot boot with OS
+image or disk ... check disk controller types"`, a different error from the
+Hypervisor Generation one. If you're deploying an older OS (2016, possibly
+2019) on an NVMe-only size, override just that role in
+`vm_size_overrides` to a SCSI-compatible unrestricted 1-vCPU size instead —
+`Standard_DC1s_v3` (confidential-compute series, but works as an ordinary
+VM without opting into confidential-compute features; `DiskControllerTypes`
+absent from its capabilities means classic/SCSI) was confirmed working for
+a 2016 DC on the same subscription where every `F*v7` size failed for it.
 
 Once you've picked, set `lab.region` in the spec and write a
 `sizes.auto.tfvars.json` you'll drop into the generated Terraform dir in
@@ -101,10 +114,12 @@ on every command):
 }
 ```
 
-*(Already fixed at the source: `windows-server-*` now maps to the `-g2`
+*(Already fixed at the source: every `windows-server-*` now maps to its
 Hypervisor-Generation-2 marketplace SKU, so it's compatible with newer
 Gen2-only size families like Fasv7 out of the box — no separate action
-needed here.)*
+needed here. Note the Gen2 suffix isn't consistent across versions
+[`2016`/`2019` use `-gensecond`, `2022`/`2025` use `-g2`] — only relevant if
+you're adding a new OS to `os_image_map`, see `infra-azure/SKILL.md`.)*
 
 ## 3. Generate
 
@@ -330,7 +345,8 @@ no longer exists, and `docker ps` clutter is just confusing next time.
 | Symptom | Cause | Fix location |
 |---|---|---|
 | `SkuNotAvailable ... Capacity Restrictions` or `exceeding approved Total Regional Cores quota` | Subscription/region vCPU cap or SKU restriction | Step 2 — try another region/size, it's not always a dead end |
-| `cannot boot Hypervisor Generation '1'` | Gen2-only size family + Gen1 image | Already fixed (`windows.tf`, `-g2` SKUs) |
+| `cannot boot Hypervisor Generation '1'` | Gen2-only size family + Gen1 image | Already fixed for 2016/2019/2022/2025 (`windows.tf`) — check the real SKU list before adding another OS, the Gen2 suffix isn't consistent |
+| `cannot boot with OS image or disk ... check disk controller types` | NVMe-only size (`F*v7`) + an OS image (2016 confirmed) with no NVMe support — a different axis from Hypervisor Generation | Override just that role in `vm_size_overrides` to a SCSI-compatible size, e.g. `Standard_DC1s_v3` |
 | `Provider produced inconsistent result after apply` / spurious `already exists` | ARM read-after-write lag on this subscription | Step 4 — `-refresh=false`, import + retry |
 | WinRM times out cross-subnet, works same-subnet | Windows Firewall Public-profile `LocalSubnet` scope | Already fixed (`windows.tf` bootstrap script) |
 | `'add_route' is undefined` | Missing GOAD inventory default | Already fixed (`hosts.yml.j2`) |
