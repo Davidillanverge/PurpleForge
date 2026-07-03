@@ -110,10 +110,38 @@ add the variable once in `variables.tf` and wire `scripts/forge.py`'s
   Also check the subscription's actual **regional core quota**
   (`Microsoft.Compute/locations/<region>/usages`, `name.value == "cores"`)
   before deploying — a lab this size needs roughly 2 vCPUs × (number of
-  machines + 1 bastion); a subscription capped at 4 total regional vCPUs
-  physically cannot run more than 2 Dv3-size machines at once, and no amount
-  of retrying or resizing fixes that — only a quota increase or a different
-  subscription/region does.
+  machines + 1 bastion). **Correction from an earlier version of this note,
+  disproven on a real deploy**: a low total-regional-vCPU quota does NOT
+  necessarily mean only a quota increase or a different subscription fixes
+  it. `Microsoft.Compute/skus`' `restrictions[]` varies by *region*, not just
+  by subscription — a subscription with the same 4-vCPU cap in every region
+  can still have an unrestricted 1-vCPU SKU in one region (e.g.
+  `Standard_F1as_v7`, 1 vCPU/4GB, confirmed unrestricted in `eastus` on a
+  subscription where every 1-vCPU B/A-series SKU was restricted in
+  `swedencentral`), letting a 4-host lab (bastion+DC+member-server+
+  workstation) fit in a 4-vCPU budget after all. Before concluding a quota
+  increase is the only option: query `Microsoft.Compute/skus` across a
+  handful of regions for `vCPUs == 1` entries with an empty `restrictions[]`
+  (the `az vm`/`az network` CLI subcommands may themselves be broken in some
+  environments with an unrelated `KeyError: 'disks'` command-loading bug —
+  use `az rest --method get` against the ARM REST API directly instead, it
+  doesn't hit that code path). If you do switch region/size this way, also
+  check the OS image's Hypervisor Generation matches the new size — see the
+  Gen2 note below, hit on the very deploy that found this SKU.
+- **`windows-server-2022`/`-2019`/`-2016`/`-2025` marketplace images and
+  Hypervisor Generation**: `local.os_image_map`'s plain `"2022-Datacenter"`
+  SKU is Gen1-only. Newer VM size families (confirmed: `Fasv7`; likely any
+  size introduced after Gen2 became the default, e.g. most `v5`/`v6`/`v7`
+  families) are Gen2-only and reject it outright at VM creation with `"The
+  selected VM size 'X' cannot boot Hypervisor Generation '1'"`
+  (https://aka.ms/azuregen2vm) — not a quota/capacity error, a hard
+  incompatibility. Fixed by mapping to the `"2022-datacenter-g2"` SKU instead
+  (same family, `WindowsServer` offers publish both `-g2` and non-`-g2`
+  variants of every Datacenter SKU) — Gen2 images run on both Gen1- and
+  Gen2-capable sizes, so this is a strict widening, not a narrowing, of which
+  `vm_size_overrides` values work. If you add windows-server-2025 or another
+  new OS to `os_image_map`, check for the same `-g2` variant before assuming
+  the bare SKU name works with whatever size you pick.
 - **WinRM bootstrap**: reuses Ansible's own
   `ConfigureRemotingForAnsible.ps1` via `CustomScriptExtension`, exactly as
   `vendor/GOAD/template/provider/azure/windows.tf` does. It creates a

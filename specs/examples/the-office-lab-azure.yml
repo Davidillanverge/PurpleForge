@@ -1,0 +1,73 @@
+# PurpleForge — The Office lab (Azure).
+# 1 DC + 1 member Windows Server + 1 workstation, LAPS enabled, and only
+# kerberoasting + asreproast as the intentional gaps — same shape as
+# specs/examples/springfield-office-lab-azure.yml, themed as Dunder Mifflin
+# Scranton instead of Springfield, with a single workstation.
+lab:
+  name: the-office-lab
+  theme: the-office
+  provider: azure
+  region: eastus   # this subscription has a hard 4-total-vCPU-per-region compute quota (confirmed identical across 9 regions incl. swedencentral) and every 1-vCPU SKU is restricted in swedencentral — eastus is the region where Standard_F1as_v7 (1 vCPU, 4GB) is confirmed unrestricted, letting all 4 hosts (bastion+dc+mbr+ws) fit in the 4-vCPU budget without dropping a host; see terraform/azure/sizes.auto.tfvars.json in the generated output
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 50
+
+forest:
+  - domain: dundermifflin.local
+    netbios: DUNDERM
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2022
+    domain: dundermifflin.local
+    count: 1
+  - role: member-server
+    os: windows-server-2022
+    domain: dundermifflin.local
+    count: 1
+  - role: workstation
+    os: windows-11-23h2
+    domain: dundermifflin.local
+    count: 1
+
+population:
+  users: 40
+  density: realistic
+  seed: 1971   # 1971 — the year Dunder Mifflin was founded
+
+vulnerabilities:               # the deliberate gaps requested
+  - asreproast
+  - kerberoasting
+
+defense:
+  profile: none
+  # baseline-controls = no CIS/STIG ansible-lockdown sweep runs at all (see
+  # catalog/defense/hardening/baseline-controls.yml); LAPS is the only fixed
+  # control requested. Neither asreproast nor kerberoasting's neutralized_by
+  # references hardening.controls.laps, and cis-l2/stig are not applied here,
+  # so both stay exploitable with zero reconciliation exclusions needed.
+  hardening:
+    baseline: baseline-controls
+    apply_to: all
+    controls:
+      laps: true
+    intentional_gaps_auto: true
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+  deception:
+    honey_accounts: 0
+    canarytokens: []
+
+on_conflict: exclude-control
+
+detection_rules: none
+
+validation:
+  bloodhound: false
+  pingcastle: false
+  atomic_red_team: []

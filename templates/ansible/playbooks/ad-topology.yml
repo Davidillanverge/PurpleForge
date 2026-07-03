@@ -12,6 +12,26 @@
 - name: PurpleForge | ad-topology | promote root domain controllers
   hosts: domain_controllers
   gather_facts: false
+  pre_tasks:
+    # Azure's azurerm_windows_virtual_machine rejects "Administrator" as
+    # admin_username outright, so every VM's local admin is named
+    # local_admin_username (see scripts/forge.py's WINDOWS_ADMIN_USERNAME)
+    # instead — verified against a real deploy that when win_domain (in the
+    # domain_controller role below) creates a brand-new forest, the domain's
+    # RID-500 "Administrator" account is seeded from THAT local account and
+    # keeps its name, not renamed to "Administrator". GOAD's own
+    # domain_controller role then hardcodes "Administrator" as the member for
+    # the Enterprise Admins/Domain Admins group-membership tasks (and this
+    # repo's own domain_username/lab-report assume "Administrator" too), so
+    # without this rename — done BEFORE domain creation, while it's still a
+    # plain local account rename, not a domain object — those tasks fail with
+    # "Could not find domain user ... named Administrator".
+    - name: Rename local admin account to Administrator before forest creation
+      ansible.windows.win_shell: |
+        if (Get-LocalUser -Name '{{ local_admin_username }}' -ErrorAction SilentlyContinue) {
+          Rename-LocalUser -Name '{{ local_admin_username }}' -NewName 'Administrator'
+        }
+      changed_when: false
   roles:
     - common
     - { role: settings/hostname }

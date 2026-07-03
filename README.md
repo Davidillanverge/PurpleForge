@@ -391,20 +391,36 @@ reproducible from the spec at any time, never itself the deployment. No
 `/deploy` command exists yet to chain the steps below automatically; today
 they're run by hand, in this order.
 
+> **First real deploy done, and it's a checklist now, not a discovery
+> exercise.** [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is a
+> procedural, copy-pasteable version of the steps below, with every gotcha
+> hit during that deploy (quota, image generation mismatches, a Windows
+> Firewall default that silently blocks cross-subnet WinRM, an NTLM/CBT
+> quirk against domain controllers, and more) folded in as a preemptive step
+> or a documented already-fixed callout. Start there for an actual Azure
+> deploy; keep reading here for the conceptual walkthrough.
+
 ### Prerequisites
 
 - `terraform` >= 1.5, `az` CLI (logged in: `az login`)
 - `ansible-core` pinned to the version GOAD itself was validated against —
   `vendor/GOAD/requirements.yml` fixes `ansible-core==2.12.6`, which requires
   a **Python 3.8–3.10 control node** (it crashes on 3.11/3.12 — a Python
-  import-hook incompatibility, not an ansible.cfg setting). Use a venv on
-  Python 3.10 if your default `python3` is newer, then:
+  import-hook incompatibility, not an ansible.cfg setting). If your host
+  Python is newer, don't fight it with pyenv/deadsnakes — run Ansible inside
+  a `python:3.10-slim` Docker container instead (`--network host` so it can
+  see your WireGuard interface); see `AZURE-DEPLOY-RUNBOOK.md` step 6 for the
+  exact commands, including the `community.general` Galaxy-client
+  workaround. Otherwise, use a venv on Python 3.10:
   `pip install -r vendor/GOAD/requirements.yml`
 - The collections GOAD itself depends on, pinned to the same versions:
   `ansible-galaxy collection install -r vendor/GOAD/ansible/requirements.yml`
   (newer `community.windows`/`ansible.windows` remove modules — e.g.
   `win_domain`, `win_domain_group` — that GOAD's roles still use; installing
-  a newer collection version than this pin will break `ad-topology.yml`.)
+  a newer collection version than this pin will break `ad-topology.yml`.
+  **`community.general`, unpinned in that same file, will fail to install
+  under `ansible-core` 2.12.6's Galaxy client** — see the runbook for the
+  direct-tarball-download workaround.)
 - A WireGuard client (the only way to reach anything in the lab — see
   CLAUDE.md invariant #1)
 

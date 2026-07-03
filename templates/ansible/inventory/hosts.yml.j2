@@ -10,11 +10,24 @@ all:
     ansible_user: ansible
     ansible_password: "{{ ansible_password }}"
     ansible_connection: winrm
-    ansible_winrm_transport: ntlm
+    # basic, not ntlm — verified against a real deploy that cross-machine
+    # WinRM/NTLM to a DOMAIN CONTROLLER over HTTPS fails ("the specified
+    # credentials were rejected") even with the exact same, confirmed-correct
+    # credentials — NTLM's Channel Binding Token computation over a
+    # self-signed cert (ansible_winrm_server_cert_validation: ignore, right
+    # below) apparently doesn't line up the same way for a DC as it does for
+    # a plain member server/workstation, where ntlm worked fine. Basic auth
+    # has no CBT step to mismatch; it's already confirmed enabled
+    # (WSMan:\localhost\Service\Auth\Basic) and this is already HTTPS inside
+    # the isolated management-subnet-only WinRM path (see network-topology's
+    # NSG rules), not Basic-over-HTTP.
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_port: 5986
+    local_admin_username: "{{ local_admin_username }}"
     two_adapters: false
     nat_adapter: ""
+    add_route: "no"
     domain_adapter: "Ethernet"
     dns_server_forwarder: "168.63.129.16"
     force_dns_server: "no"
@@ -40,7 +53,7 @@ all:
           domain: "{{ h.domain }}"
           domain_name: "{{ h.domain }}"
           netbios_name: "{{ h.netbios_name }}"
-          domain_username: "{{ h.domain_username }}"
+          domain_username: {{ h.domain_username }}
           domain_password: "{{ h.domain_password }}"
           dns_domain: "{{ h.dns_domain }}"
           badblood_user_count: {{ h.badblood_user_count }}
@@ -59,7 +72,7 @@ all:
           domain: "{{ h.domain }}"
           domain_name: "{{ h.domain_name }}"
           netbios_name: "{{ h.netbios_name }}"
-          domain_username: "{{ h.domain_username }}"
+          domain_username: {{ h.domain_username }}
           domain_password: "{{ h.domain_password }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
@@ -77,7 +90,7 @@ all:
           domain_password: "{{ h.domain_password }}"
           dns_domain: "{{ h.dns_domain }}"
           parent_domain: "{{ h.parent_domain }}"
-          parent_domain_user: "{{ h.parent_domain_user }}"
+          parent_domain_user: {{ h.parent_domain_user }}
           parent_domain_password: "{{ h.parent_domain_password }}"
           source_dc: "{{ h.source_dc }}"
           badblood_user_count: {{ h.badblood_user_count }}
@@ -92,10 +105,10 @@ all:
 {% for h in groups.trust_anchors %}
         {{ h.name }}:
           ansible_host: "{{ h.ip }}"
-          domain_username: "{{ h.domain_username }}"
+          domain_username: {{ h.domain_username }}
           domain_password: "{{ h.domain_password }}"
           remote_forest: "{{ h.remote_forest }}"
-          remote_admin: "{{ h.remote_admin }}"
+          remote_admin: {{ h.remote_admin }}
           remote_admin_password: "{{ h.remote_admin_password }}"
 {% endfor %}
 {% endif %}
@@ -107,7 +120,7 @@ all:
           ansible_host: "{{ h.ip }}"
           hostname: "{{ h.name }}"
           member_domain: "{{ h.member_domain }}"
-          domain_username: "{{ h.domain_username }}"
+          domain_username: {{ h.domain_username }}
           domain_password: "{{ h.domain_password }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
@@ -120,7 +133,7 @@ all:
           ansible_host: "{{ h.ip }}"
           hostname: "{{ h.name }}"
           member_domain: "{{ h.member_domain }}"
-          domain_username: "{{ h.domain_username }}"
+          domain_username: {{ h.domain_username }}
           domain_password: "{{ h.domain_password }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}

@@ -99,6 +99,18 @@ Plus {{ deception_plan.honey_accounts | length }} deception honey account(s) on 
 
 ### Domain administrator
 
+`Administrator` is the domain's real RID-500 account, not a fresh object —
+promoting a domain's first DC seeds it from whatever local account did the
+promotion (`local_admin_username` below, renamed to `Administrator` right
+before promotion since Azure forbids that name as a VM's own admin_username).
+Its password is therefore unchanged by promotion: the same password as
+"Local VM administrator" below — which is also what this harness uses as
+every host's DSRM/safe-mode password, so there is only the one password.
+Verified against a real deploy that treating this as a distinct,
+freshly-generated secret breaks both domain-join ("user name or password is
+incorrect") and any later AD object management ("server has rejected the
+client credentials").
+
 | Domain | Username | Password |
 |---|---|---|
 {% for r in domain_admin_rows %}

@@ -1,0 +1,79 @@
+# catalog/themes/the-office.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: the-office
+name: "Dunder Mifflin Scranton"
+description: >
+  The Scranton branch of a mid-size paper company standing in for BadBlood's
+  corporate departments — same non-literal, flavor-only use of a well-known
+  setting already established in this repo's the-simpsons theme (Springfield
+  institutions).
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "departments" here
+    - { code: SAL, name: "Sales" }
+    - { code: ACC, name: "Accounting" }
+    - { code: WHS, name: "Warehouse" }
+    - { code: REC, name: "Reception" }
+    - { code: CST, name: "Customer Service" }
+    - { code: HRD, name: "Human Resources" }
+    - { code: COR, name: "Corporate" }
+    - { code: ANX, name: "The Annex" }
+
+  given_names_male:
+    - Michael
+    - Jim
+    - Dwight
+    - Andy
+    - Kevin
+    - Oscar
+    - Creed
+    - Stanley
+    - Toby
+    - Ryan
+    - Robert
+    - Darryl
+    - Gabe
+    - David
+    - Charles
+    - Bob
+
+  given_names_female:
+    - Pam
+    - Angela
+    - Kelly
+    - Phyllis
+    - Meredith
+    - Erin
+    - Holly
+    - Jan
+    - Karen
+    - Nellie
+    - Donna
+
+  family_names:
+    - Scott
+    - Halpert
+    - Schrute
+    - Bernard
+    - Malone
+    - Martinez
+    - Beesly
+    - Kapoor
+    - Vance
+    - Flenderson
+    - Lewis
+    - Philbin
+    - Palmer
+    - Howard
+    - Nunez
+    - Wallace
+    - California
+    - Levinson
+
+extra_groups:
+  - { name: "Corporate", description: "Regional/corporate management — highly privileged, Domain Admins-adjacent" }
+  - { name: "Party Planning Committee", description: "Social committee — low formal privilege, outsized informal influence" }
+  - { name: "Finance Committee", description: "Budget/accounting oversight tier" }
+  - { name: "Warehouse Union", description: "Isolated, low-trust accounts" }
+
+honey_account_naming: "assistant_to_the_regional_manager.{n}"

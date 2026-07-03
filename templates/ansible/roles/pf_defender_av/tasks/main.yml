@@ -37,11 +37,32 @@
       Set-MpPreference -EnableNetworkProtection {{ 'Enabled' if pf_network_protection_enabled | bool else 'Disabled' }}
 
 - name: "pf_defender_av | tamper protection registry (Intune/enterprise-managed key)"
+  # Verified against a real deploy that this ALWAYS fails with "Requested
+  # registry access is not allowed" on a standalone (non-Intune-managed) VM:
+  # Microsoft ACL-locked this specific key to the Defender platform itself
+  # starting Windows 10 1903, precisely so local admins/malware can't disable
+  # tamper protection via script — there is no supported non-Intune API to
+  # set it (Set-MpPreference has no tamper-protection parameter either, by
+  # the same design). Recorded as a best-effort attempt, not a hard failure —
+  # same honesty model as this project's other unenforceable EDR/hardening
+  # gaps (see README's "Defensive controls" section) — rather than blocking
+  # the rest of the lab (ASR rules, network protection, real-time monitoring
+  # below all DO apply via the supported Set-MpPreference/Add-MpPreference
+  # cmdlets and are unaffected).
   ansible.windows.win_regedit:
     path: HKLM:\SOFTWARE\Microsoft\Windows Defender\Features
     name: TamperProtection
     data: "{{ 5 if pf_tamper_enabled | bool else 0 }}"
     type: dword
+  register: pf_tamper_protection_result
+  failed_when: false
+
+- name: "pf_defender_av | tamper protection registry — report if it was actually applied"
+  ansible.builtin.debug:
+    msg: >-
+      Tamper protection registry write {{ 'succeeded' if pf_tamper_protection_result is success
+      else 'failed (expected on a non-Intune-managed VM — see previous task comment); tamper
+      protection is UNCHANGED from the image default' }}.
 
 - name: "pf_defender_av | Attack Surface Reduction rules ({{ pf_asr_action }})"
   ansible.windows.win_powershell:

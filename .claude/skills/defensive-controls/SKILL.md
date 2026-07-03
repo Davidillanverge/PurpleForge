@@ -115,9 +115,9 @@ not build — `plan_edr` in `scripts/forge.py` marks them
 prints that reason. **Don't silently skip an EDR selection** — if you add a
 product, either implement it host-only or mark it `backend_required: true`.
 
-## Testing this skill (three real bugs were caught here, not by inspection)
+## Testing this skill (four real bugs were caught here, not by inspection)
 
-No live DC in CI. Validate structurally, but validate for real — these three
+No live DC in CI. Validate structurally, but validate for real — these four
 were only caught by actually running the tools:
 
 1. **`ansible.cfg`'s `roles_path` didn't include `vendor/ansible-lockdown`.**
@@ -145,6 +145,20 @@ were only caught by actually running the tools:
    `hosts.yml.j2`. Caught by generating the `defense.profile: none` case
    (empty hardening/EDR/protected-users) and `yaml.safe_load`-ing it, not just
    the vuln-rich medieval example.
+4. **`pf_defender_av`'s tamper-protection registry write
+   (`HKLM:\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection`)
+   always fails with "Requested registry access is not allowed" on a real,
+   standalone (non-Intune-managed) VM.** Microsoft ACL-locked this specific
+   key to the Defender platform itself starting Windows 10 1903, precisely so
+   local admins/malware can't disable tamper protection via script — there is
+   no supported non-Intune API to set it (`Set-MpPreference` has no
+   tamper-protection parameter either, by the same design). This can't be
+   fixed by trying harder; it's a real platform limitation. Changed the task
+   to `register` + `failed_when: false` with a follow-up debug task
+   reporting whether it actually applied, instead of hard-failing the whole
+   `site.yml` run over a control that was never enforceable on this kind of
+   VM — same honesty model as the EDR-backend and unverified-`neutralized_by`
+   cases above, not a silent skip.
 
 ```bash
 python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml

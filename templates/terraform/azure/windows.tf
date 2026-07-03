@@ -24,10 +24,19 @@ locals {
   # standalone VM here (no AVD host pool involved). windows-10-22h2 keeps
   # "-pro" since MicrosoftWindowsDesktop/Windows-10/win10-22h2-pro DOES have
   # published versions and needs no such substitution.
+  #
+  # windows-server-2022 deliberately maps to the "-g2" (Hyper-V Generation 2)
+  # SKU, not the bare "2022-Datacenter": verified against a real deploy that
+  # newer VM size families (e.g. Fasv7, used when var.vm_size_overrides picks
+  # a size to fit a subscription's low regional core quota) are Gen2-only and
+  # reject the plain "2022-Datacenter" SKU outright ("cannot boot Hypervisor
+  # Generation '1'", https://aka.ms/azuregen2vm). Gen2 images run on both
+  # Gen1- and Gen2-capable sizes, so this is a strict widening, not a
+  # narrowing, of which vm_size_overrides values work.
   os_image_map = {
     "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-Datacenter" }
     "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-Datacenter" }
-    "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-Datacenter" }
+    "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-datacenter-g2" }
     "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-Datacenter" }
     "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro" }
     "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-avd" }
@@ -137,7 +146,20 @@ resource "azurerm_virtual_machine_extension" "winrm_prep" {
   type_handler_version = "1.9"
 
   settings = jsonencode({
-    fileUris         = ["https://raw.githubusercontent.com/ansible/ansible/38e50c9f819a045ea4d40068f83e78adbfaf2e68/examples/scripts/ConfigureRemotingForAnsible.ps1"]
-    commandToExecute = "net user ansible ${var.ansible_password} /add /expires:never /y && net localgroup administrators ansible /add && powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1"
+    fileUris = ["https://raw.githubusercontent.com/ansible/ansible/38e50c9f819a045ea4d40068f83e78adbfaf2e68/examples/scripts/ConfigureRemotingForAnsible.ps1"]
+    # The extra New-NetFirewallRule call fixes a real deploy-time gotcha
+    # ConfigureRemotingForAnsible.ps1 does not handle: every Azure Windows VM
+    # NIC comes up with NetworkCategory "Public" (never auto-promoted to
+    # "Private", since there is no AD domain yet at this point in the deploy
+    # sequence), and the *built-in* "Windows Remote Management (HTTP-In)"
+    # rule's Public-profile instance is scoped to RemoteAddress=LocalSubnet —
+    # verified against a real deploy that this silently blocks WinRM from any
+    # host outside the target's own subnet (e.g. the bastion, which always
+    # lives in a separate management subnet — see network.tf) while
+    # same-subnet WinRM traffic works fine, with no NSG or WinRM-service-level
+    # symptom at all. Scoped to the lab's own supernet, not "Any" — WinRM
+    # still never reaches the internet (invariant #1), it just also becomes
+    # reachable from other subnets inside this one lab's VNet.
+    commandToExecute = "net user ansible ${var.ansible_password} /add /expires:never /y && net localgroup administrators ansible /add && powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1 && powershell -Command \"New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-VNet' -Direction Inbound -Protocol TCP -LocalPort 5985,5986 -RemoteAddress ${var.supernet} -Action Allow -Profile Any\""
   })
 }

@@ -516,11 +516,32 @@ def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
     return machines
 
 
-def build_ansible_groups(spec: dict, machines: list[dict], domain_passwords: dict[str, str]) -> dict[str, list[dict]]:
+def build_ansible_groups(spec: dict, machines: list[dict], admin_password: str) -> dict[str, list[dict]]:
     """See .claude/skills/ad-topology/SKILL.md for the group-assignment rules
     this implements: root DC vs. additional DC vs. child-domain DC vs.
     trust-anchor, and the domain/domain_name double-write GOAD's roles need
-    because they're inconsistent about which key they read."""
+    because they're inconsistent about which key they read.
+
+    Every group's domain_password is admin_password, not a separately
+    generated per-domain secret — verified against a real deploy that
+    conflating the two breaks domain-join outright ("user name or password is
+    incorrect"): promoting a domain's first DC seeds its real "Administrator"
+    (RID-500) account from whatever local account did the promotion
+    (local_admin_username, renamed just before promotion — see
+    ad-topology.yml's pre_tasks), so that account's *login* password stays
+    admin_password, unchanged by promotion. GOAD's domain_controller role
+    also reads this same {{domain_password}} as win_domain/
+    win_domain_controller's safe_mode_password (DSRM) — a real, separate
+    Windows concept from the domain login password — but nothing requires
+    those two secrets to differ, and PurpleForge's own roles (ad_theming_
+    overlay, vuln-injection, defensive-controls — see their tasks/*.yml,
+    grep domain_password) reuse the identical {{domain_username}}/
+    {{domain_password}} inventory vars to authenticate against the
+    already-created domain for AD object manipulation, where only the real
+    login password works. One shared value keeps every consumer correct
+    instead of threading a second variable through every PurpleForge-authored
+    template for a distinction (DSRM vs. login) this project's lab-lifecycle
+    threat model doesn't need."""
     forest_by_domain = {d["domain"]: d for d in spec["forest"]}
 
     def is_child(domain: str) -> bool:
@@ -559,8 +580,16 @@ def build_ansible_groups(spec: dict, machines: list[dict], domain_passwords: dic
             "domain": domain,
             "domain_name": domain,
             "netbios_name": d["netbios"],
-            "domain_username": "Administrator",
-            "domain_password": domain_passwords[domain],
+            # ansible.windows.win_domain_controller/win_domain_membership require
+            # DOMAIN\user or user@domain.com — verified against a real deploy that
+            # a bare "Administrator" fails domain_admin_user validation outright.
+            # yaml_scalar (not an f-string dropped into a Jinja "{{ }}") because
+            # the literal backslash breaks a double-quoted YAML scalar outright
+            # ("found unknown escape character") — verified on a real deploy
+            # that this was silently generating unparseable inventories for
+            # EVERY spec, not just the one being deployed at the time.
+            "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
+            "domain_password": admin_password,
             "dns_domain": first["name"],
         }
         if is_child(domain):
@@ -568,8 +597,8 @@ def build_ansible_groups(spec: dict, machines: list[dict], domain_passwords: dic
             parent_dc = root_dc_name.get(parent, "")
             common.update({
                 "parent_domain": parent,
-                "parent_domain_user": "Administrator",
-                "parent_domain_password": domain_passwords[parent],
+                "parent_domain_user": yaml_scalar(f"{forest_by_domain[parent]['netbios']}\\Administrator"),
+                "parent_domain_password": admin_password,
                 "source_dc": f"{parent_dc}.{parent}" if parent_dc else "",
                 "dns_domain": parent_dc or first["name"],
             })
@@ -581,11 +610,11 @@ def build_ansible_groups(spec: dict, machines: list[dict], domain_passwords: dic
                 groups["trust_anchors"].append({
                     "name": first["name"],
                     "ip": first["ip"],
-                    "domain_username": "Administrator",
-                    "domain_password": domain_passwords[domain],
+                    "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
+                    "domain_password": admin_password,
                     "remote_forest": trust["target"],
-                    "remote_admin": "Administrator",
-                    "remote_admin_password": domain_passwords.get(trust["target"], ""),
+                    "remote_admin": yaml_scalar(f"{forest_by_domain[trust['target']]['netbios']}\\Administrator"),
+                    "remote_admin_password": admin_password,
                 })
 
         for extra in dcs[1:]:
@@ -595,20 +624,21 @@ def build_ansible_groups(spec: dict, machines: list[dict], domain_passwords: dic
                 "domain": domain,
                 "domain_name": domain,
                 "netbios_name": d["netbios"],
-                "domain_username": "Administrator",
-                "domain_password": domain_passwords[domain],
+                "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
+                "domain_password": admin_password,
                 "dns_domain": root_dc_name[domain],
             })
 
     for m in machines:
         if m["role"] in ("member-server", "workstation"):
             group = "member_servers" if m["role"] == "member-server" else "workstations"
+            member_netbios = forest_by_domain[m["domain"]]["netbios"]
             groups[group].append({
                 "name": m["name"],
                 "ip": m["ip"],
                 "member_domain": m["domain"],
-                "domain_username": "Administrator",
-                "domain_password": domain_passwords[m["domain"]],
+                "domain_username": yaml_scalar(f"{member_netbios}\\Administrator"),
+                "domain_password": admin_password,
                 "dns_domain": root_dc_name.get(m["domain"], ""),
             })
 
@@ -1102,7 +1132,12 @@ def render_defensive_controls(
 
 
 def render_ansible(
-    spec: dict, machines: list[dict], domain_passwords: dict[str, str], ansible_password: str, theme: dict, out_dir: Path
+    spec: dict,
+    machines: list[dict],
+    admin_password: str,
+    ansible_password: str,
+    theme: dict,
+    out_dir: Path,
 ) -> dict[str, list[dict]]:
     src = TEMPLATES_DIR / "ansible"
     dst = out_dir / "ansible"
@@ -1112,7 +1147,7 @@ def render_ansible(
     shutil.copy(src / "ansible.cfg", dst / "ansible.cfg")
     shutil.copy(src / "playbooks" / "ad-topology.yml", dst / "playbooks" / "ad-topology.yml")
 
-    groups = build_ansible_groups(spec, machines, domain_passwords)
+    groups = build_ansible_groups(spec, machines, admin_password)
     attach_population_vars(groups, spec)
 
     template = jinja2.Template((src / "inventory" / "hosts.yml.j2").read_text(encoding="utf-8"), keep_trailing_newline=True)
@@ -1121,6 +1156,7 @@ def render_ansible(
         ansible_password=ansible_password,
         groups=groups,
         ad_theming_extra_groups=theme["extra_groups"],
+        local_admin_username=WINDOWS_ADMIN_USERNAME,
     )
     (dst / "inventory" / "hosts.yml").write_text(rendered, encoding="utf-8")
     return groups
@@ -1313,7 +1349,6 @@ def render_lab_report(
     network_plan: dict,
     ansible_groups: dict[str, list[dict]],
     theme: dict,
-    domain_passwords: dict[str, str],
     admin_password: str,
     ansible_password: str,
     planned_vulns: list[dict],
@@ -1332,10 +1367,18 @@ def render_lab_report(
             "seed": h.get("badblood_seed"),
         })
 
-    domain_admin_rows = [
-        {"domain": domain, "username": "Administrator", "password": password}
-        for domain, password in domain_passwords.items()
-    ]
+    # "Administrator" here is the domain's real RID-500 account, not a fresh
+    # object win_domain creates: promoting the first DC of a new forest seeds
+    # it from whatever local account did the promotion, which is always
+    # local_admin_username (ad-topology.yml's pre_tasks renames it to
+    # "Administrator" before promotion — Azure forbids "Administrator" as the
+    # VM's own admin_username). Its password is therefore unchanged by
+    # promotion: the VM's local admin password — which is also what
+    # build_ansible_groups uses uniformly as every domain_password (including
+    # the DSRM/safe-mode password win_domain/win_domain_controller separately
+    # accept), so there is only the one password to report here, not a
+    # distinct per-domain secret from domain_passwords.
+    domain_admin_rows = [{"domain": d["domain"], "username": "Administrator", "password": admin_password} for d in spec["forest"]]
 
     vuln_rows = [
         {
@@ -1546,7 +1589,6 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     network_plan = manifest["network_plan"]
     machines = flatten_machines(spec, network_plan)
-    domain_passwords = {d["domain"]: generate_password() for d in spec["forest"]}
     admin_password = generate_password()
     ansible_password = generate_password()
 
@@ -1554,7 +1596,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
     )
     theme = load_theme(spec["lab"]["theme"])
-    ansible_groups = render_ansible(spec, machines, domain_passwords, ansible_password, theme, out_dir)
+    ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, theme, out_dir)
     render_ad_theming(theme, out_dir)
 
     catalog = load_vuln_catalog()
@@ -1580,7 +1622,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     render_lab_report(
         spec, manifest, machines, network_plan, ansible_groups, theme,
-        domain_passwords, admin_password, ansible_password, planned_vulns,
+        admin_password, ansible_password, planned_vulns,
         hardening_plan, edr_plan, deception_plan, out_dir,
     )
     render_verify_playbook(
