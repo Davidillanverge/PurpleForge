@@ -193,12 +193,61 @@ def resolve_defense(spec: dict) -> dict:
     return deep_merge(profile_defaults, overrides)
 
 
+# azurerm_dev_test_global_vm_shutdown_schedule.timezone only accepts legacy
+# Windows timezone IDs, not IANA names — verified against a real `terraform
+# plan` (azurerm 3.117.1 rejects "Europe/Madrid" outright, despite
+# infra-azure's SKILL.md hedging that "recent API versions accept IANA names
+# too"; that hedge was wrong, this map replaces it). Subset of the CLDR
+# windowsZones.xml mapping, covering the IANA zones this repo's example specs
+# actually use plus other common ones — extend as new specs need more zones.
+IANA_TO_WINDOWS_TIMEZONE = {
+    "Europe/Madrid": "Romance Standard Time",
+    "Europe/Paris": "Romance Standard Time",
+    "Europe/Brussels": "Romance Standard Time",
+    "Europe/Copenhagen": "Romance Standard Time",
+    "Europe/Berlin": "W. Europe Standard Time",
+    "Europe/Amsterdam": "W. Europe Standard Time",
+    "Europe/Rome": "W. Europe Standard Time",
+    "Europe/Vienna": "W. Europe Standard Time",
+    "Europe/London": "GMT Standard Time",
+    "Europe/Dublin": "GMT Standard Time",
+    "Europe/Lisbon": "GMT Standard Time",
+    "Europe/Warsaw": "Central European Standard Time",
+    "Europe/Athens": "GTB Standard Time",
+    "Europe/Helsinki": "FLE Standard Time",
+    "Europe/Bucharest": "GTB Standard Time",
+    "Europe/Moscow": "Russian Standard Time",
+    "America/New_York": "Eastern Standard Time",
+    "America/Chicago": "Central Standard Time",
+    "America/Denver": "Mountain Standard Time",
+    "America/Los_Angeles": "Pacific Standard Time",
+    "America/Sao_Paulo": "E. South America Standard Time",
+    "Asia/Tokyo": "Tokyo Standard Time",
+    "Asia/Shanghai": "China Standard Time",
+    "Asia/Kolkata": "India Standard Time",
+    "Asia/Singapore": "Singapore Standard Time",
+    "Australia/Sydney": "AUS Eastern Standard Time",
+    "UTC": "UTC",
+}
+
+
 def parse_auto_shutdown(value: str) -> tuple[str, str]:
-    """"20:00 Europe/Madrid" -> ("2000", "Europe/Madrid") for
+    """"20:00 Europe/Madrid" -> ("2000", "Romance Standard Time") for
     azurerm_dev_test_global_vm_shutdown_schedule. Schema already enforces the
-    "HH:MM Area/City" pattern, so this only strips the colon."""
+    "HH:MM Area/City" pattern; the IANA zone name is translated to the legacy
+    Windows timezone ID the azurerm provider actually requires (see
+    IANA_TO_WINDOWS_TIMEZONE above)."""
     time_part, tz_part = value.split(" ", 1)
-    return time_part.replace(":", ""), tz_part
+    try:
+        windows_tz = IANA_TO_WINDOWS_TIMEZONE[tz_part]
+    except KeyError:
+        raise SpecError(
+            f"lab.auto_shutdown: IANA timezone '{tz_part}' has no known Windows "
+            "timezone equivalent — add it to IANA_TO_WINDOWS_TIMEZONE in "
+            "scripts/forge.py (azurerm_dev_test_global_vm_shutdown_schedule "
+            "requires a Windows timezone ID, not an IANA name)."
+        ) from None
+    return time_part.replace(":", ""), windows_tz
 
 
 def stable_octet(name: str) -> int:

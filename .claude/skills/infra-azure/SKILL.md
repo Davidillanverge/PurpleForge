@@ -51,10 +51,34 @@ add the variable once in `variables.tf` and wire `scripts/forge.py`'s
   schema's `machines[].os` enum to `publisher`/`offer`/`sku`, following
   `vendor/GOAD/ad/GOAD/providers/azure/windows.tf`'s naming convention
   (`MicrosoftWindowsServer` / `WindowsServer` / `"2019-Datacenter"`, etc).
-  **The 2022/2025 server and both client (10/11) SKUs are best-effort** —
-  GOAD's own file carries the same caveat: verify with
+  **The 2022/2025 server SKUs are still best-effort** — GOAD's own file
+  carries the same caveat: verify with
   `az vm image list --publisher <p> --offer <o> --all -o table` before a real
   deploy, since Azure marketplace SKU names/availability drift over time.
+  `windows-11-23h2` is **not** best-effort — it deliberately maps to the
+  `win11-23h2-avd` plan, not `win11-23h2-pro`, verified against a real deploy
+  (see "Client-OS images" below for why).
+- **Client-OS images (Windows 10/11) need a marketplace agreement.**
+  `windows.tf` has an `azurerm_marketplace_agreement.client_os` resource,
+  `for_each`-ed over whichever `MicrosoftWindowsDesktop` os values a machine
+  in the spec actually uses, with every `azurerm_windows_virtual_machine`
+  `depends_on` it. Verified on a real deploy: without accepting this
+  agreement, VM creation fails with `PlatformImageNotFound` (a 404, not a
+  clearer "terms not accepted" error) — Azure hides marketplace image
+  versions from a subscription that hasn't accepted the plan's terms, even
+  for first-party Microsoft offers. Also verified: do **not** add a `plan {}`
+  block to the VM resource for these — once the agreement is accepted, Azure
+  rejects one outright (`ResourcePurchaseValidationFailed: ... doesn't
+  require plan information`). And specifically for `windows-11-23h2`:
+  `MicrosoftWindowsDesktop/Windows-11/win11-23h2-pro` has **zero published
+  image versions** in every region checked (northeurope, westeurope, eastus,
+  westus2, francecentral, germanywestcentral, uksouth, switzerlandnorth,
+  swedencentral) regardless of agreement acceptance — standalone Windows 11
+  client OS isn't offered as a plain IaaS image outside Azure Virtual
+  Desktop/Windows 365 or a Visual Studio subscription benefit. `win11-23h2-avd`
+  is the same OS build and the only win11-23h2 plan with real image versions;
+  it deploys as an ordinary standalone VM (no AVD host pool involved).
+  `windows-10-22h2` keeps `win10-22h2-pro`, which does have real versions.
 - **Custom images** (`machines[].image_id`): overrides the marketplace
   lookup above for that machine group — a full resource ID for either a
   managed image (`.../Microsoft.Compute/images/<name>`) or a Shared Image
@@ -74,7 +98,22 @@ add the variable once in `variables.tf` and wire `scripts/forge.py`'s
 - **Role → size mapping** (`local.size_map`): `Standard_B2s` for
   domain-controller/workstation, `Standard_B2ms` for member-server (matches
   GOAD's own `Standard_B2s`/`Standard_B2ms` comments in
-  `ad/GOAD/providers/azure/windows.tf`).
+  `ad/GOAD/providers/azure/windows.tf`). **Some subscriptions (free/trial/
+  sponsored) block the entire B-series family** with a persistent
+  `NotAvailableForSubscription` restriction in every mainstream region —
+  verified on a real deploy where B1s/B2s/B2ms were rejected everywhere
+  except a handful of extended-zone regions, while `Standard_D2s_v3` worked
+  normally. When that happens, don't hand-edit the hardcoded defaults (they're
+  the right cost-optimized choice for a normal subscription) — set
+  `var.vm_size_overrides` (a `map(string)` keyed by role, merged over
+  `local.size_map`) and `var.bastion_size` in `terraform.tfvars.json` instead.
+  Also check the subscription's actual **regional core quota**
+  (`Microsoft.Compute/locations/<region>/usages`, `name.value == "cores"`)
+  before deploying — a lab this size needs roughly 2 vCPUs × (number of
+  machines + 1 bastion); a subscription capped at 4 total regional vCPUs
+  physically cannot run more than 2 Dv3-size machines at once, and no amount
+  of retrying or resizing fixes that — only a quota increase or a different
+  subscription/region does.
 - **WinRM bootstrap**: reuses Ansible's own
   `ConfigureRemotingForAnsible.ps1` via `CustomScriptExtension`, exactly as
   `vendor/GOAD/template/provider/azure/windows.tf` does. It creates a
@@ -125,6 +164,48 @@ storage account names are a global namespace) before running
 `terraform init -backend-config=backend.hcl` for real. `-backend=false`
 (below) is for structural validation only and must never be how a real lab
 is deployed.
+
+## Troubleshooting a real `apply` (learned from a live deploy, not theory)
+
+- **`terraform plan`/`apply` hangs for 10+ minutes with no output, then
+  eventually "Error: Plugin did not respond".** This is `ConfigureProvider`
+  walking ~60 resource-provider namespaces before the first resource op —
+  `versions.tf`'s `provider "azurerm"` block now sets
+  `skip_provider_registration = true` specifically to prevent this (fixed;
+  if you're on an older `generated/<lab>/` predating this, regenerate rather
+  than hand-patch). If it still hangs, the actual resource providers this
+  module needs (`Microsoft.Storage`, `Microsoft.Compute`, `Microsoft.Network`)
+  may not be registered on the subscription yet —
+  `az provider register --namespace Microsoft.Compute` (etc) and wait for
+  `registrationState: Registered` before retrying.
+- **A region rejects everything with "The selected region is currently not
+  accepting new customers"**, or specific VM sizes fail with `SkuNotAvailable`
+  / `Capacity Restrictions`, or you hit `OperationNotAllowed: ... exceeding
+  approved Total Regional Cores quota`. These are subscription/region-specific
+  capacity or eligibility limits, not a bug in this module — check
+  `Microsoft.Compute/locations/<region>/usages` (cores) and
+  `Microsoft.Compute/skus` (per-size `restrictions[].reasonCode`) for the
+  target subscription *before* picking a region/size, rather than discovering
+  it mid-`apply`. See the size_map note above for the `vm_size_overrides`
+  escape hatch.
+- **`terraform apply` errors with "Provider produced inconsistent result
+  after apply: ... Root object was present, but now absent" for a resource
+  that actually exists in Azure**, or a later `plan`/`apply` claims a
+  just-created resource needs to be re-created ("already exists... needs to
+  be imported"). This is Azure ARM read-after-write lag (the GET right after
+  a PUT briefly 404s) surfacing as a Terraform provider bug, not real drift —
+  verified repeatedly on one subscription/region during a live deploy,
+  including on `azurerm_virtual_network`, `azurerm_network_security_group`,
+  and `azurerm_network_interface`. Recovery: `terraform import <address>
+  <azure-resource-id>` the specific resource(s) Terraform dropped from state
+  (their real IDs follow the standard
+  `/subscriptions/<sub>/resourceGroups/<rg>/providers/<type>/<name>` shape),
+  then re-plan with `-refresh=false` to avoid re-triggering the same flaky
+  read before applying the remaining real changes. If `terraform import`
+  itself errors on an unrelated output (e.g. one that indexes
+  `var.machines` by name across all machines), temporarily comment out that
+  output, import, then restore it — the output's own resources don't need to
+  exist yet for the import of something else to succeed.
 
 ## Testing this skill
 

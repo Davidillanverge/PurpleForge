@@ -35,4 +35,14 @@ terraform {
 
 provider "azurerm" {
   features {}
+
+  # Without this, ConfigureProvider walks ~60 resource-provider namespaces
+  # (GET, and register any not-yet-registered one) before the first resource
+  # op — verified on a real deploy that this can hang the provider plugin
+  # for 10+ minutes ("Error: Plugin did not respond") on a subscription with
+  # restricted/slow-to-respond RPs, with zero feedback while it's stuck.
+  # lab-spec's reconciliation and infra-azure's own bootstrap already
+  # guarantee the RPs this module actually needs (Storage/Compute/Network)
+  # are registered ahead of time, so this sweep is pure overhead here.
+  skip_provider_registration = true
 }

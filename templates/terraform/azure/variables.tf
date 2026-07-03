@@ -71,6 +71,12 @@ variable "bastion_size" {
   default = "Standard_B1s"
 }
 
+variable "vm_size_overrides" {
+  description = "Optional per-role VM size override (keys: domain-controller, member-server, workstation), merged over windows.tf's local.size_map Burstable-family defaults. Some Azure subscriptions (free/trial/sponsored) restrict the entire B-series family with a persistent 'NotAvailableForSubscription' SKU restriction in every mainstream region — set this (e.g. to a Dv3-series size) when that's the case rather than editing the hardcoded defaults, which are the right cost-optimized choice for a normal pay-as-you-go subscription."
+  type        = map(string)
+  default     = {}
+}
+
 variable "wireguard_port" {
   description = "UDP port the bastion's WireGuard interface listens on. This is the ONLY inbound port ever exposed to the internet in this template."
   type        = number
@@ -95,6 +101,6 @@ variable "auto_shutdown_time" {
 }
 
 variable "auto_shutdown_timezone" {
-  description = "lab.auto_shutdown's IANA timezone (e.g. Europe/Madrid). Best-effort: azurerm_dev_test_global_vm_shutdown_schedule historically documents Windows timezone IDs; recent API versions accept IANA names too, but verify at apply time if Azure rejects the value — see network-topology's SKILL.md for other places this project notes best-effort Azure fidelity."
+  description = "Legacy Windows timezone ID (e.g. \"Romance Standard Time\" for Europe/Madrid) required by azurerm_dev_test_global_vm_shutdown_schedule.timezone — verified against a real `terraform plan` (azurerm 3.117.1) that IANA names like \"Europe/Madrid\" are rejected outright, not just discouraged. scripts/forge.py's IANA_TO_WINDOWS_TIMEZONE map does the lab.auto_shutdown IANA-zone -> Windows-ID translation before this variable is set in terraform.tfvars.json."
   type        = string
 }

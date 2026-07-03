@@ -11,22 +11,57 @@ locals {
   # e.g. "2019-Datacenter"). 2022/2025 and the client SKUs are best-effort —
   # verify with `az vm image list --publisher <p> --offer <o> --all -o table`
   # before a real deploy, per GOAD's own comment in that file.
+  #
+  # windows-11-23h2 deliberately maps to the "-avd" SKU, not "-pro": verified
+  # against a real deploy that MicrosoftWindowsDesktop/Windows-11/win11-23h2-pro
+  # has ZERO published image versions in every region checked (northeurope,
+  # westeurope, eastus, westus2, francecentral, germanywestcentral, uksouth,
+  # switzerlandnorth, swedencentral) regardless of Microsoft.MarketplaceOrdering
+  # agreement acceptance — standalone Windows 11 client OS isn't offered as a
+  # plain IaaS image outside Azure Virtual Desktop/Windows 365 or a Visual
+  # Studio subscription benefit. "-avd" is the same OS build and the only
+  # win11-23h2 plan with real image versions; it deploys as an ordinary
+  # standalone VM here (no AVD host pool involved). windows-10-22h2 keeps
+  # "-pro" since MicrosoftWindowsDesktop/Windows-10/win10-22h2-pro DOES have
+  # published versions and needs no such substitution.
   os_image_map = {
     "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-Datacenter" }
     "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-Datacenter" }
     "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-Datacenter" }
     "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-Datacenter" }
     "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro" }
-    "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-pro" }
+    "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-avd" }
   }
 
-  size_map = {
+  size_map = merge({
     "domain-controller" = "Standard_B2s"
     "member-server"     = "Standard_B2ms"
     "workstation"       = "Standard_B2s"
-  }
+  }, var.vm_size_overrides)
 
   machines_by_name = { for m in var.machines : m.name => m }
+
+  # MicrosoftWindowsDesktop client-OS images (Windows 10/11) are marketplace
+  # offers gated behind a per-publisher/offer/plan Microsoft.MarketplaceOrdering
+  # agreement — verified on a real deploy that VM creation 404s with
+  # PlatformImageNotFound (not a clearer "terms not accepted" error) until
+  # that agreement is accepted, and that this is unrelated to the `plan`
+  # block above (see its comment). WindowsServer images are first-party and
+  # need no agreement. Keyed by os (not by sku) and only for os values
+  # actually used by a machine in this spec, so a lab with only server roles
+  # creates zero of these.
+  client_os_agreements = {
+    for os in toset([for m in var.machines : m.os if local.os_image_map[m.os].publisher == "MicrosoftWindowsDesktop"]) :
+    os => local.os_image_map[os]
+  }
+}
+
+resource "azurerm_marketplace_agreement" "client_os" {
+  for_each = local.client_os_agreements
+
+  publisher = each.value.publisher
+  offer     = each.value.offer
+  plan      = each.value.sku
 }
 
 resource "azurerm_network_interface" "windows" {
@@ -80,6 +115,16 @@ resource "azurerm_windows_virtual_machine" "windows" {
       version   = "latest"
     }
   }
+
+  # No `plan` block: verified against a real deploy that Azure rejects one
+  # here ("ResourcePurchaseValidationFailed: ... doesn't require plan
+  # information") even for the MicrosoftWindowsDesktop client-OS images once
+  # their Microsoft.MarketplaceOrdering agreement is accepted — unlike true
+  # third-party marketplace offers, these first-party Microsoft images need
+  # only the agreement acceptance (azurerm_marketplace_agreement.client_os
+  # above), not a `plan` block on the VM resource itself.
+
+  depends_on = [azurerm_marketplace_agreement.client_os]
 }
 
 resource "azurerm_virtual_machine_extension" "winrm_prep" {
