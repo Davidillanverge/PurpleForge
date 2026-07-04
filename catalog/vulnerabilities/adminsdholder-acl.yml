@@ -1,0 +1,37 @@
+id: adminsdholder-acl
+name: "ACL sobre AdminSDHolder - persistencia hacia grupos protegidos vía SDProp"
+severity: critical
+attack:
+  mitre_attack: [T1098]
+  requires_services: []
+  intended_path: >
+    Una cuenta de bajo privilegio recibe GenericAll (o WriteDacl) sobre el objeto
+    CN=AdminSDHolder,CN=System del dominio. El proceso SDProp del DC copia el DACL
+    de AdminSDHolder a TODOS los grupos protegidos (Domain Admins, Enterprise
+    Admins, Administrators, etc.) cada 60 minutos, propagando ese permiso. El
+    atacante obtiene así control persistente sobre los grupos protegidos: puede
+    añadirse a Domain Admins una y otra vez aunque lo expulsen, porque SDProp le
+    devuelve el permiso.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/adminsdholder-acl.yml
+  reuses: "Set-Acl sobre AD:\\CN=AdminSDHolder,CN=System,<domainDN> con una ActiveDirectoryAccessRule GenericAll (mismo patrón que dcsync-acl, distinto objeto y derecho)"
+  params: { for: "{{ vuln_adminsdholder_account }}", to: "CN=AdminSDHolder,CN=System,{{ domain_dn }}", right: GenericAll }
+detect:
+  data_source: "Security 4662/5136 sobre CN=AdminSDHolder,CN=System; cambios de DACL en grupos protegidos justo tras la ejecución de SDProp (~cada 60 min); atributo adminCount"
+  signal: "Modificación del DACL de AdminSDHolder por una cuenta no tier-0, o aparición del mismo ACE anómalo replicado en varios grupos protegidos a la vez"
+  siem_rule: templates/detection/{siem}/adminsdholder_acl
+# NOTE (mismo criterio que dcsync-acl.yml): ansible-lockdown no trae una regla
+# que audite el DACL de AdminSDHolder, así que hardening.controls.adminsdholder_acl_audit
+# es una etiqueta conceptual (reconciliación a nivel de baseline, sin skip_rule).
+neutralized_by:
+  - hardening.controls.adminsdholder_acl_audit   # etiqueta libre: auditoría del DACL de AdminSDHolder
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Restaurar el DACL por defecto de AdminSDHolder (solo tier-0); monitorizar 5136 sobre CN=AdminSDHolder y comparar los DACL de los grupos protegidos tras cada ciclo de SDProp; revisar cuentas con adminCount=1 inesperado."
+validate:
+  bloodhound_edge: "GenericAll"
+  atomic: null
+chain:
+  # account: casts a real population user as the holder of the AdminSDHolder ACE.
+  target_shape: account

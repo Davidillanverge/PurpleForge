@@ -1,0 +1,49 @@
+---
+# Vuln inject task-file: readable-gmsa (T1555 / T1078.002)
+# Creates a gMSA whose managed password a named low-priv account is allowed to
+# retrieve (PrincipalsAllowedToRetrieveManagedPassword) — the BloodHound
+# "ReadGMSAPassword" primitive. Needs a KDS root key; in a lab we add one with a
+# past EffectiveTime so it's usable immediately instead of waiting 10h.
+# Idempotent: KDS key / gMSA created only if absent, membership set every run.
+- name: "readable-gmsa | reset {{ vuln_gmsa_reader_account }}'s password to a known value"
+  win_domain_user:
+    name: "{{ vuln_gmsa_reader_account }}"
+    password: "{{ vuln_gmsa_reader_password }}"
+    password_never_expires: true
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "readable-gmsa | create gMSA '{{ vuln_gmsa_name }}' readable by {{ vuln_gmsa_reader_account }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Gmsa, [String]$Account)
+      Import-Module ActiveDirectory
+      $changed = $false
+      # KDS root key (lab: effective in the past so the gMSA works right away).
+      if (-not (Get-KdsRootKey -ErrorAction SilentlyContinue)) {
+        Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10)) | Out-Null
+        $changed = $true
+      }
+      $domain = (Get-ADDomain).DNSRoot
+      if (-not (Get-ADServiceAccount -Filter "Name -eq '$Gmsa'" -ErrorAction SilentlyContinue)) {
+        New-ADServiceAccount -Name $Gmsa -DNSHostName "$Gmsa.$domain" `
+          -PrincipalsAllowedToRetrieveManagedPassword $Account -Enabled $true
+        $changed = $true
+      } else {
+        Set-ADServiceAccount -Identity $Gmsa -PrincipalsAllowedToRetrieveManagedPassword $Account
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Gmsa: "{{ vuln_gmsa_name }}"
+      Account: "{{ vuln_gmsa_reader_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "readable-gmsa | record intended path"
+  ansible.builtin.debug:
+    msg: "{{ vuln_gmsa_reader_account }} can read {{ vuln_gmsa_name }}'s msDS-ManagedPassword -> derive its NT hash -> authenticate as the gMSA service account."

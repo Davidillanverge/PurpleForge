@@ -1,0 +1,38 @@
+id: writable-gpo
+name: "GPO editable - una cuenta de bajo privilegio puede modificar una GPO enlazada"
+severity: high
+attack:
+  mitre_attack: [T1484.001]
+  requires_services: []
+  intended_path: >
+    Una cuenta de bajo privilegio recibe derechos de edición
+    (GpoEditDeleteModifySecurity / WriteDacl) sobre una GPO enlazada a una OU
+    que contiene equipos o usuarios. El atacante modifica la GPO para desplegar
+    una tarea programada inmediata (Immediate Task) o un script de arranque que
+    ejecuta código como SYSTEM en cada host donde la GPO aplica, en la siguiente
+    actualización de directiva (o forzando gpupdate).
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/writable-gpo.yml
+  reuses: "New-GPO + New-GPLink + Set-GPPermission (GroupPolicy module) — creación determinista de una GPO enlazada y delegación de edición a un principal nombrado"
+  params: { gpo: "{{ vuln_gpo_name }}", grant_to: "{{ vuln_gpo_account }}", permission: GpoEditDeleteModifySecurity }
+detect:
+  data_source: "Security 5136/5137 (Directory Service Changes) sobre el objeto groupPolicyContainer; Security 4662 sobre la GPO; escritura en gPCFileSysPath (SYSVOL); Sysmon 1 al ejecutarse la Immediate Task"
+  signal: "Modificación del DACL o del contenido (gPCMachineExtensionNames / ScheduledTasks.xml) de una GPO por una cuenta que no es de administración de directivas conocida"
+  siem_rule: templates/detection/{siem}/writable_gpo
+# NOTE (mismo criterio que dcsync-acl.yml): no existe una regla CIS/STIG de
+# ansible-lockdown concreta que audite/cierre delegaciones de edición sobre GPOs
+# individuales, así que hardening.controls.gpo_delegation_audit es una etiqueta
+# conceptual — la reconciliación la trata a nivel de baseline (warn/exclude) pero
+# defensive-controls no puede derivar un skip_rule numerado.
+neutralized_by:
+  - hardening.controls.gpo_delegation_audit   # etiqueta libre: auditoría de delegaciones de edición sobre GPOs
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Restringir los derechos de edición de GPO al tier-0 (quitar delegaciones a usuarios/grupos no administrativos); alertar en 5136 sobre groupPolicyContainer y en cambios de gPCMachineExtensionNames; revisar GPOs con BloodHound (edge WriteGPLink/GenericWrite)."
+validate:
+  bloodhound_edge: "GenericWrite"
+  atomic: T1484.001
+chain:
+  # account: casts a real population user as the delegate who can edit the GPO.
+  target_shape: account

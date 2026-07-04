@@ -900,6 +900,31 @@ def build_vuln_vars(
             "vuln_delegation_password": password,
             "vuln_delegation_target_spn": f"ldap/{dc_fqdn}",
         }
+    if vid == "writable-gpo":
+        return {
+            "vuln_gpo_account": cast_name or "svc-gpo-editor",
+            "vuln_gpo_password": forced_password or generate_password(),
+            "vuln_gpo_name": "Workstation Deployment Policy",
+        }
+    if vid == "adminsdholder-acl":
+        return {
+            "vuln_adminsdholder_account": cast_name or "svc-legacy-audit",
+            "vuln_adminsdholder_password": forced_password or generate_password(),
+        }
+    if vid == "readable-gmsa":
+        return {
+            "vuln_gmsa_reader_account": cast_name or "svc-monitoring",
+            "vuln_gmsa_reader_password": forced_password or generate_password(),
+            "vuln_gmsa_name": "gmsa-websvc",
+        }
+    if vid == "esc4-template-acl":
+        return {
+            "vuln_esc4_account": cast_name or "svc-pki-operator",
+            "vuln_esc4_password": forced_password or generate_password(),
+            "vuln_esc4_template": "User",
+        }
+    # machine-account-quota is domain-level (target_shape: none) — no per-vuln
+    # account vars; the playbook only reads domain_username/domain_password.
     # adcs-esc1 and any future service-scoped vuln need no extra vars beyond the
     # inventory's domain/domain_username/domain_password and vuln_files_dir.
     return {}
@@ -1453,6 +1478,10 @@ VULN_CREDENTIAL_VARS = {
     "dnsadmins-privesc": ("vuln_dnsadmins_account", "vuln_dnsadmins_password"),
     "rbcd-abuse": ("vuln_rbcd_delegate_account", "vuln_rbcd_delegate_password"),
     "backup-operators-membership": ("vuln_backupop_account", "vuln_backupop_password"),
+    "writable-gpo": ("vuln_gpo_account", "vuln_gpo_password"),
+    "adminsdholder-acl": ("vuln_adminsdholder_account", "vuln_adminsdholder_password"),
+    "readable-gmsa": ("vuln_gmsa_reader_account", "vuln_gmsa_reader_password"),
+    "esc4-template-acl": ("vuln_esc4_account", "vuln_esc4_password"),
 }
 
 VULN_CREDENTIAL_NOTES = {

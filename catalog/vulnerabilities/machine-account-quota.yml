@@ -1,0 +1,35 @@
+id: machine-account-quota
+name: "MachineAccountQuota > 0 - cualquier usuario puede crear cuentas de equipo"
+severity: medium
+attack:
+  mitre_attack: [T1136.001]
+  requires_services: []
+  intended_path: >
+    El atributo de dominio ms-DS-MachineAccountQuota está en su valor por
+    defecto (10), así que CUALQUIER usuario autenticado puede crear hasta 10
+    cuentas de equipo. Ese equipo controlado por el atacante es la primitiva que
+    habilita cadenas de escalada muy comunes: RBCD (configurar
+    msDS-AllowedToActOnBehalfOfOtherIdentity apuntando al equipo creado),
+    Shadow Credentials sobre el propio equipo, o el abuso noPac/sAMAccountName.
+    No es un exploit por sí solo, es el habilitador que convierte "usuario de
+    dominio" en "tengo una identidad de equipo con la que delegar".
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/machine-account-quota.yml
+  reuses: "Set-ADObject sobre el objeto de dominio para fijar ms-DS-MachineAccountQuota=10 de forma explícita e idempotente (asegura el gap aunque un baseline lo hubiese endurecido)"
+  params: { quota: 10 }
+detect:
+  data_source: "Security 4741 (cuenta de equipo creada) donde el 'Subject' es una cuenta de usuario normal (no un administrador ni una cuenta de aprovisionamiento); atributo mS-DS-CreatorSID del equipo apuntando a un usuario"
+  signal: "Creación de cuentas de equipo por usuarios estándar, especialmente en ráfaga o seguida de la escritura de msDS-AllowedToActOnBehalfOfOtherIdentity o msDS-KeyCredentialLink"
+  siem_rule: templates/detection/{siem}/machine_account_quota
+neutralized_by:
+  - hardening.controls.machine_account_quota_zero   # control REAL y verificable: fijar ms-DS-MachineAccountQuota = 0
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Fijar ms-DS-MachineAccountQuota = 0 y delegar la creación de equipos a un grupo concreto de operadores mediante Create Computer Objects sobre la OU correspondiente; alertar en 4741 originado por usuarios no administrativos."
+validate:
+  bloodhound_edge: null
+  atomic: null
+chain:
+  # none: this is a domain-level setting, not an object cast onto a population account.
+  target_shape: none

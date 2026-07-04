@@ -1,0 +1,50 @@
+---
+# Vuln inject task-file: writable-gpo (T1484.001)
+# Creates a named, deterministic GPO linked at the domain root and delegates
+# full edit rights (GpoEditDeleteModifySecurity) to a named low-priv account —
+# exactly the BloodHound "GenericWrite/WriteDacl -> GPO" primitive. Idempotent:
+# the GPO is created only if absent, the link/permission are set every run
+# (Set-GPLink/Set-GPPermission are themselves idempotent).
+#
+# {{ vuln_gpo_account }} is a real population object cast by resolve_attack_chain()
+# (ctf mode) or a synthetic default (independent) — this task only resets its
+# password, never its identity fields (ad-population.yml already set those).
+- name: "writable-gpo | reset {{ vuln_gpo_account }}'s password to a known value"
+  win_domain_user:
+    name: "{{ vuln_gpo_account }}"
+    password: "{{ vuln_gpo_password }}"
+    password_never_expires: true
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "writable-gpo | create GPO '{{ vuln_gpo_name }}', link it, delegate edit rights to {{ vuln_gpo_account }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$GpoName, [String]$Account)
+      Import-Module GroupPolicy
+      $changed = $false
+      $gpo = Get-GPO -Name $GpoName -ErrorAction SilentlyContinue
+      if (-not $gpo) { $gpo = New-GPO -Name $GpoName -Comment 'PurpleForge writable-gpo (T1484.001)'; $changed = $true }
+      $domainDN = (Get-ADDomain).DistinguishedName
+      # Link at the domain root so it applies to every host/user (idempotent create).
+      if (-not (Get-GPInheritance -Target $domainDN).GpoLinks | Where-Object { $_.DisplayName -eq $GpoName }) {
+        New-GPLink -Name $GpoName -Target $domainDN -LinkEnabled Yes -ErrorAction SilentlyContinue | Out-Null
+        $changed = $true
+      }
+      # Delegate full edit (this is the vuln): the account can now modify the GPO.
+      Set-GPPermission -Name $GpoName -TargetName $Account -TargetType User -PermissionLevel GpoEditDeleteModifySecurity -Replace | Out-Null
+      $Ansible.Changed = $changed
+    parameters:
+      GpoName: "{{ vuln_gpo_name }}"
+      Account: "{{ vuln_gpo_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "writable-gpo | record intended path"
+  ansible.builtin.debug:
+    msg: "{{ vuln_gpo_account }} can edit GPO '{{ vuln_gpo_name }}' (linked at domain root) -> push an Immediate Task for SYSTEM code exec on every host."

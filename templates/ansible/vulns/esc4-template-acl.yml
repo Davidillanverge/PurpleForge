@@ -1,0 +1,58 @@
+---
+# Vuln inject task-file: esc4-template-acl (T1649, ESC4)
+# Grants a named low-priv account GenericAll on an ALREADY-PUBLISHED certificate
+# template's AD object (default: "User") in the Configuration NC. That write
+# control is ESC4: the account can flip the template into ESC1
+# (ENROLLEE_SUPPLIES_SUBJECT + client-auth EKU + enroll for Domain Users) and
+# then request a DA certificate. Self-contained (no ADCSTemplate module / staged
+# JSON needed) — same Set-Acl/ActiveDirectoryAccessRule pattern as dcsync-acl,
+# applied to the pKICertificateTemplate object. Runs on the adcs member-server.
+- name: "esc4-template-acl | reset {{ vuln_esc4_account }}'s password to a known value"
+  win_domain_user:
+    name: "{{ vuln_esc4_account }}"
+    password: "{{ vuln_esc4_password }}"
+    password_never_expires: true
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "esc4-template-acl | grant GenericAll to {{ vuln_esc4_account }} on the '{{ vuln_esc4_template }}' template"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account, [String]$Template)
+      Import-Module ActiveDirectory
+      $configNC = (Get-ADRootDSE).configurationNamingContext
+      $tplDN = "CN=$Template,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNC"
+      if (-not (Get-ADObject -Identity $tplDN -ErrorAction SilentlyContinue)) {
+        throw "certificate template '$Template' not found at $tplDN — publish it on the CA first"
+      }
+      $target = "AD:\$tplDN"
+      $sid = (Get-ADUser -Identity $Account).SID
+      $nt  = (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount])
+      $acl = Get-Acl -Path $target
+      $already = $acl.Access | Where-Object {
+        $_.IdentityReference -eq $nt -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+      }
+      $changed = $false
+      if (-not $already) {
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+          $sid, [System.DirectoryServices.ActiveDirectoryRights]::GenericAll,
+          [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($ace)
+        Set-Acl -Path $target -AclObject $acl
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Account: "{{ vuln_esc4_account }}"
+      Template: "{{ vuln_esc4_template }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "esc4-template-acl | record intended path"
+  ansible.builtin.debug:
+    msg: "{{ vuln_esc4_account }} has GenericAll on the '{{ vuln_esc4_template }}' template -> reconfigure it to ESC1 -> enroll with a Domain Admin SAN -> PKINIT as DA."

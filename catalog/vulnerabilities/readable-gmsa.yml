@@ -1,0 +1,37 @@
+id: readable-gmsa
+name: "gMSA con contraseña legible - ReadGMSAPassword por una cuenta de bajo privilegio"
+severity: high
+attack:
+  mitre_attack: [T1555, T1078.002]
+  requires_services: []
+  intended_path: >
+    Existe una cuenta de servicio administrada de grupo (gMSA) cuyo atributo
+    msDS-GroupMSAMembership (PrincipalsAllowedToRetrieveManagedPassword) incluye
+    a una cuenta de bajo privilegio. Esa cuenta puede leer el blob
+    msDS-ManagedPassword del gMSA (p. ej. con GMSAPasswordReader / nxc
+    --gmsa), derivar el hash NT de la contraseña gestionada de 240 bytes y
+    autenticarse como el gMSA — a menudo una cuenta de servicio con privilegios
+    elevados sobre servidores.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/readable-gmsa.yml
+  reuses: "Add-KdsRootKey (-EffectiveTime pasado, para labs) + New-ADServiceAccount -PrincipalsAllowedToRetrieveManagedPassword; delegación de la lectura de la contraseña gestionada a un principal nombrado"
+  params: { gmsa: "{{ vuln_gmsa_name }}", readable_by: "{{ vuln_gmsa_reader_account }}" }
+detect:
+  data_source: "Security 4662 con acceso al atributo msDS-ManagedPassword sobre el objeto msDS-GroupManagedServiceAccount; correlación con 4768/4769 (TGT/TGS) para la cuenta gMSA desde un host no habitual"
+  signal: "Lectura del atributo msDS-ManagedPassword de un gMSA por una cuenta que no es el host miembro esperado, seguida de autenticación como el gMSA"
+  siem_rule: templates/detection/{siem}/readable_gmsa
+# NOTE (mismo criterio que dcsync-acl.yml): no hay regla CIS/STIG concreta que
+# audite la membresía msDS-GroupMSAMembership, así que la etiqueta de abajo es
+# conceptual (reconciliación a nivel de baseline, sin skip_rule numerado).
+neutralized_by:
+  - hardening.controls.gmsa_membership_audit   # etiqueta libre: auditar PrincipalsAllowedToRetrieveManagedPassword
+  - hardening.baseline: [cis-l2, stig]
+mitigate:
+  summary: "Limitar msDS-GroupMSAMembership a las cuentas de equipo que realmente ejecutan el servicio (nunca a usuarios o grupos amplios); alertar en 4662 sobre lecturas de msDS-ManagedPassword; rotar el gMSA si se sospecha exposición."
+validate:
+  bloodhound_edge: "ReadGMSAPassword"
+  atomic: null
+chain:
+  # account: casts a real population user as the principal allowed to read the gMSA password.
+  target_shape: account

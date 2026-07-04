@@ -1,0 +1,51 @@
+---
+# Vuln inject task-file: adminsdholder-acl (T1098)
+# Grants a named low-priv account GenericAll on CN=AdminSDHolder,CN=System.
+# SDProp then copies that DACL onto every protected group (Domain Admins, etc.)
+# on its next run (~60 min), giving the account persistent control over tier-0.
+# Same Set-Acl/ActiveDirectoryAccessRule pattern as dcsync-acl, different object
+# and right (GenericAll, no ObjectType GUID). Idempotent: ACE added only if absent.
+- name: "adminsdholder-acl | reset {{ vuln_adminsdholder_account }}'s password to a known value"
+  win_domain_user:
+    name: "{{ vuln_adminsdholder_account }}"
+    password: "{{ vuln_adminsdholder_password }}"
+    password_never_expires: true
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+- name: "adminsdholder-acl | grant GenericAll on AdminSDHolder to {{ vuln_adminsdholder_account }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $domainDN = (Get-ADDomain).DistinguishedName
+      $target = "AD:\CN=AdminSDHolder,CN=System,$domainDN"
+      $sid = (Get-ADUser -Identity $Account).SID
+      $nt  = (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount])
+      $acl = Get-Acl -Path $target
+      $already = $acl.Access | Where-Object {
+        $_.IdentityReference -eq $nt -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+      }
+      $changed = $false
+      if (-not $already) {
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+          $sid, [System.DirectoryServices.ActiveDirectoryRights]::GenericAll,
+          [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($ace)
+        Set-Acl -Path $target -AclObject $acl
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Account: "{{ vuln_adminsdholder_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "adminsdholder-acl | record intended path"
+  ansible.builtin.debug:
+    msg: "{{ vuln_adminsdholder_account }} has GenericAll on AdminSDHolder -> SDProp propagates it to Domain Admins/Enterprise Admins within ~60 min -> persistent tier-0."

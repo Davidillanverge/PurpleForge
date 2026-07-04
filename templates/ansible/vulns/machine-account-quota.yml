@@ -1,0 +1,32 @@
+---
+# Vuln inject task-file: machine-account-quota (T1136.001)
+# Explicitly pins the domain's ms-DS-MachineAccountQuota to 10 so any
+# authenticated user can create computer accounts — the enabler for RBCD /
+# Shadow-Credentials / noPac chains. Idempotent: only writes if the current
+# value differs. Domain-level (target_shape: none) — no population account cast,
+# no password to set. Runs on the primary root DC.
+- name: "machine-account-quota | pin ms-DS-MachineAccountQuota = 10 on the domain object"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([Int]$Quota)
+      Import-Module ActiveDirectory
+      $domainDN = (Get-ADDomain).DistinguishedName
+      $current = (Get-ADObject -Identity $domainDN -Properties 'ms-DS-MachineAccountQuota').'ms-DS-MachineAccountQuota'
+      $changed = $false
+      if ($current -ne $Quota) {
+        Set-ADObject -Identity $domainDN -Replace @{ 'ms-DS-MachineAccountQuota' = $Quota }
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Quota: 10
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "machine-account-quota | record intended path"
+  ansible.builtin.debug:
+    msg: "ms-DS-MachineAccountQuota = 10 -> any domain user can create a computer account -> use it as the delegate for RBCD / Shadow-Credentials / noPac."
