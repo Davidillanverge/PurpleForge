@@ -249,3 +249,139 @@ Warnings (hardening applied as-is; the corresponding vuln may end up neutralized
 
 {% endif %}
 {% endif %}
+
+## Deploying this lab manually (without AI)
+
+A human-runnable quickstart for `{{ lab.name }}` on {{ lab.provider }}/{{ lab.region }}.
+The exhaustive symptom→cause table is in `AZURE-DEPLOY-RUNBOOK.md`; this is the happy
+path plus the gotchas that actually bit. Set the spec path once:
+
+```bash
+SPEC={{ source_spec }}          # the spec you generated this lab from
+```
+
+**0. Prerequisites** (once per machine): `terraform`, `az` CLI, `wireguard-tools`,
+`docker`, and `nxc`/netexec (for validation). `pip install -r scripts/requirements.txt`.
+
+**1. Azure credentials** — a service principal with Contributor:
+```bash
+az login                                             # a REAL user in the subscription's tenant
+SUB=$(az account show --query id -o tsv)
+az ad sp create-for-rbac --name pf-{{ lab.name }} --role Contributor --scopes /subscriptions/$SUB
+# ^ if --role is silently ignored (recent CLI) or the CLI role module is broken,
+#   assign it via REST: PUT .../Microsoft.Authorization/roleAssignments/<uuid> with the
+#   Contributor roleDefinitionId THIS subscription returns (it is NOT always the well-known GUID):
+#   az rest --method get --url ".../providers/Microsoft.Authorization/roleDefinitions?\$filter=roleName eq 'Contributor'"
+export ARM_SUBSCRIPTION_ID=$SUB ARM_TENANT_ID=... ARM_CLIENT_ID=<appId> ARM_CLIENT_SECRET=<password>
+```
+
+**2. Remote state backend** (invariant: never local). Create a resource group + Storage
+account + `tfstate` container, then grab the key so `init` binds by key (avoids a
+multi-minute init hang while the fresh SP's Storage RBAC propagates):
+```bash
+az group create -n purpleforge-tfstate-rg -l {{ lab.region }}
+SA=pf$(openssl rand -hex 4); az storage account create -n $SA -g purpleforge-tfstate-rg -l {{ lab.region }} --sku Standard_LRS
+az storage container create -n tfstate --account-name $SA
+export ARM_ACCESS_KEY=$(az storage account keys list -n $SA -g purpleforge-tfstate-rg --query [0].value -o tsv)
+```
+
+**3. Generate the artifacts:**
+```bash
+python3 scripts/forge.py generate "$SPEC"
+cd generated/{{ lab.name }}/terraform/azure
+```
+
+**4. POST-generate steps (MANDATORY every time — `generate` overwrites this dir):**
+- Set `backend.hcl`'s `storage_account_name` to `$SA`.
+- Pick VM sizes that your subscription actually offers (runbook step 2 — check SKU
+  restrictions/quota first) and write `sizes.auto.tfvars.json`, e.g.:
+  ```json
+  { "vm_size_overrides": { "domain-controller": "<size>", "workstation": "<size>" },
+    "bastion_size": "<size>", "bastion_ssh_allowed_cidrs": ["<your-public-ip>/32"] }
+  ```
+  On a quota-restricted subscription the only size may be NVMe-only (e.g. `Standard_F1as_v7`),
+  which needs Gen2 images — already handled for the OSes in this lab.
+
+**5. Apply** (the flags are required, not style — ARM read-after-write lag):
+```bash
+terraform init -backend-config=backend.hcl -input=false
+terraform apply -auto-approve -input=false -refresh=false -parallelism=1
+# on a spurious "already exists": terraform import <addr> <id> && re-apply (2-4 times makes progress)
+```
+
+**6. WireGuard tunnel to the bastion** (runbook §5): extract `tls_private_key.bastion_ssh`
+from state → `ssh_keys/bastion.pem`, generate client keys, `wg set wg0 peer <clientpub>`
+on the bastion, write `ssh_keys/pf-lab.conf` (Endpoint = bastion public IP, AllowedIPs =
+`10.250.250.0/24, {{ network_plan.supernet if network_plan.supernet else '<supernet>' }}`),
+then `sudo wg-quick up ./ssh_keys/pf-lab.conf`.
+
+**7. Ansible over Docker** (`--network host` so the container sees the tunnel):
+```bash
+docker run -d --name pf-ansible --network host -v $PWD/../../../..:/repo \
+  -w /repo/generated/{{ lab.name }}/ansible python:3.10-slim sleep infinity
+docker exec pf-ansible pip install -q ansible-core==2.12.6 pywinrm rich psutil Jinja2 pyyaml ansible_runner
+docker exec pf-ansible ansible-galaxy collection install ansible.windows:1.11.0 community.windows:1.11.0 chocolatey.chocolatey
+# community.general (unpinned) breaks ansible-core 2.12's galaxy client — install a pinned tarball instead (runbook §6)
+```
+
+**8. Provision AD:**
+```bash
+docker exec -w /repo/generated/{{ lab.name }}/ansible pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping
+docker exec -w /repo/generated/{{ lab.name }}/ansible pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml
+```
+`site.yml` runs DC promotion → population → hardening → vuln injection → EDR, in order.
+On a 1-vCPU SKU a heavy PowerShell task (e.g. creating the OU tree) can drop WinRM
+mid-module ("Unexpected failure during module execution") — it is idempotent, just
+**re-run `site.yml`** and it completes.
+
+**9. Validate** (config applied + exploitable — the hardening enforces LDAP signing, so
+use a signing-aware client):
+```bash
+python3 scripts/forge.py validate "$SPEC"                    # per-vuln checklist
+nxc ldap <dc-ip> -u Administrator -p <pass> -d {{ forest[0].domain if forest else '<domain>' }} --asreproast out   # example live check
+python3 scripts/forge.py validate "$SPEC" --results <filled>.json   # confirmed report
+```
+
+**10. Snapshot the clean state** (optional, before any attack, so exercises can reset):
+```bash
+# per VM: create a Copy snapshot of its OS disk (ARM REST or `az snapshot create`).
+# NB: snapshots you make by hand are NOT in Terraform state — you must delete them
+# yourself at teardown (see below), or they block the resource-group delete.
+```
+
+## Destroying this lab (teardown, no AI)
+
+Set `SPEC` as above. Goal: leave **cost zero**.
+
+```bash
+python3 scripts/forge.py destroy "$SPEC" --yes
+```
+
+This runs `terraform destroy` and then verifies the resource group is gone — a
+`ResourceGroupNotFound` (HTTP 404) is the *confirmation*, not an error; a 200 means
+it is NOT gone yet. Then the gotchas that actually bite:
+
+- **VMs already deallocated by `auto_shutdown`** → `destroy` may fail
+  (`Cannot modify extensions ... VM is not running` / `powerOff ... deallocated`).
+  Start every VM, wait for `PowerState/running`, then re-run `destroy`.
+- **RG won't delete (`the Resource Group still contains Resources`)** → a resource
+  created out-of-band (a hand-made clean-state snapshot from step 10) isn't in
+  Terraform state, and azurerm won't delete a non-empty RG. Delete the stray
+  resource(s), then delete the RG:
+  ```bash
+  az snapshot list -g {{ lab.name }} -o tsv --query "[].id" | xargs -r -n1 az snapshot delete --ids
+  az group delete -n {{ lab.name }} --yes
+  ```
+
+**Then clean up what `destroy` does NOT touch:**
+```bash
+az group delete -n purpleforge-tfstate-rg --yes        # the remote-state backend (if this lab was the last user)
+az ad sp delete --id "$ARM_CLIENT_ID"                  # rotate the SP — its secret is only as safe as wherever you stored it
+docker rm -f pf-ansible                                # the Ansible container
+sudo wg-quick down pf-lab 2>/dev/null || sudo ip link delete pf-lab   # the WireGuard tunnel
+```
+`wg-quick down pf-lab` only works if `/etc/wireguard/pf-lab.conf` exists; if you
+brought the tunnel up from a repo path instead, `sudo ip link delete pf-lab`
+removes the interface directly.
+
+Confirm nothing billable remains: `az resource list -g {{ lab.name }}` should 404.

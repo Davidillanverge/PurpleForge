@@ -1522,6 +1522,7 @@ def render_lab_report(
         "theme_name": theme["name"],
         "cost_estimate": manifest["cost_estimate"],
         "notes": manifest["notes"],
+        "source_spec": manifest["source_spec"],
         "network_plan": network_plan,
         "machines": machines,
         "forest": spec["forest"],
