@@ -88,8 +88,12 @@ Ya existen (skills + `forge.py`): lab-spec, network-topology, infra-azure,
 ad-topology, ad-theming, vuln-injection, defensive-controls; y en `forge.py`:
 `lab-spec`, `generate`, `destroy`, `ad-inventory`.
 
-Aún NO existen como skill/tooling y hay que construirlos para que
-`purple-validator` y `report-writer` funcionen end-to-end: la skill
-`purple-validation` (SharpHound/BloodHound, PingCastle, Atomic) y `detection-lab`
-(SIEM+telemetría). `infra-aws` tampoco existe (solo Azure). Los agentes ya están
-escritos apuntando a ese flujo; construir esas piezas es el siguiente paso.
+La skill `purple-validation` ya existe, con su parte determinista en
+`forge.py validate` (matriz PREVENIDO/DETECTADO/NO VISTO *predicha* desde el
+manifest + checklist de Atomic/BloodHound a confirmar en vivo). La fase en vivo
+(SharpHound/BloodHound, PingCastle, Atomic sobre el túnel) la ejecuta el agente
+siguiendo la skill; aún no hay subcomando que la orqueste end-to-end.
+
+Siguen sin existir: `detection-lab` (SIEM+telemetría) e `infra-aws` (solo hay
+Azure). Los agentes ya apuntan a ese flujo; construir esas piezas es el siguiente
+paso.

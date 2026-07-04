@@ -15,8 +15,9 @@ model: sonnet
 # report-writer
 
 You produce the human-facing deliverable. Read `generated/<lab>/lab-manifest.json`
-and the validation results from purple-validator; do not re-derive facts — report
-what the manifest and the validation actually say.
+and `generated/<lab>/validation-report.md` (the confirmed matrix purple-validator
+wrote via `forge.py validate --results`); do not re-derive facts — report what the
+manifest and the validation actually say.
 
 ## lab-report.md must contain
 

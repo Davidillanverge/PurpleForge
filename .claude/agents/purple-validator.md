@@ -22,6 +22,13 @@ against. Work only over the WireGuard tunnel to the isolated lab.
 
 ## What you run
 
+Follow the `purple-validation` skill. Start with the deterministic offline plan,
+then confirm each row live:
+
+- **Plan first**: `python3 scripts/forge.py validate specs/<lab>.yml` writes
+  `generated/<lab>/validation-plan.{json,md}` — the EXPECTED matrix plus the
+  Atomic test id and BloodHound edge to confirm per technique. This is your
+  checklist; every live result either confirms or overrides a predicted cell.
 - **Paths**: SharpHound collection -> BloodHound. Confirm each intended
   `validate.bloodhound_edge` from the chain is present in the graph. A missing
   edge means injection didn't land or hardening closed it — report which.
@@ -33,9 +40,20 @@ against. Work only over the WireGuard tunnel to the isolated lab.
   - **DETECTADO** — it ran but produced the expected detection signal/telemetry.
   - **NO VISTO** — it ran and nothing caught it (a genuine coverage gap).
 
+## Close the loop
+
+Fill the `validation-results.template.json` the plan wrote (one actual_state +
+evidence per technique, each BloodHound edge true/false, PingCastle score), then:
+
+```bash
+python3 scripts/forge.py validate specs/<lab>.yml --results <filled>.json
+```
+
+That writes the confirmed `generated/<lab>/validation-report.md` — the actual-vs-
+expected matrix with divergences flagged. Hand that to report-writer.
+
 ## Rules
 
 - Only fire attacks AFTER the clean snapshot exists (so the lab can be reset).
-- Report the three-state matrix per technique plus the BloodHound path result;
-  hand the structured results to report-writer. Do not edit the lab or "fix"
-  gaps — surfacing PREVENIDO/DETECTADO/NO VISTO honestly is the whole point.
+- Do not edit the lab or "fix" gaps — surfacing PREVENIDO/DETECTADO/NO VISTO
+  honestly, including every divergence from the prediction, is the whole point.

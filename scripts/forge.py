@@ -1955,6 +1955,259 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
+# EDR modes that provide active prevention vs. only detection/telemetry. Kept as
+# named sets so predict_coverage() reads as policy, not magic strings — mirrors
+# the mode values catalog/defense/edr/*.yml and plan_edr() emit.
+EDR_PREVENT_MODES = {"prevent", "block"}
+EDR_DETECT_MODES = {"prevent", "block", "detect", "enabled", "audit"}
+
+
+def predict_coverage(vuln: dict, catalog_entry: dict, edr_plan: list[dict], telemetry_present: bool) -> dict:
+    """Derives the EXPECTED PREVENIDO / DETECTADO / NO VISTO state for one planned
+    vuln from what the manifest already records — hardening reconciliation status,
+    EDR mode on the target host, and whether any telemetry ships. This is a
+    prediction the live purple-validator confirms/overrides with real Atomic Red
+    Team + BloodHound results; it is not itself a measurement. Deterministic on
+    purpose (CLAUDE.md: the state machine lives in forge.py, the judgement in the
+    agent)."""
+    validate = (catalog_entry or {}).get("validate", {}) or {}
+    detect = (catalog_entry or {}).get("detect", {}) or {}
+    run_on = vuln["run_on"]
+
+    edr_prevents = any(run_on in e.get("targets", []) and e.get("mode") in EDR_PREVENT_MODES for e in edr_plan)
+    edr_detects = any(run_on in e.get("targets", []) and e.get("mode") in EDR_DETECT_MODES for e in edr_plan)
+    # "AT RISK ..." means a neutralizing hardening control WAS applied (on_conflict:
+    # warn) so the gap is likely closed. "gap-preserved"/"clear" leave the vuln live.
+    hardening_closes = vuln["neutralization"].startswith("AT RISK")
+    has_detect_signal = bool(detect.get("signal"))
+
+    if hardening_closes or edr_prevents:
+        state = "PREVENIDO"
+        why = "hardening control applied (on_conflict:warn)" if hardening_closes else f"EDR in prevent mode on {run_on}"
+    elif (telemetry_present or edr_detects) and has_detect_signal:
+        state = "DETECTADO"
+        why = f"telemetry present + detect signal ({detect.get('data_source', 'n/a')})"
+    else:
+        state = "NO VISTO"
+        why = "no neutralizing control and no telemetry/detect signal for this technique"
+
+    return {
+        "id": vuln["id"],
+        "mitre": vuln["mitre"],
+        "run_on": run_on,
+        "neutralization": vuln["neutralization"].split(" (")[0],
+        "expected_state": state,
+        "reason": why,
+        "atomic_test": validate.get("atomic"),
+        "bloodhound_edge": validate.get("bloodhound_edge"),
+        "detect_data_source": detect.get("data_source"),
+        "detect_signal": detect.get("signal"),
+    }
+
+
+VALID_STATES = ("PREVENIDO", "DETECTADO", "NO VISTO")
+
+
+def render_results_template(rows: list[dict], chain: dict) -> dict:
+    """The skeleton the live purple-validation run fills in: one actual_state +
+    evidence per technique, plus a confirmed/absent flag per BloodHound edge and
+    a PingCastle score. Feeding this back via `validate --results` produces the
+    confirmed matrix — that's what closes the /validate loop."""
+    return {
+        "_help": f"Fill actual_state with one of {list(VALID_STATES)} from the live Atomic run; set each edge true/false from BloodHound. Then: forge.py validate <spec> --results <this file>.",
+        "pingcastle_score": None,
+        "bloodhound_edges_confirmed": {r["bloodhound_edge"]: None for r in rows if r["bloodhound_edge"]},
+        "techniques": [
+            {"id": r["id"], "mitre": r["mitre"], "expected_state": r["expected_state"], "actual_state": None, "evidence": ""}
+            for r in rows
+        ],
+    }
+
+
+def merge_validation_results(rows: list[dict], results: dict) -> tuple[list[dict], list[str]]:
+    """Crosses the predicted rows with the live results, returning the confirmed
+    matrix (each row gains actual_state/evidence/divergence) and a list of human-
+    readable findings (state divergences + attack-path edges that did not
+    materialize). Raises SpecError on a malformed results file."""
+    by_id = {t.get("id"): t for t in results.get("techniques", [])}
+    edges = results.get("bloodhound_edges_confirmed", {}) or {}
+    confirmed: list[dict] = []
+    findings: list[str] = []
+
+    for r in rows:
+        res = by_id.get(r["id"])
+        row = dict(r)
+        if not res or res.get("actual_state") is None:
+            row["actual_state"] = "PENDING"
+            row["evidence"] = ""
+            row["divergence"] = False
+            findings.append(f"{r['id']}: no live result recorded (expected {r['expected_state']}).")
+        else:
+            actual = res["actual_state"]
+            if actual not in VALID_STATES:
+                raise SpecError(f"technique {r['id']}: actual_state '{actual}' is not one of {list(VALID_STATES)}")
+            row["actual_state"] = actual
+            row["evidence"] = res.get("evidence", "")
+            row["divergence"] = actual != r["expected_state"]
+            if row["divergence"]:
+                findings.append(f"{r['id']}: expected {r['expected_state']} but observed {actual} — {row['evidence'] or 'no evidence given'}.")
+        edge = r["bloodhound_edge"]
+        if edge and edges.get(edge) is False:
+            findings.append(f"{r['id']}: intended BloodHound edge '{edge}' NOT present — injection failed or a control closed it.")
+        confirmed.append(row)
+    return confirmed, findings
+
+
+def render_validation_report(lab_name: str, confirmed: list[dict], findings: list[str], results: dict, chain: dict, lab_dir: Path) -> Path:
+    """The confirmed validation section of the deliverable: actual vs. expected
+    three-state matrix, divergences, path result and PingCastle score. report-
+    writer folds this into lab-report.md."""
+    actual_counts = {s: sum(1 for r in confirmed if r["actual_state"] == s) for s in VALID_STATES}
+    lines = [
+        f"# Validation report — {lab_name}",
+        "",
+        f"_Confirmed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} from the live lab (SharpHound/BloodHound, PingCastle, Atomic Red Team)._",
+        "",
+        f"- PingCastle score: **{results.get('pingcastle_score', 'n/a')}**",
+        f"- Observed: **{actual_counts['PREVENIDO']} PREVENIDO · {actual_counts['DETECTADO']} DETECTADO · {actual_counts['NO VISTO']} NO VISTO**",
+        f"- Divergences from the predicted plan: **{sum(1 for r in confirmed if r.get('divergence'))}**",
+        "",
+        "| Vuln | ATT&CK | Host | Expected | Observed | Δ | BloodHound edge | Evidence |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in confirmed:
+        delta = "⚠️" if r.get("divergence") else ""
+        lines.append(
+            f"| {r['id']} | {r['mitre']} | {r['run_on']} | {r['expected_state']} | "
+            f"**{r['actual_state']}** | {delta} | {r['bloodhound_edge'] or '—'} | {r.get('evidence') or '—'} |"
+        )
+    lines += ["", "## Findings", ""]
+    lines += [f"- {f}" for f in findings] if findings else ["- None — the live run matched the predicted plan on every technique and edge."]
+    lines.append("")
+    report_path = lab_dir / "validation-report.md"
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    (lab_dir / "validation-report.json").write_text(
+        json.dumps({"lab": lab_name, "summary": actual_counts, "findings": findings, "techniques": confirmed}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Offline validation PLAN for a generated lab: crosses each planned vuln with
+    its catalog detect/validate metadata and the resolved defense stack to predict
+    the PREVENIDO/DETECTADO/NO VISTO matrix and list the Atomic tests + BloodHound
+    edges the live purple-validator must confirm. Writes validation-plan.{json,md}
+    plus a validation-results.template.json. With --results <file>, merges the
+    live results back into the confirmed validation-report.md — closing /validate."""
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    spec = load_yaml(spec_path)
+    lab_name = spec["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    manifest_path = lab_dir / "lab-manifest.json"
+    if not manifest_path.exists():
+        print(f"error: {manifest_path} not found — run `generate` first.", file=sys.stderr)
+        return 2
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    catalog = load_vuln_catalog()
+    planned = manifest.get("vulnerabilities_planned", [])
+    if not planned:
+        print("note: this lab has no injected vulnerabilities — nothing to validate.")
+        return 0
+
+    edr_plan = manifest.get("edr_plan", [])
+    siem = manifest.get("defense_resolved", {}).get("siem", {})
+    telemetry_present = bool(
+        siem.get("platform", "none") != "none"
+        or siem.get("ship_sysmon")
+        or siem.get("ship_wef")
+        or edr_plan
+    )
+
+    rows = [predict_coverage(v, catalog.get(v["id"], {}), edr_plan, telemetry_present) for v in planned]
+    counts = {s: sum(1 for r in rows if r["expected_state"] == s) for s in ("PREVENIDO", "DETECTADO", "NO VISTO")}
+    chain = manifest.get("attack_chain", {})
+    plan = {
+        "lab": lab_name,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "note": "EXPECTED matrix predicted from the manifest — confirm live with the purple-validation skill (SharpHound/BloodHound, PingCastle, Atomic Red Team).",
+        "telemetry_present": telemetry_present,
+        "siem_platform": siem.get("platform", "none"),
+        "summary": counts,
+        "attack_chain_edges_to_confirm": [r["bloodhound_edge"] for r in rows if r["bloodhound_edge"]],
+        "techniques": rows,
+    }
+    (lab_dir / "validation-plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+    lines = [
+        f"# Validation plan — {lab_name}",
+        "",
+        f"_Generated {plan['generated_at']}. **Expected** matrix predicted from `lab-manifest.json`._",
+        "_The live `purple-validation` skill confirms/overrides each cell with real",
+        "SharpHound/BloodHound, PingCastle and Atomic Red Team results._",
+        "",
+        f"- SIEM/telemetry: **{plan['siem_platform']}** (telemetry_present={telemetry_present})",
+        f"- Expected: **{counts['PREVENIDO']} PREVENIDO · {counts['DETECTADO']} DETECTADO · {counts['NO VISTO']} NO VISTO**",
+        "",
+        "| Vuln | ATT&CK | Host | Reconciliation | Expected | Atomic | BloodHound edge | Why |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| {r['id']} | {r['mitre']} | {r['run_on']} | {r['neutralization']} | "
+            f"**{r['expected_state']}** | {r['atomic_test'] or '—'} | {r['bloodhound_edge'] or '—'} | {r['reason']} |"
+        )
+    lines += [
+        "",
+        "## Live checklist for purple-validator",
+        "",
+        "1. **Paths** — SharpHound → BloodHound; confirm each edge above exists in the graph.",
+    ]
+    if chain.get("steps"):
+        step_ids = " → ".join(s["id"] for s in chain["steps"])
+        lines.append(f"   Intended chain ({chain.get('mode', 'independent')}): {step_ids}")
+    lines += [
+        "2. **Posture** — PingCastle scored snapshot.",
+        "3. **Techniques** — run each Atomic test above; record actual PREVENIDO/DETECTADO/NO VISTO",
+        "   and flag any cell that differs from the Expected column.",
+        "",
+    ]
+    (lab_dir / "validation-plan.md").write_text("\n".join(lines), encoding="utf-8")
+
+    # The template only makes sense as a starting point — don't clobber a results
+    # file the operator is already filling in.
+    template_path = lab_dir / "validation-results.template.json"
+    if not template_path.exists():
+        template_path.write_text(json.dumps(render_results_template(rows, chain), indent=2) + "\n", encoding="utf-8")
+
+    print(f"OK: wrote {lab_dir / 'validation-plan.json'}, validation-plan.md, validation-results.template.json")
+    print(f"  expected: {counts['PREVENIDO']} PREVENIDO, {counts['DETECTADO']} DETECTADO, {counts['NO VISTO']} NO VISTO")
+    for r in rows:
+        print(f"    - {r['id']} [{r['mitre']}] on {r['run_on']} -> {r['expected_state']}  ({r['reason']})")
+
+    if args.results:
+        results_path = Path(args.results).resolve()
+        if not results_path.exists():
+            print(f"error: --results file not found: {results_path}", file=sys.stderr)
+            return 2
+        try:
+            results = json.loads(results_path.read_text(encoding="utf-8"))
+            confirmed, findings = merge_validation_results(rows, results)
+        except (json.JSONDecodeError, SpecError) as e:
+            print(f"error: bad --results file: {e}", file=sys.stderr)
+            return 1
+        report_path = render_validation_report(lab_name, confirmed, findings, results, chain, lab_dir)
+        actual = {s: sum(1 for r in confirmed if r["actual_state"] == s) for s in VALID_STATES}
+        print(f"OK: wrote {report_path} (confirmed matrix)")
+        print(f"  observed: {actual['PREVENIDO']} PREVENIDO, {actual['DETECTADO']} DETECTADO, {actual['NO VISTO']} NO VISTO; {len(findings)} finding(s)")
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="forge.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1985,6 +2238,15 @@ def main() -> int:
     p_ad_inventory.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
     p_ad_inventory.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_ad_inventory.set_defaults(func=cmd_ad_inventory)
+
+    p_validate = sub.add_parser(
+        "validate",
+        help="Offline validation plan: predict the PREVENIDO/DETECTADO/NO VISTO matrix from the manifest + list the Atomic tests/BloodHound edges the live purple-validation must confirm",
+    )
+    p_validate.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
+    p_validate.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_validate.add_argument("--results", help="Path to a filled validation-results JSON (from the live run); merges it into the confirmed validation-report.md")
+    p_validate.set_defaults(func=cmd_validate)
 
     args = parser.parse_args()
     return args.func(args)
