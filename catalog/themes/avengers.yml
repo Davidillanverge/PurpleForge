@@ -1,0 +1,80 @@
+# catalog/themes/avengers.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: avengers
+name: "Avengers Initiative"
+description: >
+  A roster of super-hero organizations standing in for BadBlood's corporate
+  departments — same non-literal, flavor-only use of a well-known setting
+  already established in this repo's medieval-kingdom and the-simpsons themes.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "orgs" here
+    - { code: STK, name: "Stark Industries" }
+    - { code: AVG, name: "Avengers Initiative" }
+    - { code: SHD, name: "S.H.I.E.L.D." }
+    - { code: WKD, name: "Wakanda Design Group" }
+    - { code: MYS, name: "Sanctum Sanctorum" }
+    - { code: HYD, name: "Hydra" }
+    - { code: PYM, name: "Pym Technologies" }
+    - { code: NOV, name: "Nova Corps" }
+
+  given_names_male:
+    - Tony
+    - Steve
+    - Bruce
+    - Thor
+    - Peter
+    - Stephen
+    - Scott
+    - Sam
+    - Bucky
+    - Clint
+    - Nick
+    - Vision
+    - Loki
+    - Hank
+    - Charles
+    - Wade
+    - Reed
+
+  given_names_female:
+    - Natasha
+    - Wanda
+    - Carol
+    - Pepper
+    - Gamora
+    - Nebula
+    - Hope
+    - Shuri
+    - Maria
+    - Jean
+
+  family_names:
+    - Stark
+    - Rogers
+    - Banner
+    - Odinson
+    - Parker
+    - Strange
+    - Lang
+    - Wilson
+    - Barnes
+    - Barton
+    - Fury
+    - Maximoff
+    - Romanoff
+    - Danvers
+    - Potts
+    - Pym
+    - VanDyne
+    - Richards
+    - Xavier
+    - TChalla
+
+extra_groups:
+  - { name: "World Security Council", description: "Secret oversight tier — highly privileged, Domain Admins-adjacent" }
+  - { name: "S.H.I.E.L.D. Agents", description: "Security tier" }
+  - { name: "Avengers Oversight Committee", description: "Audit/oversight tier" }
+  - { name: "Hydra Cell", description: "Infiltrated faction — isolated, low-trust accounts" }
+
+honey_account_naming: "shield.agent.{n}"

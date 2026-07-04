@@ -1955,151 +1955,116 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
-# EDR modes that provide active prevention vs. only detection/telemetry. Kept as
-# named sets so predict_coverage() reads as policy, not magic strings — mirrors
-# the mode values catalog/defense/edr/*.yml and plan_edr() emit.
-EDR_PREVENT_MODES = {"prevent", "block"}
-EDR_DETECT_MODES = {"prevent", "block", "detect", "enabled", "audit"}
+# Vulnerability validation confirms two things per injected vuln: that the config
+# was APPLIED (the AD artifact proving the injection landed) and that it is
+# EXPLOITABLE (the primitive actually works). It deliberately does NOT predict
+# detection coverage (PREVENIDO/DETECTADO/NO VISTO) — that is detection-lab's job.
+# A vuln's whole purpose is to be reachable, so its own validation is about
+# presence + exploitability, not whether a SIEM would catch it.
+VALID_RESULT = ("YES", "NO", "PARTIAL")
 
 
-def predict_coverage(vuln: dict, catalog_entry: dict, edr_plan: list[dict], telemetry_present: bool) -> dict:
-    """Derives the EXPECTED PREVENIDO / DETECTADO / NO VISTO state for one planned
-    vuln from what the manifest already records — hardening reconciliation status,
-    EDR mode on the target host, and whether any telemetry ships. This is a
-    prediction the live purple-validator confirms/overrides with real Atomic Red
-    Team + BloodHound results; it is not itself a measurement. Deterministic on
-    purpose (CLAUDE.md: the state machine lives in forge.py, the judgement in the
-    agent)."""
+def build_vuln_check(vuln: dict, catalog_entry: dict) -> dict:
+    """For one planned vuln, the two things its validation confirms: APPLIED (the
+    AD artifact/edge that proves the injection landed) and EXPLOITABLE (the
+    technique/primitive to run to prove it works). Pulled from the catalog's
+    validate/attack metadata — no detection/coverage prediction."""
     validate = (catalog_entry or {}).get("validate", {}) or {}
-    detect = (catalog_entry or {}).get("detect", {}) or {}
-    run_on = vuln["run_on"]
-
-    edr_prevents = any(run_on in e.get("targets", []) and e.get("mode") in EDR_PREVENT_MODES for e in edr_plan)
-    edr_detects = any(run_on in e.get("targets", []) and e.get("mode") in EDR_DETECT_MODES for e in edr_plan)
-    # "AT RISK ..." means a neutralizing hardening control WAS applied (on_conflict:
-    # warn) so the gap is likely closed. "gap-preserved"/"clear" leave the vuln live.
-    hardening_closes = vuln["neutralization"].startswith("AT RISK")
-    has_detect_signal = bool(detect.get("signal"))
-
-    if hardening_closes or edr_prevents:
-        state = "PREVENIDO"
-        why = "hardening control applied (on_conflict:warn)" if hardening_closes else f"EDR in prevent mode on {run_on}"
-    elif (telemetry_present or edr_detects) and has_detect_signal:
-        state = "DETECTADO"
-        why = f"telemetry present + detect signal ({detect.get('data_source', 'n/a')})"
-    else:
-        state = "NO VISTO"
-        why = "no neutralizing control and no telemetry/detect signal for this technique"
-
+    attack = (catalog_entry or {}).get("attack", {}) or {}
     return {
         "id": vuln["id"],
         "mitre": vuln["mitre"],
-        "run_on": run_on,
+        "run_on": vuln["run_on"],
         "neutralization": vuln["neutralization"].split(" (")[0],
-        "expected_state": state,
-        "reason": why,
-        "atomic_test": validate.get("atomic"),
-        "bloodhound_edge": validate.get("bloodhound_edge"),
-        "detect_data_source": detect.get("data_source"),
-        "detect_signal": detect.get("signal"),
+        "applied_signature": validate.get("bloodhound_edge") or "AD artifact created by the inject primitive",
+        "exploit_check": validate.get("atomic") or "run the vuln's attack primitive",
+        "intended_path": vuln.get("intended_path") or " ".join((attack.get("intended_path") or "").split()),
     }
 
 
-VALID_STATES = ("PREVENIDO", "DETECTADO", "NO VISTO")
-
-
-def render_results_template(rows: list[dict], chain: dict) -> dict:
-    """The skeleton the live purple-validation run fills in: one actual_state +
-    evidence per technique, plus a confirmed/absent flag per BloodHound edge and
-    a PingCastle score. Feeding this back via `validate --results` produces the
-    confirmed matrix — that's what closes the /validate loop."""
+def render_results_template(rows: list[dict]) -> dict:
+    """The skeleton the live validation run fills in: per vuln, whether the config
+    is APPLIED and whether it is EXPLOITABLE (YES/NO/PARTIAL) plus an evidence
+    string. Feeding it back via `validate --results` writes the confirmed report."""
     return {
-        "_help": f"Fill actual_state with one of {list(VALID_STATES)} from the live Atomic run; set each edge true/false from BloodHound. Then: forge.py validate <spec> --results <this file>.",
-        "pingcastle_score": None,
-        "bloodhound_edges_confirmed": {r["bloodhound_edge"]: None for r in rows if r["bloodhound_edge"]},
-        "techniques": [
-            {"id": r["id"], "mitre": r["mitre"], "expected_state": r["expected_state"], "actual_state": None, "evidence": ""}
+        "_help": f"Per vuln set `applied` and `exploitable` to one of {list(VALID_RESULT)} from the live check, plus an `evidence` string. Then: forge.py validate <spec> --results <this file>.",
+        "vulns": [
+            {"id": r["id"], "mitre": r["mitre"], "applied": None, "exploitable": None, "evidence": ""}
             for r in rows
         ],
     }
 
 
 def merge_validation_results(rows: list[dict], results: dict) -> tuple[list[dict], list[str]]:
-    """Crosses the predicted rows with the live results, returning the confirmed
-    matrix (each row gains actual_state/evidence/divergence) and a list of human-
-    readable findings (state divergences + attack-path edges that did not
-    materialize). Raises SpecError on a malformed results file."""
-    by_id = {t.get("id"): t for t in results.get("techniques", [])}
-    edges = results.get("bloodhound_edges_confirmed", {}) or {}
+    """Crosses the per-vuln checks with the live results, returning the confirmed
+    list (each row gains applied/exploitable/evidence) and human-readable findings
+    (config that didn't land, or landed but isn't exploitable). Raises SpecError on
+    a malformed results file."""
+    by_id = {v.get("id"): v for v in results.get("vulns", [])}
     confirmed: list[dict] = []
     findings: list[str] = []
 
     for r in rows:
-        res = by_id.get(r["id"])
+        res = by_id.get(r["id"]) or {}
         row = dict(r)
-        if not res or res.get("actual_state") is None:
-            row["actual_state"] = "PENDING"
-            row["evidence"] = ""
-            row["divergence"] = False
-            findings.append(f"{r['id']}: no live result recorded (expected {r['expected_state']}).")
-        else:
-            actual = res["actual_state"]
-            if actual not in VALID_STATES:
-                raise SpecError(f"technique {r['id']}: actual_state '{actual}' is not one of {list(VALID_STATES)}")
-            row["actual_state"] = actual
-            row["evidence"] = res.get("evidence", "")
-            row["divergence"] = actual != r["expected_state"]
-            if row["divergence"]:
-                findings.append(f"{r['id']}: expected {r['expected_state']} but observed {actual} — {row['evidence'] or 'no evidence given'}.")
-        edge = r["bloodhound_edge"]
-        if edge and edges.get(edge) is False:
-            findings.append(f"{r['id']}: intended BloodHound edge '{edge}' NOT present — injection failed or a control closed it.")
+        for field in ("applied", "exploitable"):
+            val = res.get(field)
+            if val is not None and val not in VALID_RESULT:
+                raise SpecError(f"vuln {r['id']}: {field} '{val}' is not one of {list(VALID_RESULT)}")
+            row[field] = val or "PENDING"
+        row["evidence"] = res.get("evidence", "")
+        if row["applied"] == "NO":
+            findings.append(f"{r['id']}: config NOT applied — injection did not land (expected artifact: {r['applied_signature']}).")
+        elif row["applied"] == "PENDING":
+            findings.append(f"{r['id']}: no live result recorded.")
+        elif row["exploitable"] == "NO":
+            findings.append(f"{r['id']}: applied but NOT exploitable — a control may have neutralized it ({row['evidence'] or 'no evidence given'}).")
         confirmed.append(row)
     return confirmed, findings
 
 
-def render_validation_report(lab_name: str, confirmed: list[dict], findings: list[str], results: dict, chain: dict, lab_dir: Path) -> Path:
-    """The confirmed validation section of the deliverable: actual vs. expected
-    three-state matrix, divergences, path result and PingCastle score. report-
-    writer folds this into lab-report.md."""
-    actual_counts = {s: sum(1 for r in confirmed if r["actual_state"] == s) for s in VALID_STATES}
+def render_validation_report(lab_name: str, confirmed: list[dict], findings: list[str], lab_dir: Path) -> Path:
+    """The confirmed validation section of the deliverable: per vuln, was the config
+    applied and is it exploitable, with evidence. report-writer folds this into
+    lab-report.md."""
+    n = len(confirmed)
+    applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
+    exploit_yes = sum(1 for r in confirmed if r["exploitable"] == "YES")
     lines = [
-        f"# Validation report — {lab_name}",
+        f"# Vulnerability validation — {lab_name}",
         "",
-        f"_Confirmed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} from the live lab (SharpHound/BloodHound, PingCastle, Atomic Red Team)._",
+        f"_Confirmed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} against the live lab. Each injected vuln is checked for two things: the config was APPLIED correctly (the AD artifact landed) and it is actually EXPLOITABLE. This is not a detection/coverage matrix._",
         "",
-        f"- PingCastle score: **{results.get('pingcastle_score', 'n/a')}**",
-        f"- Observed: **{actual_counts['PREVENIDO']} PREVENIDO · {actual_counts['DETECTADO']} DETECTADO · {actual_counts['NO VISTO']} NO VISTO**",
-        f"- Divergences from the predicted plan: **{sum(1 for r in confirmed if r.get('divergence'))}**",
+        f"- Config applied: **{applied_yes}/{n}**",
+        f"- Exploitable: **{exploit_yes}/{n}**",
         "",
-        "| Vuln | ATT&CK | Host | Expected | Observed | Δ | BloodHound edge | Evidence |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Vuln | ATT&CK | Host | Applied | Exploitable | Evidence |",
+        "|---|---|---|---|---|---|",
     ]
     for r in confirmed:
-        delta = "⚠️" if r.get("divergence") else ""
         lines.append(
-            f"| {r['id']} | {r['mitre']} | {r['run_on']} | {r['expected_state']} | "
-            f"**{r['actual_state']}** | {delta} | {r['bloodhound_edge'] or '—'} | {r.get('evidence') or '—'} |"
+            f"| {r['id']} | {r['mitre']} | {r['run_on']} | **{r['applied']}** | "
+            f"**{r['exploitable']}** | {r.get('evidence') or '—'} |"
         )
     lines += ["", "## Findings", ""]
-    lines += [f"- {f}" for f in findings] if findings else ["- None — the live run matched the predicted plan on every technique and edge."]
+    lines += [f"- {f}" for f in findings] if findings else ["- None — every injected vuln is applied and exploitable."]
     lines.append("")
     report_path = lab_dir / "validation-report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
     (lab_dir / "validation-report.json").write_text(
-        json.dumps({"lab": lab_name, "summary": actual_counts, "findings": findings, "techniques": confirmed}, indent=2) + "\n",
+        json.dumps({"lab": lab_name, "summary": {"applied": applied_yes, "exploitable": exploit_yes, "total": n}, "findings": findings, "vulns": confirmed}, indent=2) + "\n",
         encoding="utf-8",
     )
     return report_path
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Offline validation PLAN for a generated lab: crosses each planned vuln with
-    its catalog detect/validate metadata and the resolved defense stack to predict
-    the PREVENIDO/DETECTADO/NO VISTO matrix and list the Atomic tests + BloodHound
-    edges the live purple-validator must confirm. Writes validation-plan.{json,md}
-    plus a validation-results.template.json. With --results <file>, merges the
-    live results back into the confirmed validation-report.md — closing /validate."""
+    """Vulnerability validation for a generated lab: per injected vuln, the AD
+    artifact that proves the config was APPLIED and the check that proves it is
+    EXPLOITABLE. Writes validation-plan.{json,md} (the per-vuln checklist) plus a
+    validation-results.template.json. With --results <file>, merges the live
+    YES/NO/PARTIAL results into the confirmed validation-report.md. Validation is
+    about applied+exploitable — NOT detection coverage (that's detection-lab)."""
     spec_path = Path(args.spec).resolve()
     if not spec_path.exists():
         print(f"error: spec file not found: {spec_path}", file=sys.stderr)
@@ -2119,61 +2084,41 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print("note: this lab has no injected vulnerabilities — nothing to validate.")
         return 0
 
-    edr_plan = manifest.get("edr_plan", [])
-    siem = manifest.get("defense_resolved", {}).get("siem", {})
-    telemetry_present = bool(
-        siem.get("platform", "none") != "none"
-        or siem.get("ship_sysmon")
-        or siem.get("ship_wef")
-        or edr_plan
-    )
-
-    rows = [predict_coverage(v, catalog.get(v["id"], {}), edr_plan, telemetry_present) for v in planned]
-    counts = {s: sum(1 for r in rows if r["expected_state"] == s) for s in ("PREVENIDO", "DETECTADO", "NO VISTO")}
-    chain = manifest.get("attack_chain", {})
+    rows = [build_vuln_check(v, catalog.get(v["id"], {})) for v in planned]
     plan = {
         "lab": lab_name,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "note": "EXPECTED matrix predicted from the manifest — confirm live with the purple-validation skill (SharpHound/BloodHound, PingCastle, Atomic Red Team).",
-        "telemetry_present": telemetry_present,
-        "siem_platform": siem.get("platform", "none"),
-        "summary": counts,
-        "attack_chain_edges_to_confirm": [r["bloodhound_edge"] for r in rows if r["bloodhound_edge"]],
-        "techniques": rows,
+        "note": "Per-vuln validation checklist. Confirm live that each config was APPLIED (artifact present) and is EXPLOITABLE. Not a detection/coverage matrix.",
+        "vulns": rows,
     }
     (lab_dir / "validation-plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
 
     lines = [
-        f"# Validation plan — {lab_name}",
+        f"# Vulnerability validation plan — {lab_name}",
         "",
-        f"_Generated {plan['generated_at']}. **Expected** matrix predicted from `lab-manifest.json`._",
-        "_The live `purple-validation` skill confirms/overrides each cell with real",
-        "SharpHound/BloodHound, PingCastle and Atomic Red Team results._",
+        f"_Generated {plan['generated_at']} from `lab-manifest.json`. For each injected vuln,",
+        "confirm two things live: the config was **applied** (the AD artifact landed) and it is",
+        "actually **exploitable**. This is not a detection/coverage matrix._",
         "",
-        f"- SIEM/telemetry: **{plan['siem_platform']}** (telemetry_present={telemetry_present})",
-        f"- Expected: **{counts['PREVENIDO']} PREVENIDO · {counts['DETECTADO']} DETECTADO · {counts['NO VISTO']} NO VISTO**",
-        "",
-        "| Vuln | ATT&CK | Host | Reconciliation | Expected | Atomic | BloodHound edge | Why |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Vuln | ATT&CK | Host | Reconciliation | Applied signature (confirm present) | Exploitability check |",
+        "|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| {r['id']} | {r['mitre']} | {r['run_on']} | {r['neutralization']} | "
-            f"**{r['expected_state']}** | {r['atomic_test'] or '—'} | {r['bloodhound_edge'] or '—'} | {r['reason']} |"
+            f"{r['applied_signature']} | {r['exploit_check']} |"
         )
     lines += [
         "",
-        "## Live checklist for purple-validator",
+        "## How to confirm each vuln",
         "",
-        "1. **Paths** — SharpHound → BloodHound; confirm each edge above exists in the graph.",
-    ]
-    if chain.get("steps"):
-        step_ids = " → ".join(s["id"] for s in chain["steps"])
-        lines.append(f"   Intended chain ({chain.get('mode', 'independent')}): {step_ids}")
-    lines += [
-        "2. **Posture** — PingCastle scored snapshot.",
-        "3. **Techniques** — run each Atomic test above; record actual PREVENIDO/DETECTADO/NO VISTO",
-        "   and flag any cell that differs from the Expected column.",
+        "1. **Applied** — query AD with a signing-aware client (e.g. `nxc`) for the artifact in",
+        "   the 'Applied signature' column (a UAC flag, an SPN, an ACE, a group membership, a",
+        "   SYSVOL file…). Present ⇒ the injection landed.",
+        "2. **Exploitable** — run the primitive in the last column (roast the hash, read the",
+        "   cpassword, abuse the ACL) and confirm it actually yields what it should.",
+        "3. Record YES/NO/PARTIAL + evidence per vuln in the results template, then re-run with",
+        "   `--results` to write the confirmed report.",
         "",
     ]
     (lab_dir / "validation-plan.md").write_text("\n".join(lines), encoding="utf-8")
@@ -2182,12 +2127,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # file the operator is already filling in.
     template_path = lab_dir / "validation-results.template.json"
     if not template_path.exists():
-        template_path.write_text(json.dumps(render_results_template(rows, chain), indent=2) + "\n", encoding="utf-8")
+        template_path.write_text(json.dumps(render_results_template(rows), indent=2) + "\n", encoding="utf-8")
 
     print(f"OK: wrote {lab_dir / 'validation-plan.json'}, validation-plan.md, validation-results.template.json")
-    print(f"  expected: {counts['PREVENIDO']} PREVENIDO, {counts['DETECTADO']} DETECTADO, {counts['NO VISTO']} NO VISTO")
     for r in rows:
-        print(f"    - {r['id']} [{r['mitre']}] on {r['run_on']} -> {r['expected_state']}  ({r['reason']})")
+        print(f"    - {r['id']} [{r['mitre']}] on {r['run_on']}: applied? [{r['applied_signature']}]  exploitable? [{r['exploit_check']}]")
 
     if args.results:
         results_path = Path(args.results).resolve()
@@ -2200,10 +2144,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         except (json.JSONDecodeError, SpecError) as e:
             print(f"error: bad --results file: {e}", file=sys.stderr)
             return 1
-        report_path = render_validation_report(lab_name, confirmed, findings, results, chain, lab_dir)
-        actual = {s: sum(1 for r in confirmed if r["actual_state"] == s) for s in VALID_STATES}
-        print(f"OK: wrote {report_path} (confirmed matrix)")
-        print(f"  observed: {actual['PREVENIDO']} PREVENIDO, {actual['DETECTADO']} DETECTADO, {actual['NO VISTO']} NO VISTO; {len(findings)} finding(s)")
+        report_path = render_validation_report(lab_name, confirmed, findings, lab_dir)
+        applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
+        exploit_yes = sum(1 for r in confirmed if r["exploitable"] == "YES")
+        print(f"OK: wrote {report_path} (confirmed)")
+        print(f"  applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {len(findings)} finding(s)")
 
     return 0
 
@@ -2241,7 +2186,7 @@ def main() -> int:
 
     p_validate = sub.add_parser(
         "validate",
-        help="Offline validation plan: predict the PREVENIDO/DETECTADO/NO VISTO matrix from the manifest + list the Atomic tests/BloodHound edges the live purple-validation must confirm",
+        help="Per-vuln validation checklist: the AD artifact that proves each injected vuln's config was APPLIED and the check that proves it is EXPLOITABLE (with --results, writes the confirmed report). Not detection coverage.",
     )
     p_validate.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_validate.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")

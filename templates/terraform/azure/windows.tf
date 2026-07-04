@@ -21,9 +21,11 @@ locals {
   # plain IaaS image outside Azure Virtual Desktop/Windows 365 or a Visual
   # Studio subscription benefit. "-avd" is the same OS build and the only
   # win11-23h2 plan with real image versions; it deploys as an ordinary
-  # standalone VM here (no AVD host pool involved). windows-10-22h2 keeps
-  # "-pro" since MicrosoftWindowsDesktop/Windows-10/win10-22h2-pro DOES have
-  # published versions and needs no such substitution.
+  # standalone VM here (no AVD host pool involved). windows-10-22h2 uses the
+  # Gen2 "win10-22h2-pro-g2" SKU (not the Gen1 "win10-22h2-pro"): both have
+  # published versions, but the Gen1 SKU cannot boot a Gen2-only VM size
+  # ("cannot boot Hypervisor Generation '1'"), and the newer size families
+  # some subscriptions are restricted to (Fasv7 etc.) are Gen2-only.
   #
   # Every windows-server-* maps to its Hyper-V Generation 2 SKU, not the
   # bare "<year>-Datacenter": verified against a real deploy that newer VM
@@ -40,12 +42,21 @@ locals {
   # 2016/2019 use "-gensecond" ("2016-datacenter-gensecond"), 2022/2025 use
   # "-g2" ("2022-datacenter-g2"). Don't assume one pattern for a new OS
   # entry without checking that same listing first.
+  #
+  # DISK CONTROLLER caveat: the Fasv7/Dsv7/Esv7 families some restricted
+  # subscriptions only offer are NVMe-*only* (DiskControllerTypes=NVMe), and
+  # an image must declare NVMe support to boot on them. Verified via the
+  # image version's `features`: windows-server-2019/2022/2025 and
+  # win10-22h2-pro-g2/win11-23h2 report "SCSI, NVMe", but
+  # windows-server-2016-gensecond reports "SCSI" only — so a 2016 DC cannot
+  # run on an NVMe-only size at all (no Gen2 SKU fixes it; it's the guest
+  # image, not the hypervisor generation). Pick 2019+ for such subscriptions.
   os_image_map = {
     "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-datacenter-gensecond" }
     "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-datacenter-gensecond" }
     "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-datacenter-g2" }
     "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-datacenter-g2" }
-    "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro" }
+    "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro-g2" }
     "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-avd" }
   }
 

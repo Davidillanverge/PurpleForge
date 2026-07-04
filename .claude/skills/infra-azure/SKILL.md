@@ -78,7 +78,11 @@ add the variable once in `variables.tf` and wire `scripts/forge.py`'s
   Desktop/Windows 365 or a Visual Studio subscription benefit. `win11-23h2-avd`
   is the same OS build and the only win11-23h2 plan with real image versions;
   it deploys as an ordinary standalone VM (no AVD host pool involved).
-  `windows-10-22h2` keeps `win10-22h2-pro`, which does have real versions.
+  `windows-10-22h2` uses the Gen2 `win10-22h2-pro-g2` SKU — the Gen1
+  `win10-22h2-pro` cannot boot a Gen2-only VM size (Fasv7 etc.). Note
+  `windows-server-2016`'s image is SCSI-only (no NVMe), so it cannot run on
+  the NVMe-only Fasv7/Dsv7/Esv7 sizes some restricted subscriptions offer —
+  pick 2019+ there.
 - **Custom images** (`machines[].image_id`): overrides the marketplace
   lookup above for that machine group — a full resource ID for either a
   managed image (`.../Microsoft.Compute/images/<name>`) or a Shared Image

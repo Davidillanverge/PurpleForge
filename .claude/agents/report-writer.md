@@ -28,10 +28,12 @@ manifest and the validation actually say.
 - **Reconciliation outcome**: which hardening controls were excluded (and why —
   which vuln they would have neutralized), and which vulns were left warned. This
   is what makes the lab honest about its intentional gaps.
-- **Coverage matrix**: per ATT&CK technique -> PREVENIDO / DETECTADO / NO VISTO,
-  with the mitigation for each and the D3FEND control where relevant. This matrix
-  is the point — it turns the lab into a measurement of defensive coverage, not
-  just a target.
+- **Vulnerability validation** (from `validation-report.md`): per vuln, whether the
+  config was APPLIED correctly and whether it is EXPLOITABLE (YES/NO/PARTIAL) with
+  the live evidence, plus the applied/exploitable summary and any findings. This is
+  the point — it proves each intended weakness actually landed and works. It is NOT
+  a detection/coverage matrix (PREVENIDO/DETECTADO/NO VISTO) — that belongs to
+  detection-lab, a separate stack this validation does not assess.
 
 ## Optional visual
 
@@ -39,8 +41,23 @@ If the user wants something shareable, load the `artifact-design` skill and
 render the coverage matrix as an Artifact (theme-aware, self-contained). Keep the
 markdown report as the source of record either way.
 
+## Credentials section (REQUIRED — do not strip it)
+
+`lab-report.md` lives under `generated/<lab>/` which is **gitignored** — it IS the
+lab's credentials artifact, not a public document. `forge.py generate` already
+renders a full **Population users table (name + password + OU)** and a
+**Credentials** section (domain admin, WinRM automation account, local VM admin,
+and every vulnerability-injection account's password). **Preserve those tables in
+full** — the lab operator needs the user passwords to actually run the CTF.
+Do not summarize them away or replace them with "see the manifest".
+
+Lead the report with the standard warning banner ("Contains generated secrets —
+gitignored, never commit, authorized operators only").
+
 ## Rules
 
-- Never print generated secrets (credentials, hashes) into a committed report;
-  those live only in gitignored artifacts. Reference where they are, don't inline
-  them. State clearly if validation was partial or a step was skipped.
+- Include the credentials/users tables (above). The one thing you must NOT do is
+  write secrets into a file that gets committed — but the lab-report is gitignored,
+  so it is the correct home for them. Never paste them into a PR, an Artifact you
+  publish, or anything outside `generated/<lab>/`.
+- State clearly if validation was partial or a step was skipped.

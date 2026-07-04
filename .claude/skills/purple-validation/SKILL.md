@@ -1,84 +1,83 @@
 ---
 name: purple-validation
 description: >
-  Validates a deployed PurpleForge lab against its plan and produces the
-  three-state coverage matrix. First derives the EXPECTED PREVENIDO / DETECTADO /
-  NO VISTO matrix offline from lab-manifest.json (scripts/forge.py validate),
-  then confirms it against the LIVE lab over the WireGuard tunnel: SharpHound →
-  BloodHound (do the intended attack-path edges exist?), PingCastle (AD posture),
-  and the Atomic Red Team tests mapped from each injected vuln (did the technique
-  get prevented, detected, or go unseen?). Runs after the clean snapshot, before
-  report-writer consolidates lab-report.md. Consumed by the purple-validator agent.
+  Validates a deployed PurpleForge lab's injected vulnerabilities: for each one,
+  confirm the config was APPLIED correctly (the AD artifact the injection should
+  have created is present) and that it is actually EXPLOITABLE (the attack
+  primitive works). This is NOT a detection/coverage matrix — whether a SIEM/EDR
+  would catch the technique is detection-lab's concern, not vulnerability
+  validation. Runs against the live lab over the WireGuard tunnel, after the clean
+  snapshot. Consumed by the purple-validator agent; produces validation-report.md.
 ---
 
 # purple-validation
 
 ## When to use this skill
 
-- The user runs `/validate`, or the `purple-validator` agent needs to measure a
-  deployed lab's defensive coverage.
-- Only against a LIVE, isolated lab reachable over the bastion tunnel, and only
-  AFTER `deploy-operator` took the clean snapshot (attacks must be resettable).
+- The user runs `/validate`, or the `purple-validator` agent needs to confirm a
+  deployed lab's vulnerabilities landed and are exploitable.
+- Only against a LIVE, isolated lab reachable over the bastion tunnel, after
+  `deploy-operator` took the clean snapshot.
 
-## What it does — two phases
+## What validation is (and isn't)
 
-### 1. Offline plan (deterministic — always run first)
+For each injected vuln, confirm exactly two things:
+
+1. **Applied** — the config the injection was supposed to create is actually
+   present in AD (a `userAccountControl` flag, an SPN, an ACE, a group
+   membership, a SYSVOL file…). Present ⇒ the injection landed.
+2. **Exploitable** — running the vuln's own primitive actually yields what it
+   should (a roastable hash, a readable cpassword, a usable ACL).
+
+It is **not** about PREVENIDO/DETECTADO/NO VISTO — a vuln's whole point is to be
+reachable. Detection coverage (would a SIEM alert?) belongs to `detection-lab`,
+which is a separate stack.
+
+## Flow
+
+### 1. Build the checklist (deterministic)
 
 ```bash
 python3 scripts/forge.py validate specs/<lab>.yml
 ```
 
-Crosses each `vulnerabilities_planned` entry in `lab-manifest.json` with its
-catalog `detect`/`validate` metadata and the resolved defense stack to write
-`generated/<lab>/validation-plan.{json,md}`: the **expected** matrix plus the
-Atomic test id and BloodHound edge to confirm per technique. This is the
-deterministic checklist — the state machine lives in `forge.py`, not in
-eyeballing (CLAUDE.md). It is a prediction, not a measurement.
+Writes `generated/<lab>/validation-plan.{json,md}` — per vuln, the **applied
+signature** to confirm present and the **exploitability check** to run — plus a
+`validation-results.template.json` to fill in.
 
-Phase 1 also writes `validation-results.template.json` — the exact skeleton you
-fill in during phase 2 (one `actual_state` + `evidence` per technique, plus a
-true/false per BloodHound edge and a PingCastle score).
+### 2. Confirm live (over the tunnel)
 
-### 2. Live confirmation (over the tunnel)
+The hardening baseline usually enforces **LDAP signing**, so plain-LDAP tools
+(`impacket-dacledit`, bare `ldap3`, `forge.py ad-inventory`) fail
+`strongerAuthRequired`. Use a signing-aware client — **`nxc`/netexec**:
 
-Run the real tools against the live lab and fill in the template:
+- **Applied**: `nxc ldap <dc> -u <user> -p <pass> --query "(<filter>)" "<attrs>"`
+  to read the artifact; `nxc ldap ... -M daclread` to confirm ACEs (DCSync
+  grant, KeyCredentialLink write, etc.).
+- **Exploitable**: run the primitive — `--asreproast`, `--kerberoasting out
+  --kdcHost <dc-ip>` (pass `--kdcHost` when the attacker box has no DNS to the
+  domain), `nxc smb ... -M gpp_password`, read the description field, etc.
+- Record `applied` and `exploitable` as **YES / NO / PARTIAL** + an evidence
+  string per vuln in the template.
 
-- **Paths** — collect with SharpHound, open in BloodHound, confirm every
-  `bloodhound_edge` from the plan exists (e.g. `HasSPN`, `DontReqPreauth`,
-  `ADCSESC1`). Set each edge true/false. A missing edge means injection didn't
-  land or hardening closed it.
-- **Posture** — run PingCastle; put the score in `pingcastle_score`.
-- **Techniques** — run each Atomic Red Team test and record the ACTUAL result in
-  `actual_state`:
-  - **PREVENIDO** — blocked (EDR prevent / hardening control).
-  - **DETECTADO** — ran and produced the expected detection signal/telemetry.
-  - **NO VISTO** — ran and nothing caught it (a real coverage gap).
-
-Connectivity mirrors `AZURE-DEPLOY-RUNBOOK.md` (WireGuard up, Ansible-over-Docker
-`--network host`). `forge.py ad-inventory` can corroborate that the injected
-accounts/edges are live before firing attacks.
-
-### 3. Confirm — close the loop (deterministic)
+### 3. Confirm — write the report (deterministic)
 
 ```bash
 python3 scripts/forge.py validate specs/<lab>.yml --results <filled-template>.json
 ```
 
-Merges the live results with the predicted plan and writes the confirmed
-`generated/<lab>/validation-report.md` (+ `.json`): the actual-vs-expected
-three-state matrix, every **divergence** flagged (⚠️), and a Findings list
-(state divergences + intended BloodHound edges that did not materialize). A
-divergence is a finding, not an error — it is the whole point of the exercise.
+Writes `generated/<lab>/validation-report.md` (+ `.json`): per vuln, Applied and
+Exploitable with evidence, an `N/total` summary, and Findings for anything not
+applied (injection didn't land) or applied-but-not-exploitable (a control may
+have neutralized it).
 
 ## Output
 
-`validation-report.md` is the confirmed deliverable; hand it to `report-writer`,
-which folds it into `lab-report.md`. Never inline generated secrets (credentials,
-NT hashes) into a committed report.
+`validation-report.md` is the deliverable; hand it to `report-writer`, which folds
+it into `lab-report.md`. Do not fire attacks before the clean snapshot exists.
 
 ## What is / isn't automated
 
-Phases 1 and 3 (predict, and merge→confirmed report) are fully deterministic in
-`forge.py` and tested. Phase 2 — driving SharpHound/PingCastle/Atomic over the
-tunnel — is run by the agent following this skill; a future phase can wrap it the
-way `ad-inventory` already wraps live LDAP/DCSync.
+Phases 1 and 3 (checklist, and merge→report) are deterministic in `forge.py` and
+tested. Phase 2 — the live `nxc` queries/exploits over the tunnel — is run by the
+agent following this skill.

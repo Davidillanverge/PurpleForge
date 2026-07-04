@@ -167,7 +167,10 @@
       win_domain_group_membership:
         name: "{{ '{{ item.group }}' }}"
         members:
-          - "{{ '{{ item.member }}' }}"
+          # computer accounts resolve by their SAM name, which carries a
+          # trailing '$' — without it win_domain_group_membership can't find
+          # the object ("Could not find ... computer named <name>").
+          - "{% raw %}{{ item.member }}{{ '$' if item.member_type == 'computer' else '' }}{% endraw %}"
         state: present
         domain_username: "{{ '{{ domain_username }}' }}"
         domain_password: "{{ '{{ domain_password }}' }}"

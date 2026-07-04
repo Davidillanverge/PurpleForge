@@ -64,7 +64,7 @@ despliegue → `deploy-operator`; (7) validación → `purple-validator`; (8) re
   └─ policy-guardrail → PASS/FAIL invariantes
   ═══ PUERTA HUMANA: revisar spec + coste + reconciliación, aprobar ═══
 /deploy    → deploy-operator  (hardening → vulns → EDR → SNAPSHOT limpio)
-/validate  → purple-validator → report-writer  (matriz PREVENIDO/DETECTADO/NO VISTO)
+/validate  → purple-validator → report-writer  (por vuln: config APLICADA + EXPLOTABLE)
 /destroy   → deploy-operator (forge.py destroy → coste cero)
 ```
 
@@ -89,10 +89,12 @@ ad-topology, ad-theming, vuln-injection, defensive-controls; y en `forge.py`:
 `lab-spec`, `generate`, `destroy`, `ad-inventory`.
 
 La skill `purple-validation` ya existe, con su parte determinista en
-`forge.py validate` (matriz PREVENIDO/DETECTADO/NO VISTO *predicha* desde el
-manifest + checklist de Atomic/BloodHound a confirmar en vivo). La fase en vivo
-(SharpHound/BloodHound, PingCastle, Atomic sobre el túnel) la ejecuta el agente
-siguiendo la skill; aún no hay subcomando que la orqueste end-to-end.
+`forge.py validate`: por cada vuln inyectada, la **firma AD que prueba que la
+config se aplicó** y el **check de explotabilidad**; con `--results` escribe el
+informe confirmado (APLICADA/EXPLOTABLE por vuln). La validación NO es una matriz
+de detección (eso sería `detection-lab`, aún no implementada). La fase en vivo
+(consultas/exploits con `nxc` sobre el túnel) la ejecuta el agente siguiendo la
+skill.
 
 Siguen sin existir: `detection-lab` (SIEM+telemetría) e `infra-aws` (solo hay
 Azure). Los agentes ya apuntan a ese flujo; construir esas piezas es el siguiente
