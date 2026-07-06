@@ -51,19 +51,37 @@ limpio se toma ANTES de que `/validate` dispare cualquier técnica de ataque.
 Este orden es determinista y sin IA: `forge.py generate` emite `deploy.sh`
 (y `teardown.sh`) en `generated/<lab>/`, y `forge.py deploy` los ejecuta tras
 la puerta `guardrail`. `site.yml` fija el orden hardening→vulns; `deploy.sh`
-encadena backend de estado → auto-sizing (SKU más barato sin restricción) →
-`terraform apply` → túnel WireGuard → `site.yml`. La validación es
-`forge.py validate --run` y el desmontaje a coste cero es `forge.py teardown`.
+encadena secretos de infra (`ensure_secrets`: mintea admin/ansible si es un
+share sin regenerar) → backend de estado → auto-sizing (SKU más barato sin
+restricción, override `PF_VM_SIZE`) → `terraform apply` → túnel WireGuard →
+`site.yml`. La validación es `forge.py validate --run` y el desmontaje a coste
+cero es `forge.py teardown`.
 
 ## Convenciones del repositorio
 
 - `specs/` es la única fuente de verdad editada a mano; todo lo que cuelga de
-  `generated/<lab>/` es derivado y reproducible (regenerable desde el spec) —
-  no se edita a mano y no se versiona.
+  `generated/<lab>/` es derivado y reproducible (regenerable desde el spec) y
+  no se edita a mano. Los **artefactos desplegables** de `generated/<lab>/`
+  (`deploy.sh`/`teardown.sh`, `terraform/`, `ansible/`, `backend.hcl` con
+  placeholder, `population-secrets.yml`, `secrets-manifest.json`) SÍ pueden
+  versionarse a propósito: así un lab se comparte y se despliega sin volver a
+  ejecutar `forge.py generate`. Solo quedan fuera de git los secretos de infra,
+  el estado y los overlays por-despliegue (ver `.gitignore`).
 - `vendor/` son git submodules con versión/tag fijado. No se edita contenido de
   `vendor/` directamente; se envuelve desde `templates/` y las skills.
 - Añadir una vulnerabilidad = añadir un `.yml` en `catalog/vulnerabilities/`
   con `detect`, `mitigate`, `neutralized_by` y `mitre_attack` válido — no
   requiere tocar código del generador.
-- Los secretos generados (credenciales, `lab-manifest.json`) nunca se
-  commitean; ver `.gitignore`.
+- **Independencia de cuenta/suscripción.** La generación no hornea ningún
+  `subscription_id`/`tenant`; la suscripción se resuelve en tiempo de
+  despliegue (`ARM_SUBSCRIPTION_ID` o el login de `az`), el estado remoto usa
+  una storage account acuñada por-desplegador, y región/SKU se sobreescriben
+  con `PF_REGION`/`PF_VM_SIZE`/`PF_TFSTATE_RG` sin editar el spec. El mismo lab
+  despliega en cualquier cuenta.
+- **Secretos por ciclo de vida** (`ansible/inventory/group_vars/all/`): las
+  contraseñas de los usuarios de población se fijan UNA vez al crear el lab y se
+  versionan con él (`population-secrets.yml`) — el deploy nunca las regenera. Las
+  llaves de infra (admin de dominio + ansible WinRM) van gitignored
+  (`secrets.yml`, `secrets.auto.tfvars.json`), son por-desplegador, y `deploy.sh`
+  (`ensure_secrets`) las acuña si faltan al desplegar un share. `lab-manifest.json`
+  y `lab-report.md` (con credenciales) nunca se commitean.
