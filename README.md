@@ -447,6 +447,55 @@ does and for hand-running a single step; you don't need to run these by hand.
 > against domain controllers, and more). `deploy.sh` already encodes the happy
 > path plus the retries; reach for the runbook only when a step fails.
 
+### Deploying a shared lab on your own (or another) Azure account
+
+A generated lab is account/subscription-independent: `deploy.sh` bakes **no**
+credentials and **no** subscription id — it deploys into whatever Azure identity
+you authenticate with, and mints its own remote-state storage account and infra
+secrets. So sharing a lab is just sharing the repo (or the `generated/<lab>/`
+folder); the recipient never re-runs `forge.py generate`. Pick the target
+account one of two ways:
+
+**A — Interactive user login (simplest, your own account):**
+
+```bash
+az login                               # sign in to the target account
+az account set --subscription <sub-id> # pick the target subscription
+./generated/<lab>/deploy.sh            # deploys into that subscription
+```
+
+**B — Service principal (CI, or a non-interactive / someone else's account):**
+export the four `ARM_*` variables before running — no `az login` needed:
+
+```bash
+export ARM_TENANT_ID=<tenant-id>
+export ARM_SUBSCRIPTION_ID=<subscription-id>
+export ARM_CLIENT_ID=<sp-app-id>
+export ARM_CLIENT_SECRET=<sp-password>
+./generated/<lab>/deploy.sh
+```
+
+Create the service principal once, from an account allowed to grant roles
+(the `--role`/`--scopes` are **required** — without them the SP gets zero
+access and Terraform 403s on every resource):
+
+```bash
+az ad sp create-for-rbac --name pf-deployer \
+  --role Contributor --scopes /subscriptions/<subscription-id>
+# -> prints appId (ARM_CLIENT_ID), password (ARM_CLIENT_SECRET), tenant (ARM_TENANT_ID)
+```
+
+`ARM_SUBSCRIPTION_ID` always wins over the `az` default, so exporting just that
+targets a specific subscription without `az account set`. To deploy in a
+different region or force a VM SKU your account/region allows — without editing
+the spec — export `PF_REGION=<region>` and/or `PF_VM_SIZE=<sku>` (also
+`PF_TFSTATE_RG=<rg>` to rename the remote-state resource group).
+
+Secrets on a shared lab: the population **user** passwords are fixed at lab
+creation and ship with it (`ansible/inventory/group_vars/all/population-secrets.yml`),
+so every deploy uses the same ones; the **infra** keys (domain admin + Ansible
+WinRM) are gitignored and minted per-deployer by `deploy.sh` on first run.
+
 ### Prerequisites
 
 - `terraform` >= 1.5, `az` CLI (logged in: `az login`)

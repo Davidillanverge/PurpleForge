@@ -9,10 +9,31 @@
 #   ./deploy.sh            # full deploy
 #   ./deploy.sh --sizes-only   # only (re)write sizes.auto.tfvars.json and exit
 #
-# Prereqs (once per machine): terraform az docker wireguard-tools openssl curl,
-# and `az login` already done as a real user in the subscription's tenant
-# (or ARM_CLIENT_ID/SECRET/TENANT/SUBSCRIPTION_ID exported for a service
-# principal). See AZURE-DEPLOY-RUNBOOK.md for the full symptom->cause table.
+# Prereqs (once per machine): terraform az docker wireguard-tools openssl curl.
+#
+# CHOOSE THE AZURE ACCOUNT — this script bakes NO credentials; it deploys into
+# whatever account/subscription you authenticate with here. Two ways:
+#
+#   A) Interactive user login (simplest, for your own account):
+#        az login                              # sign in to the target account
+#        az account set --subscription <id>    # pick the target subscription
+#      then run ./deploy.sh — it deploys into that subscription.
+#
+#   B) Service principal (CI, or a non-interactive/other account) — export these
+#      4 env vars before running, no `az login` needed:
+#        export ARM_TENANT_ID=<tenant-id>
+#        export ARM_SUBSCRIPTION_ID=<subscription-id>
+#        export ARM_CLIENT_ID=<sp-app-id>
+#        export ARM_CLIENT_SECRET=<sp-password>
+#      Create the SP (once, from an account that can grant roles):
+#        az ad sp create-for-rbac --name pf-deployer \
+#          --role Contributor --scopes /subscriptions/<subscription-id>
+#      (the --role/--scopes are REQUIRED or the SP gets zero access — see runbook)
+#
+#   ARM_SUBSCRIPTION_ID always wins over the `az` default, so exporting just that
+#   targets a specific subscription without `az account set`. Region/SKU are
+#   overridable with PF_REGION / PF_VM_SIZE (below). Full symptom->cause table:
+#   AZURE-DEPLOY-RUNBOOK.md.
 # =============================================================================
 set -uo pipefail   # deliberately NOT -e: failures are handled explicitly (retries)
 
