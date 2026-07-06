@@ -183,15 +183,44 @@ tf_apply() {
   log "3. terraform init + apply"
   terraform -chdir="$TF_DIR" init -backend-config=backend.hcl -input=false -reconfigure \
     || die "terraform init failed"
-  local tries=0 max=6
+  local tries=0 max=6 applog
+  applog="$(mktemp)"
   # -refresh=false + -parallelism=1 dodge ARM read-after-write lag; retrying makes
   # real progress (imported/created resources persist) — it is not spinning.
-  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false -refresh=false -parallelism=1; do
+  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false -refresh=false -parallelism=1 2>&1 | tee "$applog"; do
     tries=$((tries+1))
-    [ "$tries" -ge "$max" ] && die "terraform apply still failing after $tries tries — see the error above; a genuine 'already exists' needs a manual 'terraform import' (AZURE-DEPLOY-RUNBOOK.md step 4)"
-    warn "apply failed (attempt $tries/$max) — retrying in 15s (transient ARM lag is expected on some subscriptions)"
-    sleep 15
+    [ "$tries" -ge "$max" ] && { rm -f "$applog"; die "terraform apply still failing after $tries tries — see the error above (AZURE-DEPLOY-RUNBOOK.md step 4)"; }
+    # Self-heal the recurring 'already exists' state drift: a resource that lives
+    # in Azure but not in state (typically a VM ansible-prep extension left by a
+    # prior interrupted apply). With -refresh=false terraform would otherwise
+    # keep trying to CREATE it forever; instead import each (address, id) pair
+    # parsed from the error and retry.
+    if grep -q "already exists - to be managed via Terraform" "$applog"; then
+      while IFS=$'\t' read -r addr id; do
+        [ -n "$addr" ] && [ -n "$id" ] || continue
+        echo "  auto-importing drifted resource into state: $addr"
+        terraform -chdir="$TF_DIR" import "$addr" "$id" >/dev/null 2>&1 \
+          || warn "auto-import of $addr failed — may need a manual terraform import"
+      done < <(python3 - "$applog" <<'PY'
+import re, sys
+pending_id = None
+for ln in open(sys.argv[1]):
+    m = re.search(r'A resource with the ID "([^"]+)" already exists', ln)
+    if m:
+        pending_id = m.group(1); continue
+    if pending_id:
+        m2 = re.search(r'with (\S.*?),\s*$', ln)
+        if m2:
+            print(f"{m2.group(1)}\t{pending_id}"); pending_id = None
+PY
+)
+      warn "apply hit state drift (attempt $tries/$max) — auto-imported the pre-existing resource(s), retrying"
+    else
+      warn "apply failed (attempt $tries/$max) — retrying in 15s (transient ARM lag is expected on some subscriptions)"
+      sleep 15
+    fi
   done
+  rm -f "$applog"
   echo "  apply complete"
 }
 
