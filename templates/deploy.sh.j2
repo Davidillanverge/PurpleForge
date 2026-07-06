@@ -17,12 +17,20 @@
 set -uo pipefail   # deliberately NOT -e: failures are handled explicitly (retries)
 
 LAB="{{ lab_name }}"
-REGION="{{ region }}"
+# Account/subscription independence: this script bakes NOTHING account-specific.
+# The subscription is resolved at deploy time (ARM_SUBSCRIPTION_ID or the current
+# `az` login), the remote-state storage account is minted per-deployer, and the
+# region + VM size are overridable via env so the SAME generated lab deploys on
+# ANYONE's account/region without editing the spec:
+#   PF_REGION=<azure-region>   override the region (default: the spec's region)
+#   PF_VM_SIZE=<sku>           force a VM SKU your account/region supports
+#   PF_TFSTATE_RG=<rg-name>    override the remote-state resource group name
+REGION="${PF_REGION:-{{ region }}}"
 SUPERNET="{{ supernet }}"
 DOMAIN="{{ domain }}"
 WG_PORT="{{ wireguard_port }}"
 BASTION_VM="${LAB}-bastion"
-TFSTATE_RG="purpleforge-tfstate-rg"
+TFSTATE_RG="${PF_TFSTATE_RG:-purpleforge-tfstate-rg}"
 # Cheap-first candidate 1-2 vCPU SKUs (AZURE-DEPLOY-RUNBOOK.md step 2). The first
 # one that is unrestricted in $REGION for this subscription is used for every VM,
 # keeping cost minimal and avoiding the #1 deploy blocker (an invalid SKU).
@@ -51,6 +59,45 @@ preflight() {
   [ -n "$SUB" ] || die "could not resolve the subscription id (set ARM_SUBSCRIPTION_ID)"
   export ARM_SUBSCRIPTION_ID="$SUB"
   echo "  subscription: $SUB   region: $REGION"
+}
+
+# ---- infra secrets (mint the domain-admin + ansible keys if this is a share) -
+# Everything under generated/<lab>/ is versioned. Population USER passwords are
+# fixed at lab creation and committed (group_vars/all/population-secrets.yml) —
+# deploy NEVER (re)generates them. Only the two INFRA keys (domain admin +
+# ansible WinRM) are per-deployer and gitignored; when a lab is shared and
+# deployed without re-running `forge.py generate` they are absent, so we mint
+# them here. Matches scripts/forge.py generate_password (same alphabet +
+# complexity). Runs BEFORE terraform apply, which needs admin/ansible.
+ensure_secrets() {
+  log "0b. Infra secrets (domain admin + ansible WinRM)"
+  local tf_secrets="$TF_DIR/secrets.auto.tfvars.json"
+  local ans_secrets="$ANS_DIR/inventory/group_vars/all/secrets.yml"
+  [ -f "$ANS_DIR/inventory/group_vars/all/population-secrets.yml" ] \
+    || die "population-secrets.yml missing — it is committed with the lab; run 'forge.py generate {{ spec_rel }}' first"
+  if [ -f "$tf_secrets" ] && [ -f "$ans_secrets" ]; then
+    echo "  infra secrets already present — reusing (not a fresh share)"
+    return 0
+  fi
+  echo "  fresh share detected — minting the two infra keys (population passwords are committed, not touched)"
+  TF_OUT="$tf_secrets" ANS_OUT="$ans_secrets" python3 - <<'PY'
+import json, os, secrets, string
+alphabet = string.ascii_letters + string.digits + "!@#$%^&*-_="
+def pw(length=20):
+    while True:
+        p = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.islower() for c in p) and any(c.isupper() for c in p)
+                and any(c.isdigit() for c in p) and any(c in "!@#$%^&*-_=" for c in p)):
+            return p
+admin, ansible = pw(), pw()
+with open(os.environ["TF_OUT"], "w") as f:
+    json.dump({"admin_password": admin, "ansible_password": ansible}, f, indent=2); f.write("\n")
+os.makedirs(os.path.dirname(os.environ["ANS_OUT"]), exist_ok=True)
+with open(os.environ["ANS_OUT"], "w") as f:
+    f.write("# minted by deploy.sh — gitignored, never commit\n")
+    json.dump({"pf_admin_password": admin, "pf_ansible_password": ansible}, f, indent=2); f.write("\n")
+print("  minted domain-admin + ansible keys (population passwords untouched)")
+PY
 }
 
 # ---- state backend (invariant #4: never local) -----------------------------
@@ -102,9 +149,12 @@ for p in os.environ["SKU_PREF"].split():
     if p in avail:
         print(p); break
 ' )"
+  # PF_VM_SIZE (if exported) wins over auto-detect — lets any deployer force a
+  # SKU their own account/region supports without editing the lab.
+  SIZE="${PF_VM_SIZE:-$SIZE}"
   if [ -z "$SIZE" ]; then
-    SIZE="Standard_B2s"
-    warn "SKU auto-detect found nothing unrestricted; defaulting to $SIZE (check quota if apply fails — AZURE-DEPLOY-RUNBOOK.md step 2)"
+    SIZE="Standard_F1as_v7"
+    warn "SKU auto-detect found nothing unrestricted (or the az vm module is unavailable here); defaulting to $SIZE, a broadly-available cheap 1-vCPU SKU. If your account/region does not offer it, export PF_VM_SIZE=<sku> and re-run (AZURE-DEPLOY-RUNBOOK.md step 2)."
   fi
   echo "  chosen SKU (all VMs): $SIZE"
 
@@ -120,6 +170,12 @@ doc={
 open(sys.argv[1],"w").write(json.dumps(doc,indent=2)+"\n")
 PY
   echo "  wrote $sizes_file"
+
+  # Make the (possibly PF_REGION-overridden) region flow into terraform,
+  # overriding the location baked into terraform.tfvars.json at generate time.
+  # When PF_REGION is unset this equals the spec region, so it is a harmless no-op.
+  printf '{\n  "location": "%s"\n}\n' "$REGION" > "$TF_DIR/region.auto.tfvars.json"
+  echo "  wrote $TF_DIR/region.auto.tfvars.json (location=$REGION)"
 }
 
 # ---- terraform apply (with the flags the runbook proved necessary) ----------
@@ -220,6 +276,7 @@ run_site() {
 
 main() {
   preflight
+  ensure_secrets
   bootstrap_state
   pick_sizes
   if [ "${1:-}" = "--sizes-only" ]; then log "done (--sizes-only)"; exit 0; fi

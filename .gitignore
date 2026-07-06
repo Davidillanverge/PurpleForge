@@ -1,5 +1,23 @@
-# PurpleForge — generated laboratory artifacts (never versioned, contain secrets/state)
-generated/
+# PurpleForge — generated lab artifacts. The DEPLOYABLE ones are versioned on
+# purpose, so a lab can be shared and deployed WITHOUT re-running
+# `forge.py generate` (see scripts/forge.py write_lab_secrets + the deploy.sh
+# "ensure secrets" mint step). Only per-deploy strong secrets, the remote-state
+# binding, local overlays, and secret-bearing reports stay out of git.
+
+# strong secrets minted per deploy — NEVER commit
+generated/**/secrets.auto.tfvars.json
+generated/**/inventory/group_vars/all/secrets.yml
+generated/**/lab-report.md
+# (lab-manifest.json is also ignored globally below — it embeds population secrets)
+
+# deploy-time local state / overlays / keys (recreated by deploy.sh + terraform)
+generated/**/.terraform/
+generated/**/*.tfstate
+generated/**/*.tfstate.*
+generated/**/sizes.auto.tfvars.json
+generated/**/region.auto.tfvars.json
+generated/**/ssh_keys/
+generated/**/*.conf
 
 # Terraform
 **/.terraform/

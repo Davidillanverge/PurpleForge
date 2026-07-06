@@ -1,0 +1,73 @@
+# catalog/themes/pirates-caribbean.yml — see medieval-kingdom.yml's header
+# comment for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: pirates-caribbean
+name: "Pirates of the Caribbean"
+description: >
+  Crews, ships and factions from the Age of Piracy in the Caribbean standing in
+  for BadBlood's corporate departments — same non-literal, flavor-only use of a
+  well-known setting already established in this repo's other themes.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "crews/factions" here
+    - { code: BPL, name: "Black Pearl Crew" }
+    - { code: FDU, name: "Flying Dutchman Crew" }
+    - { code: QAR, name: "Queen Anne's Revenge Crew" }
+    - { code: EITC, name: "East India Trading Company" }
+    - { code: RNV, name: "Royal Navy" }
+    - { code: BRC, name: "Brethren Court" }
+    - { code: TRT, name: "Tortuga Port" }
+    - { code: PSM, name: "Port Royal Garrison" }
+
+  given_names_male:
+    - Jack
+    - Hector
+    - Will
+    - Davy
+    - Joshamee
+    - Bootstrap
+    - Cutler
+    - James
+    - Weatherby
+    - Sao
+    - Pintel
+    - Ragetti
+    - Teague
+    - Blackbeard
+    - Philip
+    - Salazar
+
+  given_names_female:
+    - Elizabeth
+    - Angelica
+    - Tia
+    - Anamaria
+    - Syrena
+    - Carina
+    - Scarlett
+    - Giselle
+
+  family_names:
+    - Sparrow
+    - Barbossa
+    - Turner
+    - Jones
+    - Gibbs
+    - Beckett
+    - Norrington
+    - Swann
+    - Feng
+    - Teague
+    - Dalma
+    - Smyth
+    - Ketwig
+    - Bootstrap
+    - Salazar
+    - Blackbeard
+
+extra_groups:
+  - { name: "Pirate Lords", description: "Brethren Court pirate lords — highly privileged, Domain Admins-adjacent" }
+  - { name: "Black Pearl Officers", description: "Black Pearl senior crew — privileged coordination tier" }
+  - { name: "East India Trading Company", description: "EITC executives — privileged corporate tier" }
+  - { name: "Tortuga Deckhands", description: "Contracted outsiders from Tortuga — isolated, low-trust accounts" }
+
+honey_account_naming: "deckhand.{n}"

@@ -8,7 +8,7 @@
 all:
   vars:
     ansible_user: ansible
-    ansible_password: "{{ ansible_password }}"
+    ansible_password: "{{ '{{ pf_ansible_password }}' }}"
     ansible_connection: winrm
     # basic, not ntlm — verified against a real deploy that cross-machine
     # WinRM/NTLM to a DOMAIN CONTROLLER over HTTPS fails ("the specified
@@ -46,7 +46,7 @@ all:
           domain_name: "{{ h.domain }}"
           netbios_name: "{{ h.netbios_name }}"
           domain_username: {{ h.domain_username }}
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
 {% endif %}
@@ -61,7 +61,7 @@ all:
           domain_name: "{{ h.domain_name }}"
           netbios_name: "{{ h.netbios_name }}"
           domain_username: {{ h.domain_username }}
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
 {% endif %}
@@ -75,11 +75,11 @@ all:
           domain: "{{ h.domain }}"
           domain_name: "{{ h.domain_name }}"
           netbios_name: "{{ h.netbios_name }}"
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           dns_domain: "{{ h.dns_domain }}"
           parent_domain: "{{ h.parent_domain }}"
           parent_domain_user: {{ h.parent_domain_user }}
-          parent_domain_password: "{{ h.parent_domain_password }}"
+          parent_domain_password: "{{ '{{ pf_admin_password }}' }}"
           source_dc: "{{ h.source_dc }}"
 {% endfor %}
 {% endif %}
@@ -90,10 +90,10 @@ all:
         {{ h.name }}:
           ansible_host: "{{ h.ip }}"
           domain_username: {{ h.domain_username }}
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           remote_forest: "{{ h.remote_forest }}"
           remote_admin: {{ h.remote_admin }}
-          remote_admin_password: "{{ h.remote_admin_password }}"
+          remote_admin_password: "{{ '{{ pf_admin_password }}' }}"
 {% endfor %}
 {% endif %}
 {% if groups.member_servers %}
@@ -105,7 +105,7 @@ all:
           hostname: "{{ h.name }}"
           member_domain: "{{ h.member_domain }}"
           domain_username: {{ h.domain_username }}
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
 {% endif %}
@@ -118,7 +118,7 @@ all:
           hostname: "{{ h.name }}"
           member_domain: "{{ h.member_domain }}"
           domain_username: {{ h.domain_username }}
-          domain_password: "{{ h.domain_password }}"
+          domain_password: "{{ '{{ pf_admin_password }}' }}"
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
 {% endif %}

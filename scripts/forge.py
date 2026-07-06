@@ -708,8 +708,10 @@ def render_azure_terraform(
             for m in machines
         ],
         "admin_username": WINDOWS_ADMIN_USERNAME,
-        "admin_password": admin_password,
-        "ansible_password": ansible_password,
+        # admin_password / ansible_password are NOT written here — they are the
+        # only strong secrets terraform needs, and they live in the gitignored
+        # secrets.auto.tfvars.json below so the committed tfvars stays shareable
+        # and account/secret-free (deploy.sh mints that file if it is missing).
         "jumpbox_username": WINDOWS_ADMIN_USERNAME,
         "wireguard_port": 51820,
         "wireguard_allowed_cidrs": ["0.0.0.0/0"],
@@ -717,6 +719,14 @@ def render_azure_terraform(
         "bastion_size": lab.get("bastion_size") or "Standard_B1s",
     }
     (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
+    # Strong secrets in a SEPARATE gitignored auto-tfvars overlay (terraform
+    # auto-loads *.auto.tfvars.json). Written for the author's own deploy; a
+    # sharer who never regenerates gets it minted by deploy.sh from
+    # secrets-manifest.json instead.
+    (dst / "secrets.auto.tfvars.json").write_text(
+        json.dumps({"admin_password": admin_password, "ansible_password": ansible_password}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     render_backend_config(lab["name"], dst)
 
 
@@ -762,9 +772,56 @@ def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list
         (TEMPLATES_DIR / "ansible" / "playbooks" / "ad-population.yml.j2").read_text(encoding="utf-8"),
         keep_trailing_newline=True,
     )
-    rendered = template.render(lab_name=spec["lab"]["name"], population_plans=plans)
+    # Render a password-STRIPPED copy so the committed ad-population.yml carries
+    # no per-user secret; the passwords flow in at runtime via pf_pop_secrets
+    # (gitignored group_vars/all/secrets.yml). The returned plans keep passwords
+    # for the (gitignored) manifest + attack-chain casting.
+    render_plans = [
+        {**plan, "users": [{k: v for k, v in u.items() if k != "password"} for u in plan["users"]]}
+        for plan in plans
+    ]
+    rendered = template.render(lab_name=spec["lab"]["name"], population_plans=render_plans)
     (dst / "ad-population.yml").write_text(rendered, encoding="utf-8")
     return plans
+
+
+def write_lab_secrets(out_dir: Path, admin_password: str, ansible_password: str, population_plans: list[dict]) -> int:
+    """Splits the lab's secrets by lifetime, all under the inventory-adjacent
+    group_vars/all/ so ansible auto-loads them for every host (win_ping + site.yml):
+
+      - population-secrets.yml (COMMITTED): the population USER passwords. They
+        are decided ONCE, here at lab creation, and travel WITH the lab, so every
+        deploy of a shared lab uses the SAME user passwords — deploy.sh never
+        (re)generates them. They are lab content, not an infra key.
+      - secrets.yml (GITIGNORED): the infra keys (domain admin + ansible WinRM).
+        Per-deployer; deploy.sh mints these if absent so a shared clone deploys
+        without regenerating. terraform's mirror of the same two values is
+        secrets.auto.tfvars.json (written by render_azure_terraform, gitignored).
+
+    secrets-manifest.json (committed) records which INFRA secrets deploy.sh must
+    mint. JSON is a valid YAML subset, so the .yml bodies are written as JSON to
+    dodge password-quoting pitfalls. Returns the population-user count."""
+    pop_secrets = {u["sam_account_name"]: u["password"] for plan in population_plans for u in plan["users"]}
+    gv = out_dir / "ansible" / "inventory" / "group_vars" / "all"
+    gv.mkdir(parents=True, exist_ok=True)
+    (gv / "population-secrets.yml").write_text(
+        "# Population user passwords — generated ONCE at lab creation, versioned\n"
+        "# with the lab. deploy.sh never regenerates these.\n"
+        + json.dumps({"pf_pop_secrets": pop_secrets}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    (gv / "secrets.yml").write_text(
+        "# GITIGNORED — infra keys minted per deploy (domain admin + ansible). Never commit.\n"
+        + json.dumps({"pf_admin_password": admin_password, "pf_ansible_password": ansible_password}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "secrets-manifest.json").write_text(
+        json.dumps({"infra_secrets": ["admin_password", "ansible_password"]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return len(pop_secrets)
 
 
 # Intentionally weak, dictionary-crackable passwords for the roastable accounts —
@@ -1849,6 +1906,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     theme = load_theme(spec["lab"]["theme"])
     ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, out_dir)
     population_plans = render_ad_population(theme, spec, ansible_groups, out_dir)
+    write_lab_secrets(out_dir, admin_password, ansible_password, population_plans)
 
     catalog = load_vuln_catalog()
     attack_chain_mode = spec.get("attack_chain", {}).get("mode", "independent")
@@ -1887,11 +1945,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
 
     print(f"OK: generated {spec_path.name} -> {out_dir.relative_to(REPO_ROOT) if out_dir.is_relative_to(REPO_ROOT) else out_dir}")
-    print(f"  wrote {manifest_path.name}")
+    print(f"  wrote {manifest_path.name} (gitignored — has secrets)")
     print("  wrote lab-report.md (contains generated secrets — gitignored, never commit)")
     print("  wrote ansible/playbooks/verify.yml (post-deploy check, run separately after site.yml — see README)")
-    print(f"  wrote terraform/{provider}/ (terraform.tfvars.json has generated secrets — gitignored, never commit)")
-    print("  wrote ansible/ (inventory/hosts.yml has generated secrets — gitignored, never commit)")
+    print(f"  wrote terraform/{provider}/ (secret-free & shareable; strong secrets isolated in the gitignored secrets.auto.tfvars.json)")
+    print("  wrote ansible/ (hosts.yml + ad-population.yml secret-free; population passwords fixed at creation in the COMMITTED group_vars/all/population-secrets.yml; infra keys in the gitignored group_vars/all/secrets.yml)")
+    print("  wrote secrets-manifest.json (committed — lists the INFRA secrets deploy.sh mints if absent; population passwords are never minted at deploy)")
     total_users = sum(len(p["users"]) for p in population_plans)
     total_groups = sum(len(p["groups"]) for p in population_plans)
     total_computers = sum(len(p["computers"]) for p in population_plans)

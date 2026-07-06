@@ -11,7 +11,10 @@
 set -uo pipefail
 
 LAB="{{ lab_name }}"
-REGION="{{ region }}"
+# Account/subscription independent: the subscription is resolved below from
+# ARM_SUBSCRIPTION_ID or the current `az` login, and the region honours the same
+# PF_REGION override deploy.sh uses (default: the spec's region).
+REGION="${PF_REGION:-{{ region }}}"
 SPEC_REL="{{ spec_rel }}"
 BASTION_VM="${LAB}-bastion"
 
