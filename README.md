@@ -97,40 +97,54 @@ it, `generate` still renders every file, it just skips the plan step.
 
 ## The `lab-spec.yml` flow
 
-```
-/new-lab "2 domains medieval, ESC1+Kerberoast, Azure, Elastic + Defender AV + CIS L1"
-/generate shadow-keep --dry-run
-/generate shadow-keep
-/deploy shadow-keep          # hardening baseline -> inject gaps -> EDR/telemetry -> clean snapshot
-/validate shadow-keep        # does the path exist? prevented/detected/not seen? -> lab-report.md
-/destroy shadow-keep
+Only the **first** step (natural-language → spec) needs AI. Everything after it is
+a deterministic `forge.py` subcommand a human can run unattended:
+
+```bash
+# AI (or hand-write the spec): NL description -> specs/<lab>.yml
+/new-lab "2 domains medieval, ESC1+Kerberoast, Azure, Defender AV + CIS L1"
+
+# no AI from here down — just forge.py:
+python3 scripts/forge.py generate  specs/shadow-keep.yml   # render TF + Ansible + deploy.sh/teardown.sh + report
+python3 scripts/forge.py guardrail specs/shadow-keep.yml   # invariant gate (PASS/FAIL) before any spend
+python3 scripts/forge.py deploy    specs/shadow-keep.yml   # state backend -> auto-size -> apply -> WireGuard -> site.yml
+python3 scripts/forge.py validate  specs/shadow-keep.yml --run   # vulns applied + exploitable -> validation-report.md
+python3 scripts/forge.py teardown  specs/shadow-keep.yml   # destroy to cost-zero + verify nothing is left
 ```
 
-- **`/new-lab`** — turns a natural-language description into a validated
-  `specs/<name>.yml` (asks for the defense profile/stack if not specified).
-- **`/generate`** — runs every generation skill and the hardening⟷vuln
+- **`generate`** — runs every generation skill and the hardening⟷vuln
   reconciliation, producing `generated/<lab>/` (Terraform, Ansible inventory
-  and playbooks, `lab-manifest.json`).
-- **`/deploy`** — preflight checks, `terraform apply`, then playbooks in
-  order: infra → AD topology → population/theming → **hardening baseline** →
-  **selective vulnerability injection (the gaps)** → **EDR + telemetry** →
-  **clean-state snapshot** (always taken *before* any attack is run).
-- **`/validate`** — SharpHound→BloodHound (path exists?), PingCastle
-  (posture), and Atomic Red Team techniques, classifying each as
-  **PREVENTED / DETECTED / NOT SEEN** in `lab-report.md`.
-- **`/destroy`** — `terraform destroy` plus a zero-cost check.
+  and playbooks, `lab-manifest.json`, `lab-report.md`, and the **`deploy.sh` /
+  `teardown.sh`** that make the deploy a no-AI script).
+- **`deploy`** — runs the generated `deploy.sh` after a guardrail gate:
+  bootstraps remote state, **auto-picks the cheapest unrestricted VM SKU** for
+  the region, `terraform apply` (with the ARM-lag retry flags), brings up the
+  WireGuard tunnel, and runs `site.yml` in the mandated order (infra → AD
+  topology → population/theming → **hardening baseline** → **selective vuln
+  injection** → EDR). Idempotent; re-run on any transient failure.
+- **`validate --run`** — drives the live checks itself (nxc/netexec over the
+  tunnel): auto-confirms the roasting vulns, and for the interactive ones
+  (ACL/cert/SYSVOL abuse) emits the exact command to run and marks them
+  `REQUIRES-HUMAN` — no by-hand results JSON. Writes `validation-report.md`.
+- **`teardown`** — runs `teardown.sh`: starts any auto-shutdown-deallocated
+  VMs, `terraform destroy`, sweeps stray snapshots, verifies the resource
+  group is gone (cost-zero), and cleans up local session state.
+- **`/new-lab`** — the one AI step: turns a natural-language description into a
+  validated `specs/<name>.yml` (or write the spec by hand).
 
-> **Status:** `lab-spec` (validation/reconciliation/manifest) and, for Azure,
-> `network-topology` + `infra-azure` + `ad-topology` + `ad-theming` +
-> `vuln-injection` + `defensive-controls` (Terraform + Ansible generation,
-> themed/seeded deterministic population (`scripts/population.py`), catalog-driven vulnerability injection,
+> **Status:** the full Azure lifecycle is deterministic today —
+> `generate` → `guardrail` → `deploy` → `validate --run` → `teardown`, all as
+> `forge.py` subcommands (no AI in the loop after the spec exists). `lab-spec`
+> (validation/reconciliation/manifest), `network-topology`, `infra-azure`,
+> `ad-topology`, `ad-theming`, `vuln-injection`, and `defensive-controls`
+> (Terraform + Ansible generation, themed/seeded deterministic population via
+> `scripts/population.py`, catalog-driven vulnerability injection,
 > ansible-lockdown hardening with reconciliation-derived skip_rules, EDR,
-> deception) are implemented end-to-end. **`detection-lab` is
-> deliberately not built** — this project stops at PREVENT/RESPOND, it does
-> not stand up a SIEM. `infra-aws`, `purple-validation`, and the slash
-> commands themselves land in later phases. You can already validate+reconcile
-> a spec, or generate real Terraform/Ansible + themed population + injected
-> vulns + hardening/EDR/deception for a single-domain Azure lab, directly:
+> deception) are implemented end-to-end, and `deploy`/`teardown` render and run
+> the generated `deploy.sh`/`teardown.sh`. **`detection-lab` is deliberately not
+> built** — this project stops at PREVENT/RESPOND (hardening + Defender AV), it
+> does not stand up a SIEM. `infra-aws` is the main remaining gap. Try any of
+> the deterministic steps directly:
 >
 > ```bash
 > python3 scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml
@@ -411,21 +425,27 @@ tested against a live Azure subscription. `site.yml`'s own header comment
 carries this same note — don't assume "reset between exercises" works
 because the playbook runs cleanly today.
 
-## Deploying a generated lab (manual, until `/deploy` exists)
+## Deploying a generated lab
 
-`generate` only renders artifacts into `generated/<lab>/` — gitignored,
-reproducible from the spec at any time, never itself the deployment. No
-`/deploy` command exists yet to chain the steps below automatically; today
-they're run by hand, in this order.
+`generate` renders artifacts into `generated/<lab>/` — gitignored, reproducible
+from the spec at any time — **including `deploy.sh` and `teardown.sh`**. The
+normal path is one command:
 
-> **First real deploy done, and it's a checklist now, not a discovery
-> exercise.** [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is a
-> procedural, copy-pasteable version of the steps below, with every gotcha
-> hit during that deploy (quota, image generation mismatches, a Windows
-> Firewall default that silently blocks cross-subnet WinRM, an NTLM/CBT
-> quirk against domain controllers, and more) folded in as a preemptive step
-> or a documented already-fixed callout. Start there for an actual Azure
-> deploy; keep reading here for the conceptual walkthrough.
+```bash
+python3 scripts/forge.py deploy specs/<lab>.yml      # or: ./generated/<lab>/deploy.sh
+```
+
+`deploy` runs the guardrail gate, then the generated `deploy.sh`, which chains
+every step below (state backend → auto-sizing → `terraform apply` → WireGuard →
+Ansible `site.yml`) idempotently, folding in every gotcha from the first real
+deploy. The manual walkthrough below is kept for understanding what the script
+does and for hand-running a single step; you don't need to run these by hand.
+
+> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is the exhaustive
+> symptom→cause reference (quota, image generation mismatches, a Windows
+> Firewall default that silently blocks cross-subnet WinRM, an NTLM/CBT quirk
+> against domain controllers, and more). `deploy.sh` already encodes the happy
+> path plus the retries; reach for the runbook only when a step fails.
 
 ### Prerequisites
 
@@ -608,9 +628,11 @@ python3 scripts/forge.py destroy specs/examples/simpsons-lab-azure.yml
 
 ### What's still manual / missing
 
-- Steps 1–4 above (deploy) are not chained by any `/deploy` command yet.
-- Adding a WireGuard peer (step 3) has no helper script.
-- No clean-state snapshot exists after step 4 and before an attack — see
-  the "Known gap" note just above.
-- `forge.py destroy` isn't wired to a `/destroy` slash command yet — run it
-  directly.
+- The deploy steps are now chained by `forge.py deploy` (the generated
+  `deploy.sh`); the walkthrough above is for understanding/one-off steps.
+- Adding the WireGuard peer is automated inside `deploy.sh` (step 4 of the
+  script); the manual commands are kept for reference.
+- No clean-state snapshot is taken automatically after provisioning and before
+  an attack — see the "Known gap" note above. `deploy.sh` does not snapshot;
+  `teardown.sh` does sweep any hand-made snapshots so they don't block teardown.
+- `infra-aws` is unimplemented — Azure only today.

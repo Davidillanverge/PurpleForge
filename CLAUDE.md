@@ -48,6 +48,13 @@ El hardening se aplica ANTES de inyectar las vulnerabilidades intencionadas
 (los "gaps" ya han sido reconciliados en el spec), y el snapshot del estado
 limpio se toma ANTES de que `/validate` dispare cualquier técnica de ataque.
 
+Este orden es determinista y sin IA: `forge.py generate` emite `deploy.sh`
+(y `teardown.sh`) en `generated/<lab>/`, y `forge.py deploy` los ejecuta tras
+la puerta `guardrail`. `site.yml` fija el orden hardening→vulns; `deploy.sh`
+encadena backend de estado → auto-sizing (SKU más barato sin restricción) →
+`terraform apply` → túnel WireGuard → `site.yml`. La validación es
+`forge.py validate --run` y el desmontaje a coste cero es `forge.py teardown`.
+
 ## Convenciones del repositorio
 
 - `specs/` es la única fuente de verdad editada a mano; todo lo que cuelga de

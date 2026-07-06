@@ -4,14 +4,17 @@
 Implements the parts of the harness that must be deterministic and testable
 rather than left to an LLM: schema validation, semantic checks, defense.profile
 default resolution, IP assignment, cost estimation and the hardening<->vuln
-reconciliation (see cmd_lab_spec / the reconcile helpers below). Invoked by the
-lab-spec skill (.claude/skills/lab-spec/SKILL.md); later phases add generate/
-deploy/validate/destroy subcommands here as those skills are implemented.
+reconciliation (see cmd_lab_spec / the reconcile helpers below), plus the
+deterministic, no-AI lifecycle: generate (renders Terraform + Ansible +
+deploy.sh/teardown.sh + lab-report.md), guardrail, deploy, validate --run,
+teardown, destroy, ad-inventory.
 
 Usage:
     scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml
-    scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml --check-only
     scripts/forge.py generate specs/examples/single-dc-azure.yml --plan
+    scripts/forge.py deploy   specs/examples/single-dc-azure.yml
+    scripts/forge.py validate specs/examples/single-dc-azure.yml --run
+    scripts/forge.py teardown specs/examples/single-dc-azure.yml
 """
 from __future__ import annotations
 
@@ -1041,6 +1044,35 @@ def render_site_playbook(has_vuln_injection: bool, out_dir: Path) -> None:
     (dst / "site.yml").write_text(template.render(has_vuln_injection=has_vuln_injection), encoding="utf-8")
 
 
+def render_deploy_scripts(
+    spec: dict, manifest: dict, machines: list[dict], network_plan: dict, out_dir: Path
+) -> None:
+    """Emit generated/<lab>/{deploy.sh,teardown.sh} — the deterministic, no-AI
+    deploy/teardown path. These are the single source of truth for the exact
+    commands (the lab-report just points at them); `forge.py deploy`/`teardown`
+    are thin wrappers that run these after a guardrail gate. Everything the
+    scripts encode is the battle-tested procedure from AZURE-DEPLOY-RUNBOOK.md,
+    turned from prose into an idempotent, retrying script."""
+    provider = spec["lab"]["provider"]
+    roles = sorted({m["role"] for m in machines})
+    context = {
+        "lab_name": spec["lab"]["name"],
+        "provider": provider,
+        "region": spec["lab"]["region"],
+        "supernet": network_plan["supernet"],
+        "domain": spec["forest"][0]["domain"],
+        "wireguard_port": network_plan.get("wireguard_port", 51820),
+        "roles_json": json.dumps(roles),
+        "spec_rel": manifest["source_spec"],
+    }
+    env = jinja2.Environment(keep_trailing_newline=True)
+    for name in ("deploy.sh", "teardown.sh"):
+        template = env.from_string((TEMPLATES_DIR / f"{name}.j2").read_text(encoding="utf-8"))
+        path = out_dir / name
+        path.write_text(template.render(**context), encoding="utf-8")
+        path.chmod(0o755)
+
+
 # ---------------------------------------------------------------------------
 # defensive-controls: hardening (ansible-lockdown, with skip_rules derived
 # from the reconciliation), EDR, and deception. See
@@ -1387,6 +1419,66 @@ def verify_azure_teardown(lab_name: str) -> bool:
         file=sys.stderr,
     )
     return True  # ambiguous, not positive evidence of failure — flagged, not silently passed
+
+
+# ---------------------------------------------------------------------------
+# deploy / teardown: thin, deterministic wrappers around the generated
+# deploy.sh / teardown.sh (rendered by render_deploy_scripts). The scripts are
+# the single source of truth for the exact commands; these commands add the
+# guardrail gate (never spend on a FAIL) and re-generate the artifacts if
+# they're stale, then hand off to the script. "No AI" means a human can run
+# either the script directly or this subcommand — both do the same thing.
+# ---------------------------------------------------------------------------
+
+def _run_self(subcommand: list[str]) -> int:
+    """Invoke this same forge.py as a subprocess (reuse a full command, e.g. the
+    guardrail gate, without refactoring it into a callable that fakes argparse)."""
+    return subprocess.run([sys.executable, str(Path(__file__).resolve()), *subcommand]).returncode
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    spec = load_yaml(spec_path)
+    lab_name = spec["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    manifest_path = lab_dir / "lab-manifest.json"
+    deploy_sh = lab_dir / "deploy.sh"
+
+    if not manifest_path.exists() or not deploy_sh.exists():
+        print(f"error: {lab_dir} has no lab-manifest.json / deploy.sh — run "
+              f"`forge.py generate {args.spec}` first.", file=sys.stderr)
+        return 2
+
+    if not args.skip_guardrail:
+        print("=== guardrail gate (invariants must PASS before any cloud spend) ===")
+        if _run_self(["guardrail", str(spec_path), *(["--out-dir", str(lab_dir)] if args.out_dir else [])]) != 0:
+            print("FAIL: guardrail did not pass — refusing to deploy. Fix the spec, or "
+                  "re-run with --skip-guardrail (not recommended).", file=sys.stderr)
+            return 1
+
+    print(f"\n=== DEPLOY {lab_name} — this creates BILLABLE Azure resources ===")
+    print(f"    running {deploy_sh.relative_to(REPO_ROOT) if deploy_sh.is_relative_to(REPO_ROOT) else deploy_sh}")
+    extra = ["--sizes-only"] if args.sizes_only else []
+    return subprocess.run(["bash", str(deploy_sh), *extra]).returncode
+
+
+def cmd_teardown(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    lab_name = load_yaml(spec_path)["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    teardown_sh = lab_dir / "teardown.sh"
+    if not teardown_sh.exists():
+        print(f"warning: {teardown_sh} not found — falling back to `forge.py destroy` "
+              f"(no VM-start / snapshot-sweep gotcha handling).", file=sys.stderr)
+        return _run_self(["destroy", str(spec_path), "--yes", *(["--out-dir", str(lab_dir)] if args.out_dir else [])])
+    print(f"=== TEARDOWN {lab_name} — destroy to cost-zero + verify ===")
+    return subprocess.run(["bash", str(teardown_sh)]).returncode
 
 
 def cmd_destroy(args: argparse.Namespace) -> int:
@@ -1770,6 +1862,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     deception_plan = plan_deception(resolved_defense, theme, ansible_groups)
     render_defensive_controls(hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir)
     render_site_playbook(bool(planned_vulns), out_dir)
+    render_deploy_scripts(spec, manifest, machines, network_plan, out_dir)
 
     manifest["machines_flat"] = machines
     manifest["ansible_groups"] = ansible_groups
@@ -1816,6 +1909,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         if e["status"] != "implemented":
             print(f"      note: edr '{e['product']}' — {e['reason']}")
     print("  wrote ansible/playbooks/site.yml (run this, not the individual playbooks — enforces hardening-before-vulns)")
+    print("  wrote deploy.sh + teardown.sh (deterministic no-AI deploy/teardown — run directly or via `forge.py deploy`/`teardown`)")
 
     if args.plan:
         return run_terraform_plan(out_dir / "terraform" / provider)
@@ -1994,7 +2088,149 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
 # detection coverage (PREVENIDO/DETECTADO/NO VISTO) — that is detection-lab's job.
 # A vuln's whole purpose is to be reachable, so its own validation is about
 # presence + exploitability, not whether a SIEM would catch it.
-VALID_RESULT = ("YES", "NO", "PARTIAL")
+VALID_RESULT = ("YES", "NO", "PARTIAL", "REQUIRES-HUMAN", "PENDING")
+
+
+# ---------------------------------------------------------------------------
+# validate --run: drive the live checks ourselves instead of asking a human to
+# fill a results JSON. What's safely automatable over the tunnel (the two
+# roasting primitives — crisp output: a hash or nothing) is auto-confirmed with
+# nxc/netexec; every other vuln is an ACL abuse, a cert enrollment or a SYSVOL
+# read whose "did it actually work" step is genuinely interactive, so we emit
+# the exact ready-to-run command and mark it REQUIRES-HUMAN rather than guess.
+# We NEVER print a false "not applied": an ambiguous/failed check is PENDING.
+# nxc is the signing-aware client the rest of this project standardized on
+# (the hardening enforces LDAP signing, which rejects plain ldap3 binds).
+# ---------------------------------------------------------------------------
+
+# vuln id -> (nxc roast flag, description). Both APPLIED and EXPLOITABLE are
+# proven at once: a returned Kerberos hash means the account is roastable.
+ROAST_FLAGS = {
+    "asreproast": ("--asreproast", "AS-REP hash"),
+    "kerberoasting": ("--kerberoasting", "TGS-REP (service ticket) hash"),
+}
+
+# vuln id -> (LDAP filter, human label). A non-empty result proves the artifact
+# LANDED (APPLIED); actually abusing it stays a human step (EXPLOITABLE).
+LDAP_APPLIED_FILTERS = {
+    "readable-gmsa": ("(objectClass=msDS-GroupManagedServiceAccount)", "gMSA object present"),
+    "unconstrained-delegation": ("(&(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=8192)))", "non-DC principal trusted for unconstrained delegation"),
+    "constrained-delegation": ("(msDS-AllowedToDelegateTo=*)", "msDS-AllowedToDelegateTo set"),
+    "shadow-credentials": ("(msDS-KeyCredentialLink=*)", "msDS-KeyCredentialLink set"),
+    "rbcd-abuse": ("(msDS-AllowedToActOnBehalfOfOtherIdentity=*)", "RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity) set"),
+}
+
+
+def _nxc_bin() -> str | None:
+    return shutil.which("nxc") or shutil.which("netexec")
+
+
+def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tuple[list[dict], list[str]]:
+    """Execute the live per-vuln checks over the tunnel and return confirmed rows
+    + findings — the same shape merge_validation_results produces, so
+    render_validation_report consumes it unchanged. Reads the domain-admin
+    password from the generated terraform.tfvars.json (the RID-500 Administrator
+    shares it — see render_lab_report)."""
+    tfvars_path = lab_dir / "terraform" / "azure" / "terraform.tfvars.json"
+    if not tfvars_path.exists():
+        raise SpecError(f"{tfvars_path} not found — generate + deploy the lab first (need the live credentials).")
+    tv = json.loads(tfvars_path.read_text(encoding="utf-8"))
+    admin_pass = tv.get("admin_password")
+    if not admin_pass:
+        raise SpecError("terraform.tfvars.json has no admin_password.")
+    admin_user = "Administrator"  # the domain's RID-500, not the local admin_username
+
+    machines = manifest.get("machines_flat", [])
+    by_name = {m["name"]: m for m in machines}
+    dc_by_domain: dict[str, str] = {}
+    for m in machines:
+        if m["role"] == "domain-controller":
+            dc_by_domain.setdefault(m["domain"], m["ip"])
+
+    nxc = _nxc_bin()
+    confirmed: list[dict] = []
+    findings: list[str] = []
+
+    for r in rows:
+        vid = r["id"]
+        host = by_name.get(r["run_on"], {})
+        domain = host.get("domain") or (machines[0]["domain"] if machines else "")
+        dc_ip = dc_by_domain.get(domain) or (machines and dc_by_domain.get(machines[0]["domain"])) or ""
+        row = dict(r)
+        row.update(applied="PENDING", exploitable="PENDING", evidence="")
+
+        if not nxc:
+            row["evidence"] = "nxc/netexec not on PATH — install it to auto-validate; command left for you below."
+            row["applied"] = row["exploitable"] = "REQUIRES-HUMAN"
+        elif not dc_ip:
+            row["evidence"] = f"no DC IP for domain {domain!r} in the manifest."
+            row["applied"] = row["exploitable"] = "PENDING"
+        elif vid in ROAST_FLAGS:
+            flag, label = ROAST_FLAGS[vid]
+            out = _nxc_run([nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, flag, "--kdcHost", dc_ip])
+            got_hash = out is not None and ("$krb5" in out)
+            if got_hash:
+                row.update(applied="YES", exploitable="YES", evidence=f"nxc returned a {label}.")
+            elif out is None:
+                row.update(applied="PENDING", exploitable="PENDING", evidence="nxc did not run (missing/timeout) — retry the command below.")
+            else:
+                row.update(applied="NO", exploitable="NO", evidence=f"nxc {flag} returned no hash (KDC_ERR_ETYPE_NOSUPP? — see AZURE-DEPLOY-RUNBOOK.md step 7).")
+        elif vid in LDAP_APPLIED_FILTERS:
+            filt, label = LDAP_APPLIED_FILTERS[vid]
+            out = _nxc_run([nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, "--query", filt, ""])
+            if out is None:
+                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence="nxc did not run — retry the command below.")
+            elif _nxc_query_nonempty(out):
+                row.update(applied="YES", exploitable="REQUIRES-HUMAN", evidence=f"LDAP confirms {label}; exploit it manually (command below).")
+            else:
+                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence=f"LDAP query for {label} returned nothing parseable — confirm by hand.")
+        else:
+            row.update(applied="REQUIRES-HUMAN", exploitable="REQUIRES-HUMAN",
+                       evidence="ACL/SYSVOL/registry state — confirm with the command below (bloodhound-python / nxc / dacledit).")
+
+        row["command"] = _live_command(vid, dc_ip, domain, admin_user)
+        confirmed.append(row)
+
+        if row["applied"] == "NO":
+            findings.append(f"{vid}: config NOT applied — injection did not land (expected: {r['applied_signature']}).")
+        elif row["applied"] in ("PENDING", "REQUIRES-HUMAN"):
+            findings.append(f"{vid}: needs a manual check — run: {row['command']}")
+        elif row["exploitable"] == "NO":
+            findings.append(f"{vid}: applied but NOT exploitable — a control may have neutralized it ({row['evidence']}).")
+
+    return confirmed, findings
+
+
+def _nxc_run(cmd: list[str]) -> str | None:
+    """Run an nxc/netexec command, returning combined stdout+stderr, or None if it
+    could not run at all (never raises — a live check failing is data, not a crash)."""
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        return (res.stdout or "") + (res.stderr or "")
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _nxc_query_nonempty(out: str) -> bool:
+    """Heuristic: netexec's ldap --query prints one line per matched attribute
+    (containing 'CN=', a DN, or 'Response:'/'objectClass' markers) after its
+    banner. Treat any such content line as a non-empty result — deliberately
+    conservative so we never claim 'not applied' on unfamiliar output."""
+    markers = ("CN=", "DC=", "objectClass", "sAMAccountName", "msDS-", "Response for object")
+    return any(any(mk in line for mk in markers) for line in out.splitlines())
+
+
+def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str) -> str:
+    """The exact copy-pasteable command an operator runs to confirm a vuln the
+    harness can't safely auto-confirm. Uses <PASS> as a placeholder — the real
+    password is in lab-report.md / terraform.tfvars.json, not echoed here."""
+    dc_ip = dc_ip or "<dc-ip>"
+    base = f"nxc ldap {dc_ip} -u {admin_user} -p '<PASS>' -d {domain}"
+    if vid in ROAST_FLAGS:
+        return f"{base} {ROAST_FLAGS[vid][0]} out --kdcHost {dc_ip}"
+    if vid in LDAP_APPLIED_FILTERS:
+        return f"{base} --query \"{LDAP_APPLIED_FILTERS[vid][0]}\" \"\""
+    return f"bloodhound-python -d {domain} -u {admin_user} -p '<PASS>' -dc {dc_ip} -c All  # then inspect the {vid} edge in BloodHound"
 
 
 def build_vuln_check(vuln: dict, catalog_entry: dict) -> dict:
@@ -2071,13 +2307,15 @@ def render_validation_report(lab_name: str, confirmed: list[dict], findings: lis
         f"- Config applied: **{applied_yes}/{n}**",
         f"- Exploitable: **{exploit_yes}/{n}**",
         "",
-        "| Vuln | ATT&CK | Host | Applied | Exploitable | Evidence |",
-        "|---|---|---|---|---|---|",
+        "| Vuln | ATT&CK | Host | Applied | Exploitable | Evidence | Manual command (if any) |",
+        "|---|---|---|---|---|---|---|",
     ]
     for r in confirmed:
+        needs_cmd = r["applied"] in ("REQUIRES-HUMAN", "PENDING") or r["exploitable"] in ("REQUIRES-HUMAN", "PENDING")
+        cmd = f"`{r['command']}`" if (needs_cmd and r.get("command")) else "—"
         lines.append(
             f"| {r['id']} | {r['mitre']} | {r['run_on']} | **{r['applied']}** | "
-            f"**{r['exploitable']}** | {r.get('evidence') or '—'} |"
+            f"**{r['exploitable']}** | {r.get('evidence') or '—'} | {cmd} |"
         )
     lines += ["", "## Findings", ""]
     lines += [f"- {f}" for f in findings] if findings else ["- None — every injected vuln is applied and exploitable."]
@@ -2165,6 +2403,24 @@ def cmd_validate(args: argparse.Namespace) -> int:
     print(f"OK: wrote {lab_dir / 'validation-plan.json'}, validation-plan.md, validation-results.template.json")
     for r in rows:
         print(f"    - {r['id']} [{r['mitre']}] on {r['run_on']}: applied? [{r['applied_signature']}]  exploitable? [{r['exploit_check']}]")
+
+    # --run: do the live checks ourselves and write the confirmed report directly,
+    # collapsing the fill-a-JSON-by-hand loop into one command.
+    if getattr(args, "run", False):
+        try:
+            confirmed, findings = run_live_validation(rows, manifest, lab_dir)
+        except SpecError as e:
+            print(f"error: cannot run live validation: {e}", file=sys.stderr)
+            return 1
+        report_path = render_validation_report(lab_name, confirmed, findings, lab_dir)
+        applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
+        exploit_yes = sum(1 for r in confirmed if r["exploitable"] == "YES")
+        need_human = sum(1 for r in confirmed if "REQUIRES-HUMAN" in (r["applied"], r["exploitable"]) or "PENDING" in (r["applied"], r["exploitable"]))
+        print(f"OK: wrote {report_path} (live run)")
+        print(f"  auto-confirmed applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {need_human} need a manual command (listed in the report + findings)")
+        for r in confirmed:
+            print(f"    - {r['id']}: applied={r['applied']} exploitable={r['exploitable']}")
+        return 0
 
     if args.results:
         results_path = Path(args.results).resolve()
@@ -2279,7 +2535,19 @@ def main() -> int:
     p_generate.add_argument("--plan", action="store_true", help="Also run terraform init/validate/plan after rendering (needs terraform on PATH; needs cloud credentials for a full plan)")
     p_generate.set_defaults(func=cmd_generate)
 
-    p_destroy = sub.add_parser("destroy", help="terraform destroy a generated lab + verify no Azure resource group is left behind")
+    p_deploy = sub.add_parser("deploy", help="Deterministic no-AI deploy: guardrail gate, then run the generated deploy.sh (state backend, auto-sizing, terraform apply, WireGuard, Ansible site.yml)")
+    p_deploy.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
+    p_deploy.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_deploy.add_argument("--skip-guardrail", action="store_true", help="Skip the pre-deploy guardrail gate (not recommended — it enforces the CLAUDE.md invariants before spend)")
+    p_deploy.add_argument("--sizes-only", action="store_true", help="Only (re)write sizes.auto.tfvars.json (auto-pick a cheap unrestricted SKU) and exit — no apply")
+    p_deploy.set_defaults(func=cmd_deploy)
+
+    p_teardown = sub.add_parser("teardown", help="Deterministic no-AI teardown: run the generated teardown.sh (start deallocated VMs, destroy, sweep stray snapshots, verify cost-zero, local cleanup)")
+    p_teardown.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
+    p_teardown.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_teardown.set_defaults(func=cmd_teardown)
+
+    p_destroy = sub.add_parser("destroy", help="terraform destroy a generated lab + verify no Azure resource group is left behind (lower-level; `teardown` wraps this with the deallocated-VM/snapshot gotchas)")
     p_destroy.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_destroy.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_destroy.add_argument("--yes", action="store_true", help="Pass -auto-approve to terraform destroy (default: terraform's own interactive confirmation prompt)")
@@ -2301,6 +2569,7 @@ def main() -> int:
     p_validate.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_validate.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_validate.add_argument("--results", help="Path to a filled validation-results JSON (from the live run); merges it into the confirmed validation-report.md")
+    p_validate.add_argument("--run", action="store_true", help="Run the live checks over the tunnel (nxc/netexec) and write validation-report.md directly — no by-hand JSON. Auto-confirms the roasting vulns; emits a ready-to-run command for the interactive ones.")
     p_validate.set_defaults(func=cmd_validate)
 
     p_guardrail = sub.add_parser(
