@@ -124,6 +124,13 @@ PY
 # ---- state backend (invariant #4: never local) -----------------------------
 bootstrap_state() {
   log "1. Remote Terraform state backend"
+  # A shared/committed lab ships WITHOUT backend.hcl (it is gitignored — it gets
+  # patched with the deployer's own state storage account, which must not leak
+  # into git). Recreate the static placeholder if absent so a fresh clone works;
+  # the block below then mints the per-deployer storage account and patches it in.
+  [ -f "$TF_DIR/backend.hcl" ] || printf \
+    'resource_group_name  = "%s"\nstorage_account_name = "purpleforgetfstate"\ncontainer_name       = "tfstate"\nkey                  = "%s.tfstate"\n' \
+    "$TFSTATE_RG" "$LAB" > "$TF_DIR/backend.hcl"
   az group create -n "$TFSTATE_RG" -l "$REGION" -o none
   local SA
   SA="$(python3 -c "import re;print(re.search(r'storage_account_name\s*=\s*\"([^\"]+)\"', open('$TF_DIR/backend.hcl').read()).group(1))")"

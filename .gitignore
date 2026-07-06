@@ -11,6 +11,7 @@ generated/**/lab-report.md
 # (lab-manifest.json is also ignored globally below — it embeds population secrets)
 
 # deploy-time local state / overlays / keys (recreated by deploy.sh + terraform)
+generated/**/backend.hcl
 generated/**/.terraform/
 generated/**/*.tfstate
 generated/**/*.tfstate.*

@@ -447,6 +447,45 @@ does and for hand-running a single step; you don't need to run these by hand.
 > against domain controllers, and more). `deploy.sh` already encodes the happy
 > path plus the retries; reach for the runbook only when a step fails.
 
+### Zero-to-deployed: deploy an already-built lab from a fresh clone
+
+Every lab under `generated/<lab>/` is committed and self-contained, so someone
+who just cloned the repo can deploy it **without running `forge.py generate`**
+(and without touching `specs/` or any AI step). Full path from nothing:
+
+```bash
+# 1. Clone WITH submodules — vendor/ (GOAD, ansible-lockdown, ...) holds the
+#    Ansible roles the deploy mounts; a plain clone is missing them.
+git clone --recurse-submodules <this-repo>
+cd PurpleForge        # or: git submodule update --init --recursive
+
+# 2. Host tools (once): terraform >=1.5, az CLI, docker, wireguard-tools,
+#    openssl, curl, python3. Ansible runs inside a python:3.10-slim container
+#    that deploy.sh starts for you — you do NOT install ansible on the host.
+#    Allow passwordless sudo for the WireGuard bring-up (deploy.sh runs
+#    `sudo wg-quick`):
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
+  | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
+
+# 3. Point at YOUR Azure account (see the next section for the two ways):
+az login && az account set --subscription <your-subscription-id>
+
+# 4. Deploy the lab — one command, no generate step:
+./generated/pirates-lab/deploy.sh          # any lab under generated/
+#   optional, without editing anything:
+#   PF_REGION=westeurope PF_VM_SIZE=Standard_B2s ./generated/pirates-lab/deploy.sh
+
+# 5. Tear down to cost-zero when done:
+./generated/pirates-lab/teardown.sh
+```
+
+`deploy.sh` mints its own remote-state storage account and the infra keys
+(domain admin + Ansible WinRM) on this first run, auto-picks a valid VM SKU for
+your region, brings up the WireGuard tunnel, and runs the full Ansible
+`site.yml`. The population **user** passwords ship committed with the lab
+(`ansible/inventory/group_vars/all/population-secrets.yml`), so the lab is
+identical for everyone who deploys it. Nothing account-specific is baked in.
+
 ### Deploying a shared lab on your own (or another) Azure account
 
 A generated lab is account/subscription-independent: `deploy.sh` bakes **no**
