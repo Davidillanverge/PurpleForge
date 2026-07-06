@@ -1,0 +1,54 @@
+{
+  "lab": "pirates-lab",
+  "summary": {
+    "applied": 0,
+    "exploitable": 0,
+    "total": 3
+  },
+  "findings": [
+    "asreproast: config NOT applied \u2014 injection did not land (expected: DontReqPreauth).",
+    "kerberoasting: config NOT applied \u2014 injection did not land (expected: HasSPN).",
+    "dcsync-acl: needs a manual check \u2014 run: bloodhound-python -d blackpearl.local -u Administrator -p '<PASS>' -dc 10.157.1.10 -c All  # then inspect the dcsync-acl edge in BloodHound"
+  ],
+  "vulns": [
+    {
+      "id": "asreproast",
+      "mitre": "T1558.004",
+      "run_on": "dc01",
+      "neutralization": "clear",
+      "applied_signature": "DontReqPreauth",
+      "exploit_check": "T1558.004",
+      "intended_path": "Una cuenta de usuario tiene activo el flag DONT_REQ_PREAUTH (UF_DONT_REQUIRE_PREAUTH). Cualquier atacante, incluso sin credenciales previas, puede solicitar un AS-REP para esa cuenta; la parte del AS-REP cifrada con el hash de la cuenta se crackea offline igual que un TGS de Kerberoasting.",
+      "applied": "NO",
+      "exploitable": "NO",
+      "evidence": "nxc --asreproast returned no hash (KDC_ERR_ETYPE_NOSUPP? \u2014 see AZURE-DEPLOY-RUNBOOK.md step 7).",
+      "command": "nxc ldap 10.157.1.10 -u Administrator -p '<PASS>' -d blackpearl.local --asreproast out --kdcHost 10.157.1.10"
+    },
+    {
+      "id": "kerberoasting",
+      "mitre": "T1558.003",
+      "run_on": "dc01",
+      "neutralization": "clear",
+      "applied_signature": "HasSPN",
+      "exploit_check": "T1558.003",
+      "intended_path": "Cualquier usuario autenticado del dominio puede solicitar un TGS para una cuenta con SPN registrado; el ticket va cifrado con el hash de la contrase\u00f1a de esa cuenta de servicio. Si la contrase\u00f1a es d\u00e9bil/corta se crackea offline y se obtiene el control de la cuenta (a menudo sobreprivilegiada).",
+      "applied": "NO",
+      "exploitable": "NO",
+      "evidence": "nxc --kerberoasting returned no hash (KDC_ERR_ETYPE_NOSUPP? \u2014 see AZURE-DEPLOY-RUNBOOK.md step 7).",
+      "command": "nxc ldap 10.157.1.10 -u Administrator -p '<PASS>' -d blackpearl.local --kerberoasting out --kdcHost 10.157.1.10"
+    },
+    {
+      "id": "dcsync-acl",
+      "mitre": "T1003.006",
+      "run_on": "dc01",
+      "neutralization": "clear",
+      "applied_signature": "DCSync",
+      "exploit_check": "T1003.006",
+      "intended_path": "Una cuenta de bajo privilegio recibe (por error de delegaci\u00f3n, o de forma intencionada para el laboratorio) los derechos extendidos DS-Replication-Get-Changes y DS-Replication-Get-Changes-All sobre el objeto de dominio. Puede entonces invocar MS-DRSR (mimikatz lsadump::dcsync) y volcar cualquier hash NTLM del dominio, incluido krbtgt.",
+      "applied": "REQUIRES-HUMAN",
+      "exploitable": "REQUIRES-HUMAN",
+      "evidence": "ACL/SYSVOL/registry state \u2014 confirm with the command below (bloodhound-python / nxc / dacledit).",
+      "command": "bloodhound-python -d blackpearl.local -u Administrator -p '<PASS>' -dc 10.157.1.10 -c All  # then inspect the dcsync-acl edge in BloodHound"
+    }
+  ]
+}

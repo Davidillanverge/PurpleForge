@@ -1,0 +1,74 @@
+---
+# Vuln inject task-file: asreproast (T1558.004)
+# Reuses Vulnerable-AD's VulnAD-ASREPRoasting technique (Set-ADAccountControl
+# -DoesNotRequirePreAuth $true) but on a NAMED deterministic account rather
+# than a random user — {{ vuln_asrep_account }} is either a fresh synthetic
+# account (independent mode) or an existing real population object cast by
+# resolve_attack_chain() (scripts/forge.py) in ctf mode. Either way this task
+# only resets its password to the crackable value below and never touches
+# identity fields (OU, description, etc.) win_domain_user wasn't given —
+# ad-population.yml already created every population object with those set.
+# userAccountControl's DONT_REQ_PREAUTH bit isn't cleanly settable through
+# win_domain_user, so a separate win_powershell task flips it with the exact
+# Set-ADAccountControl call Vulnerable-AD uses.
+- name: "asreproast | reset {{ vuln_asrep_account }}'s password to the crackable value"
+  win_domain_user:
+    name: "{{ vuln_asrep_account }}"
+    password: "{{ vuln_asrep_password }}"
+    password_never_expires: true
+    state: present
+    domain_username: "{{ domain_username }}"
+    domain_password: "{{ domain_password }}"
+
+# See kerberoasting.yml's comment on the equivalent task — same real-deploy
+# finding, same fix, applies equally to AS-REQ (pre-auth-less) ticket
+# issuance as to TGS-REQ (SPN) ticket issuance: an account with
+# msDS-SupportedEncryptionTypes left unset got KDC_ERR_ETYPE_NOSUPP on a
+# fully-patched Windows Server 2016 KDC.
+- name: "asreproast | ensure {{ vuln_asrep_account }} actually supports being AS-REP roasted (RC4+AES ticket encryption)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties msDS-SupportedEncryptionTypes
+      if ($u.'msDS-SupportedEncryptionTypes' -ne 28) {
+        Set-ADUser -Identity $Account -Replace @{'msDS-SupportedEncryptionTypes' = 28}
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_asrep_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "asreproast | disable Kerberos pre-authentication on {{ vuln_asrep_account }}"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $u = Get-ADUser -Identity $Account -Properties DoesNotRequirePreAuth
+      if (-not $u.DoesNotRequirePreAuth) {
+        Set-ADAccountControl -Identity $Account -DoesNotRequirePreAuth $true
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+    parameters:
+      Account: "{{ vuln_asrep_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "asreproast | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      AS-REP roasting gap live: {{ vuln_asrep_account }} has DONT_REQ_PREAUTH,
+      so an unauthenticated attacker can request an AS-REP and crack it offline.

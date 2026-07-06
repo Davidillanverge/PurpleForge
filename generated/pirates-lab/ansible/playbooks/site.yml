@@ -1,0 +1,8 @@
+
+---
+- import_playbook: ad-topology.yml
+- import_playbook: ad-population.yml
+- import_playbook: defensive-controls.yml
+
+- import_playbook: vuln-injection.yml
+

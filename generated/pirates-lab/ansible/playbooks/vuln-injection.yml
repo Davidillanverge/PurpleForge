@@ -1,0 +1,54 @@
+
+---
+
+- name: "PurpleForge | vuln-injection | asreproast (T1558.004) -> dc01"
+  hosts: dc01
+  gather_facts: false
+  vars:
+    vuln_files_dir: "{{ playbook_dir }}/files"
+
+    vuln_asrep_account: "Elizabeth_Feng"
+
+    vuln_asrep_password: "Summer2024!"
+
+  tasks:
+    # AS-REP Roasting - cuenta con preautenticación Kerberos deshabilitada
+    # intended path: Una cuenta de usuario tiene activo el flag DONT_REQ_PREAUTH (UF_DONT_REQUIRE_PREAUTH). Cualquier atacante, incluso sin credenciales previas, puede solicitar un AS-REP para esa cuenta; la parte del AS-REP cifrada con el hash de la cuenta se crackea offline igual que un TGS de Kerberoasting.
+    # neutralization: clear (no selected hardening control neutralizes this vuln)
+    - name: "asreproast | inject"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../vulns/asreproast.yml"
+
+- name: "PurpleForge | vuln-injection | kerberoasting (T1558.003) -> dc01"
+  hosts: dc01
+  gather_facts: false
+  vars:
+    vuln_files_dir: "{{ playbook_dir }}/files"
+
+    vuln_kerberoast_account: "Elizabeth_Feng"
+
+    vuln_kerberoast_password: "Summer2024!"
+
+  tasks:
+    # Kerberoasting - cuenta de servicio con SPN y contraseña débil
+    # intended path: Cualquier usuario autenticado del dominio puede solicitar un TGS para una cuenta con SPN registrado; el ticket va cifrado con el hash de la contraseña de esa cuenta de servicio. Si la contraseña es débil/corta se crackea offline y se obtiene el control de la cuenta (a menudo sobreprivilegiada).
+    # neutralization: clear (no selected hardening control neutralizes this vuln)
+    - name: "kerberoasting | inject"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../vulns/kerberoasting.yml"
+
+- name: "PurpleForge | vuln-injection | dcsync-acl (T1003.006) -> dc01"
+  hosts: dc01
+  gather_facts: false
+  vars:
+    vuln_files_dir: "{{ playbook_dir }}/files"
+
+    vuln_dcsync_account: "Elizabeth_Feng"
+
+    vuln_dcsync_password: "Summer2024!"
+
+  tasks:
+    # DCSync vía ACL - derechos de replicación otorgados a una cuenta no privilegiada
+    # intended path: Una cuenta de bajo privilegio recibe (por error de delegación, o de forma intencionada para el laboratorio) los derechos extendidos DS-Replication-Get-Changes y DS-Replication-Get-Changes-All sobre el objeto de dominio. Puede entonces invocar MS-DRSR (mimikatz lsadump::dcsync) y volcar cualquier hash NTLM del dominio, incluido krbtgt.
+    # neutralization: clear (no selected hardening control neutralizes this vuln)
+    - name: "dcsync-acl | inject"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../vulns/dcsync-acl.yml"
+

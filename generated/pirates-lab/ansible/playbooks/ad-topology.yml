@@ -1,0 +1,76 @@
+---
+# PurpleForge — ad-topology playbook.
+# Every role invoked here is reused verbatim from vendor/GOAD/ansible/roles
+# (resolved via generated/<lab>/ansible/ansible.cfg's roles_path) — this file
+# only sequences them against the inventory groups that
+# scripts/forge.py generate produces from lab-manifest.json. Do not copy
+# GOAD's role *content* into templates/ansible/roles/; wrap, don't fork.
+#
+# Order matters: root domain DCs must exist before additional DCs/child
+# domains/member-servers/workstations can join them.
+
+- name: PurpleForge | ad-topology | promote root domain controllers
+  hosts: domain_controllers
+  gather_facts: false
+  pre_tasks:
+    # Azure's azurerm_windows_virtual_machine rejects "Administrator" as
+    # admin_username outright, so every VM's local admin is named
+    # local_admin_username (see scripts/forge.py's WINDOWS_ADMIN_USERNAME)
+    # instead — verified against a real deploy that when win_domain (in the
+    # domain_controller role below) creates a brand-new forest, the domain's
+    # RID-500 "Administrator" account is seeded from THAT local account and
+    # keeps its name, not renamed to "Administrator". GOAD's own
+    # domain_controller role then hardcodes "Administrator" as the member for
+    # the Enterprise Admins/Domain Admins group-membership tasks (and this
+    # repo's own domain_username/lab-report assume "Administrator" too), so
+    # without this rename — done BEFORE domain creation, while it's still a
+    # plain local account rename, not a domain object — those tasks fail with
+    # "Could not find domain user ... named Administrator".
+    - name: Rename local admin account to Administrator before forest creation
+      ansible.windows.win_shell: |
+        if (Get-LocalUser -Name '{{ local_admin_username }}' -ErrorAction SilentlyContinue) {
+          Rename-LocalUser -Name '{{ local_admin_username }}' -NewName 'Administrator'
+        }
+      changed_when: false
+  roles:
+    - common
+    - { role: settings/hostname }
+    - domain_controller
+
+- name: PurpleForge | ad-topology | promote additional DCs in an existing domain
+  hosts: domain_controllers_additional
+  gather_facts: false
+  roles:
+    - common
+    - { role: settings/hostname }
+    - domain_controller_slave
+
+- name: PurpleForge | ad-topology | join child domains (parent-child trust is automatic in AD)
+  hosts: child_domain_controllers
+  gather_facts: false
+  roles:
+    - common
+    - { role: settings/hostname }
+    - child_domain
+
+- name: PurpleForge | ad-topology | establish non-parent-child trusts (external/forest/shortcut)
+  hosts: trust_anchors
+  gather_facts: false
+  roles:
+    - trusts
+
+- name: PurpleForge | ad-topology | join member servers
+  hosts: member_servers
+  gather_facts: false
+  roles:
+    - common
+    - { role: settings/hostname }
+    - member_server
+
+- name: PurpleForge | ad-topology | join workstations
+  hosts: workstations
+  gather_facts: false
+  roles:
+    - common
+    - { role: settings/hostname }
+    - commonwkstn
