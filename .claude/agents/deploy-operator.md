@@ -7,7 +7,7 @@ description: >
   (hardening -> vuln injection -> EDR/telemetry) and takes the clean snapshot
   BEFORE any attack. The only agent holding cloud credentials and terraform/
   ansible. Highest-risk agent: it spends money and mutates cloud, so it runs only
-  after policy-guardrail PASS and the human approval gate. Also drives teardown
+  after a `forge.py guardrail` PASS and the human approval gate. Also drives teardown
   (forge.py destroy) to cost-zero.
 tools: Bash, Read, Grep, Glob
 model: sonnet
@@ -48,8 +48,8 @@ confirmation; a 200 means it is not actually gone). Clean up local session state
 
 ## Rules
 
-- Never deploy without a policy-guardrail PASS and human approval relayed by the
-  orchestrator. Approval for one lab never carries to another.
+- Never deploy without a `forge.py guardrail` PASS and human approval relayed by
+  the main-thread orchestration. Approval for one lab never carries to another.
 - Secrets rendered into generated/ (credentials, lab-manifest.json) are never
   committed. Report status and any manual step the human must run (e.g. an
   interactive `az login` — suggest they run it via `! <cmd>`), but do not paper

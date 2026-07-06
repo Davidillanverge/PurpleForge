@@ -73,8 +73,9 @@ have neutralized it).
 
 ## Output
 
-`validation-report.md` is the deliverable; hand it to `report-writer`, which folds
-it into `lab-report.md`. Do not fire attacks before the clean snapshot exists.
+`validation-report.md` is the intermediate deliverable; `purple-validator` folds
+it + the manifest into `lab-report.md` in the same pass. Do not fire attacks
+before the clean snapshot exists.
 
 ## What is / isn't automated
 

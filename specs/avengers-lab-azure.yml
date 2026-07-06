@@ -1,6 +1,6 @@
 # PurpleForge — Avengers-themed Azure purple lab.
 # Topology + infra + defense only. Vulnerabilities and the CTF attack chain are
-# filled in by the redteam-designer agent (vulnerabilities: [] for now).
+# filled in by the lab-designer agent (vulnerabilities: [] for now).
 #
 # SIZING / QUOTA (see AZURE-DEPLOY-RUNBOOK.md):
 #   This subscription has a HARD 4-total-vCPU-per-region quota in eastus.

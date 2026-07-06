@@ -75,7 +75,7 @@ paraphrasing, they're already precise. Exit code 2 = spec file not found.
    pricing calculator — say so if the user asks for precision.
 6. **Eval image expiry** — informational note that Windows evaluation images
    expire 180 days after install for any `os:` used in `machines[]`.
-7. **Reconciliation** (see `DISENO-purpleforge.md` §7.3) — cross-references
+7. **Reconciliation** (invariant #3 in `CLAUDE.md`) — cross-references
    every selected `vulnerabilities[]` id's `neutralized_by` list against the
    resolved `defense.hardening` (baseline + fixed toggle controls:
    `laps`, `lsa_protection`, `credential_guard`, `smb_signing`,

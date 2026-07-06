@@ -80,6 +80,11 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Cloud budget alert threshold in USD. Required so cost is tracked as code."
+        },
+        "bastion_size": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cloud VM size for the WireGuard bastion, overriding the default (Azure: 'Standard_B1s'). Set it when the subscription's regional vCPU quota restricts the B-series (the #1 deploy blocker) — no need to touch templates. When absent, forge.py's default applies."
         }
       }
     },
@@ -168,6 +173,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Use an existing image instead of the marketplace publisher/offer/sku for `os` — e.g. a golden workstation image with an EDR agent pre-installed. Azure: a full resource ID, either a managed image (.../Microsoft.Compute/images/<name>) or a Shared Image Gallery version (.../Microsoft.Compute/galleries/<gallery>/images/<definition>/versions/<version>) — consumed by infra-azure today. AWS: intended to hold an AMI id (ami-xxxxxxxx) once infra-aws exists; not consumed by anything yet. `os` is still required when image_id is set — it still drives which ansible-lockdown role/OS-specific behavior applies, independent of which image backs the VM."
+        },
+        "vm_size": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cloud VM size for this machine, overriding the per-role default (Azure: e.g. 'Standard_B2s'). Set it here when a role needs a bigger box or the subscription's regional vCPU quota forces a specific SKU (the #1 deploy blocker) — no need to touch templates. When absent, windows.tf's per-role default applies. On a quota-restricted subscription, verify the size exists in the region with the Azure MCP / `az vm list-skus` before deploy."
         }
       }
     },

@@ -3,7 +3,7 @@ description: Tear down a lab to cost-zero and verify nothing is left behind
 argument-hint: <lab-name or specs/<lab>.yml>
 ---
 
-Act as `forge-orchestrator` for DESTROY of: $ARGUMENTS
+Orchestrate DESTROY from the MAIN thread for: $ARGUMENTS
 
 Destroy is hard to reverse — confirm the human intends to tear down THIS lab
 before proceeding. Then dispatch `deploy-operator` in teardown mode:

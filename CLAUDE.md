@@ -5,8 +5,9 @@ into complete automation (Terraform + Ansible + PowerShell) for deploying
 Purple-Team-instrumented Active Directory labs on AWS or Azure. It wraps and reuses
 mature upstream projects (`vendor/`: GOAD, Splunk Attack Range, BadBlood,
 Vulnerable-AD, ansible-lockdown) rather than reinventing Windows/AD deployment or
-hardening. See `DISENO-purpleforge.md` for the full design and `PROMPT-claude-code.md`
-for the build brief this repo was generated from.
+hardening. `README.md` documents usage; `.claude/agents/README.md` describes the
+agent system; `scripts/forge.py` holds the deterministic logic (compile,
+reconcile, IP plan, cost, guardrail, destroy).
 
 ## Reglas invariantes
 

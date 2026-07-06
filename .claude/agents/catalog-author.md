@@ -10,7 +10,7 @@ description: >
   neutralized_by + a valid mitre_attack. Runs OUTSIDE any lab lifecycle — it
   produces reusable catalog content, not a deployment.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch
-model: opus
+model: sonnet
 ---
 
 # catalog-author

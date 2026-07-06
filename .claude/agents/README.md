@@ -1,71 +1,66 @@
 # PurpleForge — sistema de agentes
 
-Este directorio implementa PurpleForge como un **sistema de agentes** montado
-sobre lo que ya existe (spec-driven, catálogo, `scripts/forge.py`). No sustituye
-el modelo spec-driven: lo envuelve. Las *skills* de `.claude/skills/` siguen
-siendo el cuerpo de conocimiento; cada agente **posee una fase** del ciclo de
-vida, con su propia ventana de contexto y sus herramientas, y **delega la lógica
-determinista a `forge.py`** — nunca la reimplementa (lo prohíbe `CLAUDE.md`).
+PurpleForge se orquesta desde el **hilo principal** (los comandos `/new-lab`,
+`/deploy`, `/validate`, `/destroy`), que enruta el trabajo a un roster mínimo de
+agentes especialistas y **delega toda la lógica determinista a
+`scripts/forge.py`** — nunca la reimplementa (lo prohíbe `CLAUDE.md`). Las
+*skills* de `.claude/skills/` son el cuerpo de conocimiento que los agentes
+envuelven.
 
-## Por qué agentes y no solo skills
+## Por qué tan pocos agentes
 
-- **Aislamiento de contexto**: los cientos de líneas de output de `terraform
-  apply` no contaminan la ventana del diseñador de topología.
-- **Paralelismo**: topología, población y diseño ofensivo son independientes y
-  editan bloques disjuntos del mismo `specs/<lab>.yml`.
-- **Puertas humanas claras**: hay un punto único, obligatorio, antes de gastar
-  dinero (deploy) y antes de destruir.
+Un agente solo se justifica cuando **aísla contexto ruidoso** (p. ej. cientos de
+líneas de `terraform apply`) o cuando **posee credenciales cloud**. El diseño
+(topología + población + ofensiva) es edición coordinada de UN fichero
+`specs/<lab>.yml`, así que va en un solo agente en vez de tres arrancando en
+frío. Las puertas deterministas (compilar, invariantes) son comandos de
+`forge.py` que corre el hilo principal — no necesitan agente.
 
-## Roster
+## Roster (4 agentes)
 
 | Agente | Fase | Escribe | Modelo |
 |---|---|---|---|
-| `forge-orchestrator` | conductor (hilo principal) | — | opus |
-| `topology-architect` | diseño: infra + topología AD | `specs/<lab>.yml` | opus |
-| `domain-designer` | diseño: población/temática | `specs/<lab>.yml`, `catalog/themes/*` | sonnet |
-| `redteam-designer` | diseño: selección de vulns + cadena de ataque | `specs/<lab>.yml` | opus |
-| `catalog-author` | autoría de catálogo (fuera del ciclo) | `catalog/**` | opus |
-| `spec-compiler` | puerta determinista | `generated/<lab>/lab-manifest.json` | haiku |
-| `policy-guardrail` | puerta de invariantes | reporte PASS/FAIL | sonnet |
-| `deploy-operator` | ejecución: deploy + teardown | `generated/**`, cloud | sonnet |
-| `purple-validator` | ejecución: validación | resultados | sonnet |
-| `report-writer` | ejecución: reporte | `generated/<lab>/lab-report.md` | sonnet |
+| `lab-designer` | diseño completo: infra+topología, población/temática, selección de vulns + cadena | `specs/<lab>.yml`, `catalog/themes/*` | sonnet |
+| `deploy-operator` | ejecución: deploy + teardown (único con credenciales cloud) | `generated/**`, cloud | sonnet |
+| `purple-validator` | ejecución: validación (aplicada+explotable) + `lab-report.md` | `generated/<lab>/*` | sonnet |
+| `catalog-author` | autoría de catálogo (fuera del ciclo) | `catalog/**` | sonnet |
 
-Mapa a las 8 funcionalidades pedidas: (1) nuevas vulns/hardening/configs →
-`catalog-author`; (2) topología → `topology-architect`; (3) usuarios/grupos/OUs
-→ `domain-designer` (+ `scripts/population.py`, determinista); (4) selección de
-vulns → `redteam-designer`; (5) cadenas de ataque → `redteam-designer`; (6)
-despliegue → `deploy-operator`; (7) validación → `purple-validator`; (8) reporte
-→ `report-writer`.
+Las 8 funcionalidades pedidas: (1) nuevas vulns/hardening/configs →
+`catalog-author`; (2) topología, (3) usuarios/grupos/OUs, (4) selección de vulns,
+(5) cadenas de ataque → **`lab-designer`** (+ `scripts/population.py`,
+determinista); (6) despliegue → `deploy-operator`; (7) validación y (8) reporte →
+**`purple-validator`**.
 
-> **Nota de consolidación**: selección (4) y cadena (5) están fusionadas en
-> `redteam-designer` porque una cadena necesita objetos de población concretos y
-> compartir contexto reduce handoffs. Si prefieres separarlos, divide este
-> agente en `vuln-selector` + `attack-chain-designer`.
+## Qué corre el hilo principal (sin agente)
+
+- **Compilar**: `python3 scripts/forge.py lab-spec specs/<lab>.yml` → el único
+  productor de `generated/<lab>/lab-manifest.json` (valida + reconcilia + IPs +
+  coste).
+- **Guardrail**: `python3 scripts/forge.py guardrail specs/<lab>.yml` → PASS/FAIL
+  determinista de las reglas invariantes (#1 aislamiento, #2 acoplamiento purple,
+  #3 reconciliación, #4 coste/estado). El #6 (uso autorizado) lo imprime como
+  REVIEW para el juicio humano/LLM. Si sale FAIL, el hilo principal NO despliega.
 
 ## Contratos y estado compartido
 
-1. Los agentes de **diseño solo escriben `specs/<lab>.yml`** (fuente de verdad
-   editable y revisable por humano). No tocan `generated/`.
-2. **`spec-compiler` es el único** que produce `lab-manifest.json`. Todos los
-   demás lo consumen; nadie relee el YAML crudo.
-3. Los agentes de **ejecución solo actúan desde `generated/` + manifest**.
-4. El handoff es **por fichero**, no por contexto pasado a mano.
+1. El diseño **solo escribe `specs/<lab>.yml`** (fuente de verdad editable y
+   revisable por humano). No toca `generated/`.
+2. `forge.py lab-spec` es el **único** que produce `lab-manifest.json`; todo lo
+   demás lo consume, nadie relee el YAML crudo.
+3. La ejecución **solo actúa desde `generated/` + manifest**.
+4. El handoff es **por fichero**, no por contexto pegado a mano.
 
 ## Flujo del ciclo de vida
 
 ```
 /new-lab "<descripción NL>"
-  └─ orchestrator → DISEÑO en paralelo:
-        topology-architect ─┐
-        domain-designer     ─┤→ convergen en specs/<lab>.yml
-        redteam-designer    ─┘  (selección solo si el user no fijó vulns)
-  └─ spec-compiler   → lab-manifest.json   (valida + reconcilia + IPs + coste)
-  └─ policy-guardrail → PASS/FAIL invariantes
+  └─ hilo principal → lab-designer  → converge specs/<lab>.yml
+  └─ forge.py lab-spec              → lab-manifest.json (valida + reconcilia + IPs + coste)
+  └─ forge.py guardrail             → PASS/FAIL invariantes (+ REVIEW #6)
   ═══ PUERTA HUMANA: revisar spec + coste + reconciliación, aprobar ═══
 /deploy    → deploy-operator  (hardening → vulns → EDR → SNAPSHOT limpio)
-/validate  → purple-validator → report-writer  (por vuln: config APLICADA + EXPLOTABLE)
-/destroy   → deploy-operator (forge.py destroy → coste cero)
+/validate  → purple-validator (por vuln: aplicada + explotable → validation-report.md → lab-report.md)
+/destroy   → deploy-operator  (forge.py destroy → coste cero)
 ```
 
 `catalog-author` corre **fuera** de este ciclo: produce contenido reutilizable
@@ -74,28 +69,23 @@ despliegue → `deploy-operator`; (7) validación → `purple-validator`; (8) re
 ## Dónde vive la seguridad
 
 - La lógica peligrosa/determinista está en `forge.py`, no en prompts
-  (reconciliación, plan de IPs, coste, `destroy` con verificación de coste cero).
-- `policy-guardrail` es puerta **obligatoria** antes de `deploy`; el orchestrator
-  no invoca a `deploy-operator` si falla.
+  (reconciliación, plan de IPs, coste, `guardrail`, `destroy` con verificación de
+  coste cero).
+- El **guardrail es obligatorio** antes de `deploy`; el hilo principal no invoca
+  a `deploy-operator` si `forge.py guardrail` sale FAIL.
 - Herramientas mínimas por agente: solo `deploy-operator` y `purple-validator`
-  tienen credenciales cloud y terraform/ansible; los de diseño no.
+  tocan la infra viva; `lab-designer` y `catalog-author` no tienen credenciales.
 - Puerta humana antes de gastar y antes de destruir. La aprobación no se hereda
   entre labs.
 
-## Estado de implementación
+## MCP
 
-Ya existen (skills + `forge.py`): lab-spec, network-topology, infra-azure,
-ad-topology, ad-theming, vuln-injection, defensive-controls; y en `forge.py`:
-`lab-spec`, `generate`, `destroy`, `ad-inventory`.
+`mcp/azure.json` (symlink desde `.mcp.json`) añade el Azure MCP Server oficial:
+`lab-designer` verifica `vm_size`/región/quota antes de escribir el spec y
+`deploy-operator` comprueba quota antes de gastar y coste-cero tras `destroy`.
+Ver `mcp/README.md`.
 
-La skill `purple-validation` ya existe, con su parte determinista en
-`forge.py validate`: por cada vuln inyectada, la **firma AD que prueba que la
-config se aplicó** y el **check de explotabilidad**; con `--results` escribe el
-informe confirmado (APLICADA/EXPLOTABLE por vuln). La validación NO es una matriz
-de detección (eso sería `detection-lab`, aún no implementada). La fase en vivo
-(consultas/exploits con `nxc` sobre el túnel) la ejecuta el agente siguiendo la
-skill.
+## Aún sin construir
 
-Siguen sin existir: `detection-lab` (SIEM+telemetría) e `infra-aws` (solo hay
-Azure). Los agentes ya apuntan a ese flujo; construir esas piezas es el siguiente
-paso.
+`detection-lab` (SIEM+telemetría) e `infra-aws` (hoy solo Azure). La validación
+NO es una matriz de detección — eso sería `detection-lab`.

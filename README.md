@@ -13,9 +13,8 @@ reference for instrumentation), **Vulnerable-AD** (vulnerability
 primitives), and **ansible-lockdown**
 (CIS/STIG hardening roles).
 
-See `DISENO-purpleforge.md` for the full design rationale and
-`PROMPT-claude-code.md` for the build brief this repository was generated
-from.
+See `.claude/agents/README.md` for the agent system and `CLAUDE.md` for the
+invariants and deploy order. The deterministic logic lives in `scripts/forge.py`.
 
 ## Philosophy
 
@@ -126,8 +125,7 @@ it, `generate` still renders every file, it just skips the plan step.
 > `vuln-injection` + `defensive-controls` (Terraform + Ansible generation,
 > themed/seeded deterministic population (`scripts/population.py`), catalog-driven vulnerability injection,
 > ansible-lockdown hardening with reconciliation-derived skip_rules, EDR,
-> deception) are implemented end-to-end — see `PROMPT-claude-code.md`
-> §"Orden de trabajo" for the phase-by-phase roadmap. **`detection-lab` is
+> deception) are implemented end-to-end. **`detection-lab` is
 > deliberately not built** — this project stops at PREVENT/RESPOND, it does
 > not stand up a SIEM. `infra-aws`, `purple-validation`, and the slash
 > commands themselves land in later phases. You can already validate+reconcile

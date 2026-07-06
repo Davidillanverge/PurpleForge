@@ -1,0 +1,183 @@
+# PurpleForge — ACL-abuse lab (Star Wars / Galactic Empire theme).
+# Topology + infra + defense only. population:, vulnerabilities: and
+# attack_chain: are placeholders — the lab-designer fills in
+# population, vulnerabilities and attack_chain after this.
+#
+# INTENT: exercise 5 catalog vulns —
+#   writable-gpo, adminsdholder-acl, readable-gmsa, machine-account-quota
+#     -> domain-level / account-shape, land on the DC.
+#   esc4-template-acl -> requires_services: [adcs], so it routes to the
+#     member-server declaring the `adcs` service below.
+#
+# SIZING / QUOTA (see AZURE-DEPLOY-RUNBOOK.md):
+#   This subscription has a HARD 4-total-vCPU-per-region quota in eastus.
+#   Standard_F1as_v7 (1 vCPU, 4GB) is the only confirmed-unrestricted SKU here,
+#   so every VM must be 1 vCPU. Budget:
+#     domain-controller (1) + member-server/adcs (1) + WireGuard bastion (1) = 3 vCPU
+#   leaving 1 vCPU of headroom. NO workstation: adding one would sit exactly at
+#   the 4-vCPU cap with zero headroom (the runbook's #1 deploy blocker).
+lab:
+  name: acl-abuse-lab
+  theme: star-wars
+  provider: azure
+  region: eastus   # hard 4-total-vCPU-per-region quota on this subscription; Standard_F1as_v7 (1 vCPU) is the only unrestricted SKU here — DC + member-server + WireGuard bastion must fit in 4 vCPU. See AZURE-DEPLOY-RUNBOOK.md
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 60
+
+forest:
+  - domain: empire.local
+    netbios: EMPIRE
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    # Server 2019 (not 2016): the target subscription only offers NVMe-only VM
+    # sizes (Fasv7), and the Server 2016 image is SCSI-only so it cannot boot on
+    # them. Domain functional_level stays 2016 above. See AZURE-DEPLOY-RUNBOOK.md.
+    os: windows-server-2019
+    domain: empire.local
+    count: 1
+  - role: member-server
+    # ADCS host: esc4-template-acl requires_services: [adcs] routes here.
+    # Server 2019 for the same NVMe-only (Fasv7) reason as the DC above.
+    os: windows-server-2019
+    domain: empire.local
+    services: [adcs]
+    count: 1
+
+# Population narrative (lab-designer): a lean Imperial administration on
+# empire.local. Theme is catalog/themes/star-wars.yml ("Galactic Republic"
+# vocabulary, used non-literally as Imperial-era faction flavor — see that
+# file's own header comment); its 8 houses (IMP/REB/JED/SIT/TRD/BHG/CLN/SEN)
+# become the department-coded OU branches population.py always builds
+# (Admin/Tier 0-2/Staging + per-house Tier1/Tier2/Stage/People OUs), and its
+# extra_groups give the tier-0-adjacent privileged layer this ACL-abuse lab
+# needs to cast into:
+#   - "Jedi Council" / "Sith Lords"       -> Domain-Admins-adjacent (tier 0)
+#   - "Rebel Alliance Command"            -> privileged coordination tier
+#   - "Bounty Hunters Guild"              -> low-trust, isolated outsiders
+# realistic density on 40 users -> ~8 bulk groups + the 4 curated ones above
+# (12 total) and ~16 computers — the same sizing star-wars-lab-azure.yml
+# already validated for this theme. ~97% (~39) of the 40 users are ordinary
+# person accounts (population.py's fixed 3% service-account ratio), giving
+# lab-designer's resolve_attack_chain() a wide, collision-free pool of
+# real low-priv users to cast the 4 account-shape vulns onto
+# (writable-gpo, adminsdholder-acl, readable-gmsa, esc4-template-acl);
+# machine-account-quota is domain-level (target_shape: none) and needs no
+# cast. Single domain / single DC, so all 40 users land in empire.local's
+# one population plan (no per-domain split).
+# seed 66 = "Order 66" — the Empire's own purge of the Jedi tier-0 layer,
+# thematically apt for a lab about abusing privileged ACLs/delegation.
+population:
+  users: 40
+  density: realistic
+  seed: 66
+
+# =============================================================================
+# CTF ATTACK-CHAIN DESIGN — one ACL-abuse path: low-priv foothold -> Domain Admin
+# -----------------------------------------------------------------------------
+# attack_chain.mode: ctf (below) makes resolve_attack_chain() cast the FIRST
+# account-shaped vuln onto ONE real population user (the "pivot"), then REUSE
+# that exact same real user for every subsequent account-shaped vuln. So the
+# four account-shaped grants below all land on a single over-permissioned
+# identity — compromising that one account (step 1) is a genuine precondition
+# for every escalation edge that follows. machine-account-quota is a
+# domain-level enabler (target_shape: none — no object is cast onto it), and
+# esc4-template-acl is the ADCS-dependent critical step that routes to the
+# member-server declaring `services: [adcs]`.
+#
+# Reading order = spec order below. The first account-shaped entry
+# (readable-gmsa) is the anchor that fixes the pivot user; the rest reuse it.
+#
+# ---- Chain · "Order 66" — over-permissioned pivot -> ADCS -> Domain Admin
+#   0. machine-account-quota   T1136.001  Create Account: Local Account (domain enabler)
+#        ms-DS-MachineAccountQuota=10 (default): the foothold user — like ANY
+#        authenticated user — can stand up an attacker-controlled machine
+#        account. Not an exploit itself; the primitive that underpins the
+#        delegation/shadow-cred escalations the pivot's grants can drive.
+#        target_shape: none — domain-level setting, no BloodHound edge.
+#   1. readable-gmsa           T1555 / T1078.002  Credentials from Password Stores / Valid Accounts: Domain
+#        FOOTHOLD ANCHOR. The pivot user is listed in a gMSA's
+#        msDS-GroupMSAMembership, so it can read msDS-ManagedPassword, derive the
+#        gMSA NT hash and authenticate AS the (higher-priv) gMSA service account.
+#        BloodHound edge: ReadGMSAPassword  (pivot -> gMSA)
+#   2. writable-gpo            T1484.001  Domain Policy Modification: GPO Modification
+#        SAME pivot holds GpoEditDeleteModifySecurity on a GPO linked to an OU;
+#        it plants an Immediate Task -> SYSTEM code execution on every host the
+#        GPO applies to (incl. the member-server), widening the foothold.
+#        BloodHound edge: GenericWrite  (pivot -> GPO)
+#   3. esc4-template-acl       T1649  Steal or Forge Authentication Certificates  [CRITICAL / ADCS]
+#        SAME pivot has WriteDacl over a published cert template on the ADCS
+#        member-server. It rewrites the template to ESC1 (ENROLLEE_SUPPLIES_SUBJECT
+#        + client-auth EKU + Domain Users enroll), enrolls a cert with a Domain
+#        Admin SAN, and PKINITs as Domain Admin. THIS is the road to DA.
+#        BloodHound edge: ADCSESC4  (pivot -> CertTemplate)  [requires_services: adcs]
+#   4. adminsdholder-acl       T1098  Account Manipulation  [DA PERSISTENCE finale]
+#        SAME pivot has GenericAll over CN=AdminSDHolder,CN=System. SDProp copies
+#        that ACE onto every protected group (~hourly), so the pivot can re-add
+#        itself to Domain Admins even after eviction — durable Tier-0 control.
+#        BloodHound edge: GenericAll  (pivot -> AdminSDHolder / protected groups)
+#   Objective: Domain Admin / full EMPIRE.LOCAL compromise via ESC4 PKINIT,
+#              made persistent through AdminSDHolder/SDProp.
+# =============================================================================
+# DEPLOYED STATE (2026-07-06): shipped 4/5. esc4-template-acl is commented out
+# below and OUT of scope for this deployment. Root cause: the generator has no
+# AD CS provisioning for it — scripts/forge.py only stands up a CA/templates for
+# the older `adcs-esc1` (hardcoded special-case at forge.py:~1010); a bare
+# `services: [adcs]` declaration is used ONLY for the requires_services semantic
+# check and never installs ADCS-Cert-Authority / an Enterprise CA / the `User`
+# template. So esc4's injection Set-Acl has no template object to target: it
+# throws internally while win_powershell still reports changed:true (a false
+# positive). GOAD ships the building blocks (vendor/GOAD/ansible/roles/adcs +
+# roles/adcs_templates + adcs.yml) — they just need wiring to trigger on
+# esc4-template-acl / services:[adcs]. Tracked as a generator gap; re-add esc4
+# here once that's fixed. The 4 below are genuinely injected on dc01 and were
+# verified applied; without esc4 the chain still reaches Domain Admin via
+# adminsdholder-acl (GenericAll on AdminSDHolder -> SDProp -> Tier-0 persistence)
+# rather than the ESC4 PKINIT path.
+vulnerabilities:
+  - machine-account-quota   # domain enabler (target_shape: none), MUST precede — sets the primitive the pivot's grants exploit
+  - readable-gmsa           # account — ANCHOR: casts the pivot user (ReadGMSAPassword)
+  - writable-gpo            # account — reuse pivot (GenericWrite on GPO)
+  # - esc4-template-acl     # OUT OF SCOPE (2026-07-06): generator lacks AD CS/CA provisioning for this vuln — see DEPLOYED STATE note above. Re-enable once forge.py wires GOAD's adcs role to services:[adcs].
+  - adminsdholder-acl       # account — reuse pivot (GenericAll on AdminSDHolder), DA persistence (now the chain's route to DA)
+
+attack_chain:
+  mode: ctf   # reuse the SAME real pivot user across the 4 account-shaped vulns
+
+defense:
+  profile: realistic
+    # NOTE: baseline-controls (not cis-l1) — keeps hardening OS-agnostic (only the
+    # individual hardening.controls.* toggles, no ansible-lockdown CIS/STIG role).
+    # The realistic profile's other defaults still apply.
+  hardening:
+    baseline: baseline-controls
+    apply_to: all
+    controls:
+      laps: true
+    intentional_gaps_auto: true
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+  deception:
+    honey_accounts: 2
+    canarytokens: []
+
+on_conflict: exclude-control
+
+detection_rules: auto
+
+validation:
+  bloodhound: true
+  pingcastle: true
+  atomic_red_team:
+    - T1484.001   # writable-gpo (validate.atomic: T1484.001)
+    # skipped (validate.atomic: null in the catalog — no Atomic Red Team test):
+    #   machine-account-quota (T1136.001), readable-gmsa (T1555/T1078.002),
+    #   esc4-template-acl (T1649), adminsdholder-acl (T1098).
+    # These are ACL/AD-config states verified by bloodhound + pingcastle above,
+    # not by an ATT&CK atomic; writable-gpo is the only one with a non-null atomic.

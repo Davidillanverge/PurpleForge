@@ -39,6 +39,7 @@ variable "machines" {
     os       = string # one of lab-spec.schema.json's machines[].os enum
     ip       = string
     image_id = optional(string) # machines[].image_id override — a managed image or Shared Image Gallery version resource ID, e.g. a golden workstation image with an EDR agent pre-installed. null (the default) means "use the marketplace publisher/offer/sku for os instead" — see windows.tf.
+    vm_size  = optional(string) # machines[].vm_size override from the spec. null (the default) means "use windows.tf's per-role local.size_map / var.vm_size_overrides".
   }))
 }
 

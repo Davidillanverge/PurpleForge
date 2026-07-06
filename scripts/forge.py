@@ -4,7 +4,7 @@
 Implements the parts of the harness that must be deterministic and testable
 rather than left to an LLM: schema validation, semantic checks, defense.profile
 default resolution, IP assignment, cost estimation and the hardening<->vuln
-reconciliation described in DISENO-purpleforge.md §7.3. Invoked by the
+reconciliation (see cmd_lab_spec / the reconcile helpers below). Invoked by the
 lab-spec skill (.claude/skills/lab-spec/SKILL.md); later phases add generate/
 deploy/validate/destroy subcommands here as those skills are implemented.
 
@@ -290,6 +290,7 @@ def assign_ips(spec: dict) -> dict:
                     "ip": f"10.{octet}.{i}.{host_octet}",
                     "services": m.get("services", []),
                     "image_id": m.get("image_id"),
+                    "vm_size": m.get("vm_size"),
                 })
         plan["domains"][d["domain"]] = {"subnet": subnet_cidr, "hosts": hosts}
     return plan
@@ -518,6 +519,7 @@ def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
                 "ip": host["ip"],
                 "services": host.get("services", []),
                 "image_id": host.get("image_id"),
+                "vm_size": host.get("vm_size"),
             })
     return machines
 
@@ -698,6 +700,7 @@ def render_azure_terraform(
                 "os": m["os"],
                 "ip": m["ip"],
                 "image_id": m.get("image_id"),
+                "vm_size": m.get("vm_size"),
             }
             for m in machines
         ],
@@ -708,7 +711,7 @@ def render_azure_terraform(
         "wireguard_port": 51820,
         "wireguard_allowed_cidrs": ["0.0.0.0/0"],
         "bastion_ssh_allowed_cidrs": [],
-        "bastion_size": "Standard_B1s",
+        "bastion_size": lab.get("bastion_size") or "Standard_B1s",
     }
     (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
     render_backend_config(lab["name"], dst)
@@ -1322,8 +1325,8 @@ def run_terraform_plan(tf_dir: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
-# destroy: PROMPT-claude-code.md specifies /destroy as "terraform destroy +
-# verificación de coste cero" — not just a clean terraform exit code. Every
+# destroy: /destroy is "terraform destroy + verificación de coste cero" — not
+# just a clean terraform exit code (invariant #4). Every
 # lab's resources live inside a single resource group named after lab.name
 # (see templates/terraform/azure/main.tf), so the verification step queries
 # Azure directly for that resource group after destroy, rather than trusting
@@ -1735,7 +1738,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     provider = spec["lab"]["provider"]
     if provider != "azure":
         print(
-            f"FAIL: infra-{provider} is not implemented yet (see PROMPT-claude-code.md roadmap Fase 8 for AWS).",
+            f"FAIL: infra-{provider} is not implemented yet (only Azure today; AWS is on the roadmap).",
             file=sys.stderr,
         )
         return 1
@@ -2055,7 +2058,7 @@ def merge_validation_results(rows: list[dict], results: dict) -> tuple[list[dict
 
 def render_validation_report(lab_name: str, confirmed: list[dict], findings: list[str], lab_dir: Path) -> Path:
     """The confirmed validation section of the deliverable: per vuln, was the config
-    applied and is it exploitable, with evidence. report-writer folds this into
+    applied and is it exploitable, with evidence. purple-validator folds this into
     lab-report.md."""
     n = len(confirmed)
     applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
@@ -2183,6 +2186,83 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_guardrail(args: argparse.Namespace) -> int:
+    """Deterministic invariant gate (CLAUDE.md reglas invariantes), run AFTER
+    `lab-spec` and BEFORE any deploy. Reads generated/<lab>/lab-manifest.json and
+    the catalog, and hard-fails (exit 1) if any machine-checkable invariant is
+    violated. Invariant #6 (authorized use) is a human judgement — it is printed
+    as a REVIEW item, never auto-passed. This replaces the old policy-guardrail
+    subagent: the risky logic lives in code, not in a prompt."""
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    spec = load_yaml(spec_path)
+    lab_name = spec["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    manifest_path = lab_dir / "lab-manifest.json"
+    if not manifest_path.exists():
+        print(f"error: {manifest_path} not found — run `lab-spec` first.", file=sys.stderr)
+        return 2
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    lab = manifest.get("lab", {})
+    catalog = load_vuln_catalog()
+    failures: list[str] = []
+
+    # inv #1 — isolation by construction (no public IP / no RDP-WinRM from the
+    # internet; access only via the WireGuard bastion). Compute layer is
+    # private-IP-only by construction in the templates; here we assert the spec
+    # asked for vpn-only isolation and the network plan actually placed a bastion
+    # in a management subnet.
+    if lab.get("isolation") != "vpn-only":
+        failures.append(f"#1 isolation: lab.isolation is {lab.get('isolation')!r}, must be 'vpn-only'")
+    np = manifest.get("network_plan", {})
+    if not np.get("management_subnet") or not np.get("jumpbox_ip"):
+        failures.append("#1 isolation: network_plan is missing the management subnet / WireGuard jumpbox")
+
+    # inv #2 — purple coupling: every injected vuln carries detect + mitigate +
+    # neutralized_by in the catalog (its blue counterpart).
+    for vid in manifest.get("vulnerabilities", []):
+        entry = catalog.get(vid)
+        if entry is None:
+            failures.append(f"#2 purple: vuln {vid!r} is not in catalog/vulnerabilities/")
+            continue
+        missing = [k for k in ("detect", "mitigate", "neutralized_by") if not entry.get(k)]
+        if missing:
+            failures.append(f"#2 purple: vuln {vid!r} is missing {', '.join(missing)}")
+
+    # inv #3 — reconciliation honoured: the hardening<->vuln reconciliation ran
+    # and is recorded; on_conflict:fail must leave no unresolved conflict.
+    recon = manifest.get("reconciliation")
+    if not isinstance(recon, dict) or "on_conflict" not in recon:
+        failures.append("#3 reconciliation: no reconciliation block recorded in the manifest")
+    elif recon.get("on_conflict") == "fail" and recon.get("conflicts_detected"):
+        failures.append("#3 reconciliation: on_conflict=fail but unresolved conflicts remain")
+
+    # inv #4 — cost & lifecycle as code: auto_shutdown + budget mandatory; remote
+    # Terraform state (backend.hcl must not be a local backend).
+    if not lab.get("auto_shutdown"):
+        failures.append("#4 lifecycle: lab.auto_shutdown is missing")
+    if not lab.get("budget_alert_usd"):
+        failures.append("#4 lifecycle: lab.budget_alert_usd is missing")
+    for backend in lab_dir.glob("terraform/*/backend.hcl"):
+        text = backend.read_text(encoding="utf-8").lower()
+        if "storage_account_name" not in text and "dynamodb" not in text and "bucket" not in text:
+            failures.append(f"#4 state: {backend} does not look like a remote backend (S3/DynamoDB or Azure Storage)")
+
+    print(f"guardrail — {lab_name}")
+    if failures:
+        print("FAIL — invariant(s) violated:")
+        for f in failures:
+            print(f"  ✗ {f}")
+    else:
+        print("PASS — all machine-checkable invariants hold (#1 isolation, #2 purple coupling, #3 reconciliation, #4 lifecycle/state)")
+    # inv #6 is a judgement call, never auto-passed.
+    print("REVIEW — #6 authorized use: confirm this is an isolated lab for authorized "
+          "testing, not automation aimed at third-party/production systems. Human/LLM must judge; not machine-checked.")
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="forge.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2222,6 +2302,14 @@ def main() -> int:
     p_validate.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_validate.add_argument("--results", help="Path to a filled validation-results JSON (from the live run); merges it into the confirmed validation-report.md")
     p_validate.set_defaults(func=cmd_validate)
+
+    p_guardrail = sub.add_parser(
+        "guardrail",
+        help="Deterministic invariant gate (CLAUDE.md reglas invariantes): PASS/FAIL over a lab-manifest.json before deploy. Replaces the policy-guardrail subagent.",
+    )
+    p_guardrail.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
+    p_guardrail.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_guardrail.set_defaults(func=cmd_guardrail)
 
     args = parser.parse_args()
     return args.func(args)

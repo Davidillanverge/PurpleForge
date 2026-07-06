@@ -1,4 +1,4 @@
-# PurpleForge — worked example (see DISENO-purpleforge.md §"Ejemplo trabajado obligatorio")
+# PurpleForge — worked example (2-domain medieval lab on Azure)
 # Two-domain medieval-themed forest on Azure, defense.profile: realistic,
 # on_conflict: exclude-control -> hardening.cis-l1 is applied with the specific
 # rules excluded that would neutralize kerberoasting/adcs-esc1/gpp-cpassword/dcsync-acl.
