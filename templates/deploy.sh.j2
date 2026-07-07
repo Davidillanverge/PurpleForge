@@ -321,12 +321,16 @@ run_site() {
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }
     echo "  waiting for WinRM on all hosts ($i)..."; sleep 20
   done
-  local tries=0 max=4
-  # site.yml is idempotent; a heavy PowerShell step can drop WinRM mid-run — re-run.
+  local tries=0 max=6
+  # site.yml is idempotent; a heavy PowerShell step OR the DC-promotion reboot
+  # ends an attempt mid-run — re-run. The pf-ansible container can also vanish
+  # between attempts (a host docker hiccup); recreate it if it is gone so the
+  # retry actually runs instead of erroring 'No such container: pf-ansible'.
   until docker exec -w "/repo/generated/$LAB/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "site.yml still failing after $tries runs — inspect the error above (AZURE-DEPLOY-RUNBOOK.md step 7)"
     warn "site.yml failed (attempt $tries/$max) — re-running (idempotent; picks up where it left off)"
+    docker exec pf-ansible true >/dev/null 2>&1 || { warn "pf-ansible container is gone — recreating it before the next attempt"; ansible_up; }
     sleep 15
   done
   echo "  provisioning complete"
