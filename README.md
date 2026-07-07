@@ -2,7 +2,7 @@
 
 A specification-driven harness that turns a declarative `lab-spec.yml` into
 complete automation (Terraform + Ansible + PowerShell) for deploying
-**Purple-Team-instrumented Active Directory labs** on **AWS or Azure** —
+**Purple-Team-instrumented Active Directory labs** on **Azure or on-prem Proxmox VE** (AWS on the roadmap) —
 including a configurable **defensive stack** (SIEM, EDR, hardening) deployed
 alongside the intentional vulnerabilities.
 
@@ -66,6 +66,8 @@ purpleforge/
 ├── templates/
 │   ├── terraform/azure/         # VNet/subnets/NSGs/WireGuard bastion (network-topology) +
 │   │                             # Windows VMs/WinRM bootstrap (infra-azure); thin wrapper over vendor/GOAD
+│   ├── terraform/proxmox/       # on-prem: pool/firewall/VLANs + cloned Windows VMs +
+│   │                             # WireGuard bastion (infra-proxmox); bpg/proxmox provider
 │   ├── terraform/aws/           # (Phase 8)
 │   └── ansible/                 # ad-topology.yml + ad-theming.yml + vuln-injection.yml.j2 +
 │                                 # defensive-controls.yml.j2 + vulns/<id>.yml + inventory template;
@@ -158,6 +160,37 @@ python3 scripts/forge.py teardown  specs/shadow-keep.yml   # destroy to cost-zer
 > # .claude/skills/infra-azure/SKILL.md. `plan` needs az login/ARM_* credentials
 > # to get past provider auth)
 > ```
+
+### Proxmox VE (on-prem)
+
+Set `provider: proxmox` in the spec to target an on-prem Proxmox VE cluster
+instead of Azure. `generate` renders `terraform/proxmox/` (bpg/proxmox
+provider) plus a Proxmox-specific `deploy.sh`/`teardown.sh`. Key differences
+from Azure (see `.claude/skills/infra-proxmox/SKILL.md`):
+
+- **Windows images are cloned from templates you maintain** (`template_map`
+  keyed by `machines[].os`), each with WinRM + the `ansible` admin +
+  cloudbase-init baked in — Proxmox has no marketplace and no VM extensions.
+- **Isolation** uses the Proxmox firewall (deny-by-default per VM) + a VLAN per
+  domain on an isolated bridge; the WireGuard bastion is the only host with a
+  routable IP (static on a LAN bridge). Inter-VLAN routing is set up on the
+  bastion at deploy time (`route_lab`).
+- **State is a local Terraform backend** (documented relaxation of invariant
+  #4 — no cloud object store on-prem); `budget_alert_usd`/cost are
+  informational; `auto_shutdown` is a best-effort cron on the deploy host.
+
+```bash
+python3 scripts/forge.py generate specs/examples/single-dc-proxmox.yml
+# writes generated/single-dc-proxmox-test/{terraform/proxmox,ansible}/
+
+# before deploy: fill the per-host binding + export the endpoint/token
+cp generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.example.json \
+   generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.json   # then edit
+export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
+export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-...."
+# export PROXMOX_VE_INSECURE=true   # self-signed PVE cert
+cd generated/single-dc-proxmox-test && ./deploy.sh
+```
 
 ## Custom machine images
 

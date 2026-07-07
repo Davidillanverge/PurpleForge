@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -84,6 +85,10 @@ ENUM_HARDENING_TOGGLES = {"smb_signing": "disable", "ldap_signing": "disable"}
 HOURLY_RATE_USD = {
     "aws": {"domain-controller": 0.10, "member-server": 0.12, "workstation": 0.08},
     "azure": {"domain-controller": 0.11, "member-server": 0.13, "workstation": 0.09},
+    # On-prem Proxmox has no per-hour cloud billing; rates are zero so the cost
+    # estimate reads $0 rather than a misleading cloud figure. budget_alert_usd
+    # stays in the spec (schema requires it) but is not a billing signal here.
+    "proxmox": {"domain-controller": 0.0, "member-server": 0.0, "workstation": 0.0},
 }
 
 WINDOWS_EVAL_EXPIRY_DAYS = 180
@@ -738,6 +743,68 @@ def render_azure_terraform(
     render_backend_config(lab["name"], dst)
 
 
+def render_proxmox_terraform(
+    network_plan: dict, machines: list[dict], out_dir: Path, admin_password: str, ansible_password: str, lab: dict
+) -> None:
+    """Sibling of render_azure_terraform for the on-prem Proxmox provider.
+    Writes ONLY the spec-derived, host-independent values into the committed
+    terraform.tfvars.json; the strong secrets go in the gitignored
+    secrets.auto.tfvars.json overlay (same split as Azure). The Proxmox
+    host-specific values (node/bridges/datastore/template ids/bastion external
+    IP) are NOT baked here — they come from a gitignored host.auto.tfvars.json
+    the deployer fills (host.auto.tfvars.example.json ships as the reference),
+    keeping the generated lab host-independent (CLAUDE.md account-independence
+    convention). No backend.hcl: this layer uses a local state backend."""
+    src = TEMPLATES_DIR / "terraform" / "proxmox"
+    dst = out_dir / "terraform" / "proxmox"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+    # One VLAN tag per domain, assigned deterministically (100 + index) so a
+    # domain's subnet is L2-isolated on the lab bridge, matching the /24-per-
+    # domain plan in network_plan.domains. gateway_ip is the bastion's address
+    # ON that domain VLAN (the subnet's .254): Windows hosts default-route to it
+    # (it MUST be on-subnet, not the mgmt IP), and deploy.sh materializes it as
+    # a VLAN sub-interface on the bastion that routes the domain (see
+    # deploy-proxmox.sh.j2's route_lab step).
+    domains = {}
+    for idx, (domain, info) in enumerate(network_plan["domains"].items()):
+        net = ipaddress.ip_network(info["subnet"], strict=False)
+        gateway_ip = str(net.network_address + 254)  # .254 for a /24
+        domains[domain] = {
+            "subnet_cidr": info["subnet"],
+            "vlan_id": 100 + idx,
+            "gateway_ip": gateway_ip,
+        }
+    tfvars = {
+        "lab_name": lab["name"],
+        "supernet": network_plan["supernet"],
+        "management_cidr": network_plan["management_subnet"],
+        "jumpbox_private_ip": network_plan["jumpbox_ip"],
+        "domains": domains,
+        "machines": [
+            {
+                "name": m["name"],
+                "domain": m["domain"],
+                "role": m["role"],
+                "os": m["os"],
+                "ip": m["ip"],
+            }
+            for m in machines
+        ],
+        "admin_username": WINDOWS_ADMIN_USERNAME,
+        "jumpbox_username": WINDOWS_ADMIN_USERNAME,
+        "wireguard_port": 51820,
+        "wireguard_allowed_cidrs": ["0.0.0.0/0"],
+    }
+    (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
+    (dst / "secrets.auto.tfvars.json").write_text(
+        json.dumps({"admin_password": admin_password, "ansible_password": ansible_password}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def load_theme(theme_id: str) -> dict:
     return load_yaml(THEMES_DIR / f"{theme_id}.yml")
 
@@ -1116,10 +1183,26 @@ def render_deploy_scripts(
     deploy/teardown path. These are the single source of truth for the exact
     commands (the lab-report just points at them); `forge.py deploy`/`teardown`
     are thin wrappers that run these after a guardrail gate. Everything the
-    scripts encode is the battle-tested procedure from AZURE-DEPLOY-RUNBOOK.md,
-    turned from prose into an idempotent, retrying script."""
+    scripts encode is the battle-tested procedure from AZURE-DEPLOY-RUNBOOK.md
+    (Azure) / the Proxmox layer's own comments, turned from prose into an
+    idempotent, retrying script. The two providers use separate templates
+    (deploy.sh.j2/teardown.sh.j2 for Azure, deploy-proxmox.sh.j2/
+    teardown-proxmox.sh.j2 for Proxmox) — the flows differ enough (az vs the
+    Proxmox API, remote vs local state, SKU auto-sizing vs static specs, plus
+    the Proxmox-only bastion VLAN routing) that branching one script would be
+    less clear than two focused ones."""
     provider = spec["lab"]["provider"]
     roles = sorted({m["role"] for m in machines})
+    # domain -> {vlan_id, gateway_ip, subnet} for the Proxmox bastion routing
+    # step (deterministic, same assignment render_proxmox_terraform uses).
+    domains_ctx = {}
+    for idx, (domain, info) in enumerate(network_plan["domains"].items()):
+        net = ipaddress.ip_network(info["subnet"], strict=False)
+        domains_ctx[domain] = {
+            "vlan_id": 100 + idx,
+            "gateway_ip": str(net.network_address + 254),
+            "subnet": info["subnet"],
+        }
     context = {
         "lab_name": spec["lab"]["name"],
         "provider": provider,
@@ -1129,10 +1212,14 @@ def render_deploy_scripts(
         "wireguard_port": network_plan.get("wireguard_port", 51820),
         "roles_json": json.dumps(roles),
         "spec_rel": manifest["source_spec"],
+        "domains_json": json.dumps(domains_ctx),
+        "auto_shutdown": spec["lab"].get("auto_shutdown", ""),
     }
+    template_suffix = "-proxmox" if provider == "proxmox" else ""
     env = jinja2.Environment(keep_trailing_newline=True)
     for name in ("deploy.sh", "teardown.sh"):
-        template = env.from_string((TEMPLATES_DIR / f"{name}.j2").read_text(encoding="utf-8"))
+        stem = name[: -len(".sh")]
+        template = env.from_string((TEMPLATES_DIR / f"{stem}{template_suffix}.sh.j2").read_text(encoding="utf-8"))
         path = out_dir / name
         path.write_text(template.render(**context), encoding="utf-8")
         path.chmod(0o755)
@@ -1893,9 +1980,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"    - {x['detail']} -> {x['action']}")
 
     provider = spec["lab"]["provider"]
-    if provider != "azure":
+    if provider not in ("azure", "proxmox"):
         print(
-            f"FAIL: infra-{provider} is not implemented yet (only Azure today; AWS is on the roadmap).",
+            f"FAIL: infra-{provider} is not implemented yet (Azure and Proxmox today; AWS is on the roadmap).",
             file=sys.stderr,
         )
         return 1
@@ -1908,9 +1995,14 @@ def cmd_generate(args: argparse.Namespace) -> int:
     admin_password = generate_password()
     ansible_password = generate_password()
 
-    render_azure_terraform(
-        network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
-    )
+    if provider == "proxmox":
+        render_proxmox_terraform(
+            network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
+        )
+    else:
+        render_azure_terraform(
+            network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
+        )
     theme = load_theme(spec["lab"]["theme"])
     ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, out_dir)
     population_plans = render_ad_population(theme, spec, ansible_groups, out_dir)
@@ -1928,6 +2020,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     deception_plan = plan_deception(resolved_defense, theme, ansible_groups)
     render_defensive_controls(hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir)
     render_site_playbook(bool(planned_vulns), out_dir)
+    # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
+    # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
     render_deploy_scripts(spec, manifest, machines, network_plan, out_dir)
 
     manifest["machines_flat"] = machines
@@ -1977,6 +2071,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"      note: edr '{e['product']}' — {e['reason']}")
     print("  wrote ansible/playbooks/site.yml (run this, not the individual playbooks — enforces hardening-before-vulns)")
     print("  wrote deploy.sh + teardown.sh (deterministic no-AI deploy/teardown — run directly or via `forge.py deploy`/`teardown`)")
+    if provider == "proxmox":
+        print(f"  NOTE: provider 'proxmox' — before deploy, fill terraform/proxmox/host.auto.tfvars.json (see host.auto.tfvars.example.json) and export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN. Windows templates must have WinRM + the `ansible` admin + cloudbase-init baked in.")
 
     if args.plan:
         return run_terraform_plan(out_dir / "terraform" / provider)
@@ -2568,10 +2664,16 @@ def cmd_guardrail(args: argparse.Namespace) -> int:
         failures.append("#4 lifecycle: lab.auto_shutdown is missing")
     if not lab.get("budget_alert_usd"):
         failures.append("#4 lifecycle: lab.budget_alert_usd is missing")
-    for backend in lab_dir.glob("terraform/*/backend.hcl"):
-        text = backend.read_text(encoding="utf-8").lower()
-        if "storage_account_name" not in text and "dynamodb" not in text and "bucket" not in text:
-            failures.append(f"#4 state: {backend} does not look like a remote backend (S3/DynamoDB or Azure Storage)")
+    # Proxmox deliberately uses a LOCAL Terraform backend (no cloud object store
+    # on-prem to mint per-deployer) — a documented relaxation of #4's remote-state
+    # requirement, so the remote-backend assertion below is skipped for it and
+    # surfaced as an honest REVIEW note rather than passing silently.
+    provider = lab.get("provider")
+    if provider != "proxmox":
+        for backend in lab_dir.glob("terraform/*/backend.hcl"):
+            text = backend.read_text(encoding="utf-8").lower()
+            if "storage_account_name" not in text and "dynamodb" not in text and "bucket" not in text:
+                failures.append(f"#4 state: {backend} does not look like a remote backend (S3/DynamoDB or Azure Storage)")
 
     print(f"guardrail — {lab_name}")
     if failures:
@@ -2580,6 +2682,11 @@ def cmd_guardrail(args: argparse.Namespace) -> int:
             print(f"  ✗ {f}")
     else:
         print("PASS — all machine-checkable invariants hold (#1 isolation, #2 purple coupling, #3 reconciliation, #4 lifecycle/state)")
+    if provider == "proxmox":
+        print("REVIEW — #4 state: provider 'proxmox' uses a LOCAL Terraform backend by decision "
+              "(no on-prem cloud object store to mint per-deployer). Remote-state-with-locking is "
+              "relaxed for this provider — point terraform/proxmox/versions.tf at a pg/s3(MinIO)/http "
+              "backend if a shared state store exists.")
     # inv #6 is a judgement call, never auto-passed.
     print("REVIEW — #6 authorized use: confirm this is an isolated lab for authorized "
           "testing, not automation aimed at third-party/production systems. Human/LLM must judge; not machine-checked.")

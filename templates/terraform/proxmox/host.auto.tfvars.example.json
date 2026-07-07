@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy to host.auto.tfvars.json (gitignored) and fill for YOUR Proxmox host. These are the only host-specific values; everything else is spec-derived in terraform.tfvars.json and identical on any host. Also export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN (and PROXMOX_VE_INSECURE=true for self-signed certs) before running terraform.",
+  "node_name": "pve",
+  "datastore_id": "local-lvm",
+  "snippets_datastore_id": "local",
+  "mgmt_bridge": "vmbr0",
+  "lab_bridge": "vmbr1",
+  "template_map": {
+    "windows-server-2019": 9001,
+    "windows-server-2022": 9002,
+    "windows-11-23h2": 9010
+  },
+  "bastion_template_id": 9000,
+  "jumpbox_external_ip": "192.168.1.50",
+  "jumpbox_external_prefix": 24,
+  "jumpbox_external_gateway": "192.168.1.1"
+}

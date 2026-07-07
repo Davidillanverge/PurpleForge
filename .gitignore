@@ -17,6 +17,13 @@ generated/**/*.tfstate
 generated/**/*.tfstate.*
 generated/**/sizes.auto.tfvars.json
 generated/**/region.auto.tfvars.json
+# Proxmox: per-deployer host binding (node/bridges/datastore/template ids).
+# The committed host.auto.tfvars.example.json stays tracked as the reference.
+generated/**/host.auto.tfvars.json
+# Proxmox deploy-time auto_shutdown helper + its 600 env file (holds the API
+# token so cron can read it) — minted by deploy.sh, removed by teardown.sh.
+generated/**/pf-autoshutdown.sh
+generated/**/.pf-proxmox-env
 generated/**/ssh_keys/
 generated/**/*.conf
 

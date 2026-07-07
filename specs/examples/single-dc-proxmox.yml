@@ -1,0 +1,46 @@
+# PurpleForge — Proxmox example spec (iteration 1: Terraform layer).
+# Same minimal case as single-dc-azure.yml (one domain, one isolated DC,
+# VPN-only) but provider: proxmox. `forge.py generate` renders terraform/proxmox/
+# from this; fill terraform/proxmox/host.auto.tfvars.json (node/bridges/
+# datastore/template ids) before `terraform apply`. region/auto_shutdown/
+# budget_alert_usd are schema-required but not billing signals on-prem — region
+# is unused by the Proxmox layer (the target node comes from host.auto.tfvars).
+lab:
+  name: single-dc-proxmox-test
+  theme: corporate
+  provider: proxmox
+  region: pve
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 50
+
+forest:
+  - domain: test.local
+    netbios: TEST
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2019
+    domain: test.local
+    count: 1
+
+population:
+  users: 10
+  density: sparse
+  seed: 1
+
+vulnerabilities: []
+
+defense:
+  profile: none
+
+on_conflict: warn
+
+detection_rules: none
+
+validation:
+  bloodhound: false
+  pingcastle: false
+  atomic_red_team: []
