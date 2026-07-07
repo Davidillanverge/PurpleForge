@@ -483,15 +483,23 @@ def load_and_resolve(spec_path: Path) -> tuple[dict, dict] | None:
 
 
 def generate_password(length: int = 20) -> str:
-    """Random password meeting basic Windows complexity rules (upper/lower/digit/symbol)."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*-_="
+    """Random password meeting basic Windows complexity rules (upper/lower/digit/symbol).
+
+    The symbol set deliberately EXCLUDES cmd.exe-hostile characters
+    (`& ^ % $ < > | " '` and space): the ansible bootstrap extension creates the
+    WinRM user with `net user ansible <pw>` under cmd.exe, where an unquoted `&`
+    silently splits the command and the user is never created (WinRM then never
+    comes up). We also quote the password there now, but keeping these out of the
+    alphabet is the load-bearing fix — see terraform/azure/windows.tf."""
+    symbols = "!@#*-_=+"
+    alphabet = string.ascii_letters + string.digits + symbols
     while True:
         pw = "".join(secrets.choice(alphabet) for _ in range(length))
         if (
             any(c.islower() for c in pw)
             and any(c.isupper() for c in pw)
             and any(c.isdigit() for c in pw)
-            and any(c in "!@#$%^&*-_=" for c in pw)
+            and any(c in symbols for c in pw)
         ):
             return pw
 

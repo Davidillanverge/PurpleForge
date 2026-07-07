@@ -103,12 +103,13 @@ ensure_secrets() {
   echo "  fresh share detected — minting the two infra keys (population passwords are committed, not touched)"
   TF_OUT="$tf_secrets" ANS_OUT="$ans_secrets" python3 - <<'PY'
 import json, os, secrets, string
-alphabet = string.ascii_letters + string.digits + "!@#$%^&*-_="
+symbols = "!@#*-_=+"   # cmd.exe-safe (no & ^ % $ < > | ") — see forge.py generate_password
+alphabet = string.ascii_letters + string.digits + symbols
 def pw(length=20):
     while True:
         p = "".join(secrets.choice(alphabet) for _ in range(length))
         if (any(c.islower() for c in p) and any(c.isupper() for c in p)
-                and any(c.isdigit() for c in p) and any(c in "!@#$%^&*-_=" for c in p)):
+                and any(c.isdigit() for c in p) and any(c in symbols for c in p)):
             return p
 admin, ansible = pw(), pw()
 with open(os.environ["TF_OUT"], "w") as f:

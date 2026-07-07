@@ -180,6 +180,11 @@ resource "azurerm_virtual_machine_extension" "winrm_prep" {
     # symptom at all. Scoped to the lab's own supernet, not "Any" — WinRM
     # still never reaches the internet (invariant #1), it just also becomes
     # reachable from other subnets inside this one lab's VNet.
-    commandToExecute = "net user ansible ${var.ansible_password} /add /expires:never /y && net localgroup administrators ansible /add && powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1 && powershell -Command \"New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-VNet' -Direction Inbound -Protocol TCP -LocalPort 5985,5986 -RemoteAddress ${var.supernet} -Action Allow -Profile Any\""
+    # The password MUST be double-quoted here: it runs under cmd.exe, where an
+    # unquoted `&`/`^`/`<`/`>`/`|` in the password is a command separator (a `&`
+    # split `net user` mid-command and the tail ran as a bogus command, so the
+    # ansible user was never created and WinRM never came up). Quotes make those
+    # literal. generate_password also excludes cmd-hostile chars as belt-and-braces.
+    commandToExecute = "net user ansible \"${var.ansible_password}\" /add /expires:never /y && net localgroup administrators ansible /add && powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1 && powershell -Command \"New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-VNet' -Direction Inbound -Protocol TCP -LocalPort 5985,5986 -RemoteAddress ${var.supernet} -Action Allow -Profile Any\""
   })
 }
