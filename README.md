@@ -97,111 +97,36 @@ pip install -r scripts/requirements.txt
 `terraform` (>= 1.5) is only needed for `scripts/forge.py generate ... --plan`; without
 it, `generate` still renders every file, it just skips the plan step.
 
-## The `lab-spec.yml` flow
+## Create a lab
 
-Only the **first** step (natural-language → spec) needs AI. Everything after it is
-a deterministic `forge.py` subcommand a human can run unattended:
-
-```bash
-# AI (or hand-write the spec): NL description -> specs/<lab>.yml
-/new-lab "2 domains medieval, ESC1+Kerberoast, Azure, Defender AV + CIS L1"
-
-# no AI from here down — just forge.py:
-python3 scripts/forge.py generate  specs/shadow-keep.yml   # render TF + Ansible + deploy.sh/teardown.sh + report
-python3 scripts/forge.py guardrail specs/shadow-keep.yml   # invariant gate (PASS/FAIL) before any spend
-python3 scripts/forge.py deploy    specs/shadow-keep.yml   # state backend -> auto-size -> apply -> WireGuard -> site.yml
-python3 scripts/forge.py validate  specs/shadow-keep.yml --run   # vulns applied + exploitable -> validation-report.md
-python3 scripts/forge.py teardown  specs/shadow-keep.yml   # destroy to cost-zero + verify nothing is left
-```
-
-- **`generate`** — runs every generation skill and the hardening⟷vuln
-  reconciliation, producing `generated/<lab>/` (Terraform, Ansible inventory
-  and playbooks, `lab-manifest.json`, `lab-report.md`, and the **`deploy.sh` /
-  `teardown.sh`** that make the deploy a no-AI script).
-- **`deploy`** — runs the generated `deploy.sh` after a guardrail gate:
-  bootstraps remote state, **auto-picks the cheapest unrestricted VM SKU** for
-  the region, `terraform apply` (with the ARM-lag retry flags), brings up the
-  WireGuard tunnel, and runs `site.yml` in the mandated order (infra → AD
-  topology → population/theming → **hardening baseline** → **selective vuln
-  injection** → EDR). Idempotent; re-run on any transient failure.
-- **`validate --run`** — drives the live checks itself (nxc/netexec over the
-  tunnel): auto-confirms the roasting vulns, and for the interactive ones
-  (ACL/cert/SYSVOL abuse) emits the exact command to run and marks them
-  `REQUIRES-HUMAN` — no by-hand results JSON. Writes `validation-report.md`.
-- **`teardown`** — runs `teardown.sh`: starts any auto-shutdown-deallocated
-  VMs, `terraform destroy`, sweeps stray snapshots, verifies the resource
-  group is gone (cost-zero), and cleans up local session state.
-- **`/new-lab`** — the one AI step: turns a natural-language description into a
-  validated `specs/<name>.yml` (or write the spec by hand).
-
-> **Status:** the full Azure lifecycle is deterministic today —
-> `generate` → `guardrail` → `deploy` → `validate --run` → `teardown`, all as
-> `forge.py` subcommands (no AI in the loop after the spec exists). `lab-spec`
-> (validation/reconciliation/manifest), `network-topology`, `infra-azure`,
-> `ad-topology`, `ad-theming`, `vuln-injection`, and `defensive-controls`
-> (Terraform + Ansible generation, themed/seeded deterministic population via
-> `scripts/population.py`, catalog-driven vulnerability injection,
-> ansible-lockdown hardening with reconciliation-derived skip_rules, EDR,
-> deception) are implemented end-to-end, and `deploy`/`teardown` render and run
-> the generated `deploy.sh`/`teardown.sh`. **`detection-lab` is deliberately not
-> built** — this project stops at PREVENT/RESPOND (hardening + Defender AV), it
-> does not stand up a SIEM. `infra-aws` is the main remaining gap. Try any of
-> the deterministic steps directly:
->
-> ```bash
-> python3 scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml
-> # writes generated/shadow-keep/lab-manifest.json
->
-> python3 scripts/forge.py generate specs/examples/single-dc-azure.yml --plan
-> # writes generated/single-dc-test/{terraform/azure,ansible}/ and, if
-> # terraform is on PATH, runs init -backend=false/validate/plan for structural
-> # checking (this deliberately skips remote state — a real deploy uses the
-> # generated backend.hcl against a bootstrapped storage account instead; see
-> # .claude/skills/infra-azure/SKILL.md. `plan` needs az login/ARM_* credentials
-> # to get past provider auth)
-> ```
-
-### Proxmox VE (on-prem)
-
-Set `provider: proxmox` in the spec to target an on-prem Proxmox VE cluster
-instead of Azure. `generate` renders `terraform/proxmox/` (bpg/proxmox
-provider) plus a Proxmox-specific `deploy.sh`/`teardown.sh`. Key differences
-from Azure (see `.claude/skills/infra-proxmox/SKILL.md`):
-
-- **Windows images are cloned from templates you maintain** (`template_map`
-  keyed by `machines[].os`). The only thing a template must have baked in is
-  **cloudbase-init** (with its UserDataPlugin enabled) — WinRM and the `ansible`
-  admin are **bootstrapped at first boot** by a cloudbase-init user-data script
-  Terraform injects (`terraform/proxmox/cloudinit/windows-bootstrap.ps1.tpl`,
-  the on-prem twin of Azure's `CustomScriptExtension`). It is idempotent and
-  runs fully offline, so a template that already has WinRM/`ansible` baked also
-  works. (A guest with *zero* in-guest agents can't be configured remotely at
-  all — that's a QEMU/Windows reality — so cloudbase-init is the one unavoidable
-  floor.)
-- **Isolation** uses the Proxmox firewall (deny-by-default per VM) + a VLAN per
-  domain on an isolated bridge; the WireGuard bastion is the only host with a
-  routable IP (static on a LAN bridge). Inter-VLAN routing is set up on the
-  bastion at deploy time (`route_lab`).
-- **State is a local Terraform backend** (documented relaxation of invariant
-  #4 — no cloud object store on-prem); `budget_alert_usd`/cost are
-  informational; `auto_shutdown` is a best-effort cron on the deploy host.
+A lab is a single YAML spec in `specs/`. Either write one by hand starting from
+an example in `specs/examples/`, or let the AI `/new-lab` step turn a
+plain-English description into a validated spec:
 
 ```bash
-python3 scripts/forge.py generate specs/examples/single-dc-proxmox.yml
-# writes generated/single-dc-proxmox-test/{terraform/proxmox,ansible}/
-
-# before deploy: fill the per-host binding + export the endpoint/token
-cp generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.example.json \
-   generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.json   # then edit
-export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
-export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-...."
-# export PROXMOX_VE_INSECURE=true   # self-signed PVE cert
-cd generated/single-dc-proxmox-test && ./deploy.sh
+/new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
 ```
 
-For the full step-by-step (host tools, what each `host.auto.tfvars.json` key is,
-API-token/`snippets`-datastore requirements, teardown), see
-[**Zero-to-deployed on Proxmox**](#zero-to-deployed-on-proxmox-from-a-fresh-clone).
+Everything after the spec exists is a plain `forge.py` command — no AI, safe to
+run unattended:
+
+```bash
+python3 scripts/forge.py generate specs/<lab>.yml          # render Terraform + Ansible + deploy.sh/teardown.sh
+python3 scripts/forge.py deploy   specs/<lab>.yml          # build the lab (see "Deploy a lab" below)
+python3 scripts/forge.py validate specs/<lab>.yml --run    # check the injected vulns are live and exploitable
+python3 scripts/forge.py teardown specs/<lab>.yml          # destroy everything, back to zero cost
+```
+
+`generate` writes a **self-contained** `generated/<lab>/` — Terraform, Ansible,
+`lab-report.md` (with every credential and the attack path), and a `deploy.sh` /
+`teardown.sh`. A generated lab can be committed and shared, and anyone can deploy
+it **without re-running `generate`**. Choose where it runs with `provider: azure`
+or `provider: proxmox` in the spec; see [Deploy a lab](#deploy-a-lab).
+
+> **Status:** the full Azure lifecycle (generate → deploy → validate → teardown)
+> is deterministic today, and Proxmox generate + deploy work the same way. The
+> project stops at PREVENT/RESPOND (hardening + Defender AV) — it does not stand
+> up a SIEM — and AWS is still on the roadmap.
 
 ## Custom machine images
 
@@ -473,422 +398,144 @@ tested against a live Azure subscription. `site.yml`'s own header comment
 carries this same note — don't assume "reset between exercises" works
 because the playbook runs cleanly today.
 
-## Deploying a generated lab
+## Deploy a lab
 
-`generate` renders artifacts into `generated/<lab>/` — gitignored, reproducible
-from the spec at any time — **including `deploy.sh` and `teardown.sh`**. The
-normal path is one command:
+One command builds the whole lab — infrastructure, the WireGuard tunnel, Active
+Directory, hardening, and the vulnerabilities — and it is safe to re-run if any
+step fails:
 
 ```bash
-python3 scripts/forge.py deploy specs/<lab>.yml      # or: ./generated/<lab>/deploy.sh
+python3 scripts/forge.py deploy specs/<lab>.yml
+# exactly the same as running the generated script yourself:
+./generated/<lab>/deploy.sh
 ```
 
-`deploy` runs the guardrail gate, then the generated `deploy.sh`, which chains
-every step below (state backend → auto-sizing → `terraform apply` → WireGuard →
-Ansible `site.yml`) idempotently, folding in every gotcha from the first real
-deploy. The manual walkthrough below is kept for understanding what the script
-does and for hand-running a single step; you don't need to run these by hand.
+When it finishes, `generated/<lab>/lab-report.md` has every credential and the
+attack path. You reach the lab **only** through the WireGuard tunnel `deploy.sh`
+brings up — nothing in the lab is exposed to the internet. Tear it all down with
+`./generated/<lab>/teardown.sh` (or `forge.py teardown`): back to zero cost.
 
-> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is the exhaustive
-> symptom→cause reference (quota, image generation mismatches, a Windows
-> Firewall default that silently blocks cross-subnet WinRM, an NTLM/CBT quirk
-> against domain controllers, and more). `deploy.sh` already encodes the happy
-> path plus the retries; reach for the runbook only when a step fails.
+### What you need (both providers)
 
-The rest of this section is a full, copy-pasteable path from a fresh clone to a
-live lab, for each provider. Pick the one matching the lab's `lab.provider`:
-[**Azure**](#zero-to-deployed-on-azure-from-a-fresh-clone) ·
-[**Proxmox**](#zero-to-deployed-on-proxmox-from-a-fresh-clone). Both use the
-same generated `deploy.sh`; the only differences are how you authenticate and
-(Proxmox) a one-time host binding file.
+- The repo cloned **with submodules** (`git clone --recurse-submodules …`, or
+  `git submodule update --init --recursive`) — `vendor/` holds the Ansible roles.
+- On the host: `terraform` (>= 1.5), `docker`, `wireguard-tools`, `openssl`,
+  `curl`, `python3`. Ansible runs inside a container `deploy.sh` starts for you —
+  you do **not** install it.
+- Passwordless sudo for the tunnel bring-up:
 
-### Zero-to-deployed on Azure (from a fresh clone)
+  ```bash
+  echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
+    | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
+  ```
 
-Every lab under `generated/<lab>/` is committed and self-contained, so someone
-who just cloned the repo can deploy it **without running `forge.py generate`**
-(and without touching `specs/` or any AI step). Full path from nothing:
+Nothing account- or host-specific is baked into a lab: credentials come from your
+environment at deploy time, and `deploy.sh` mints the lab's own infra secrets on
+the first run. The same generated lab deploys on anyone's Azure account or
+Proxmox cluster.
+
+### Deploy on Azure
+
+Also install the `az` CLI on the host. Then log in **one** of two ways:
 
 ```bash
-# 1. Clone WITH submodules — vendor/ (GOAD, ansible-lockdown, ...) holds the
-#    Ansible roles the deploy mounts; a plain clone is missing them.
-git clone --recurse-submodules <this-repo>
-cd PurpleForge        # or: git submodule update --init --recursive
+# A) your own account, interactive:
+az login && az account set --subscription <subscription-id>
 
-# 2. Host tools (once): terraform >=1.5, az CLI, docker, wireguard-tools,
-#    openssl, curl, python3. Ansible runs inside a python:3.10-slim container
-#    that deploy.sh starts for you — you do NOT install ansible on the host.
-#    Allow passwordless sudo for the WireGuard bring-up (deploy.sh runs
-#    `sudo wg-quick`):
-echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
-  | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
-
-# 3. Point at YOUR Azure account (see the next section for the two ways):
-az login && az account set --subscription <your-subscription-id>
-
-# 4. Deploy the lab — one command, no generate step:
-./generated/pirates-lab/deploy.sh          # any lab under generated/
-#   optional, without editing anything:
-#   PF_REGION=westeurope PF_VM_SIZE=Standard_B2s ./generated/pirates-lab/deploy.sh
-#   PF_OS=windows-server-2022 ./generated/pirates-lab/deploy.sh   # swap the base image
-
-# 5. Tear down to cost-zero when done:
-./generated/pirates-lab/teardown.sh
+# B) non-interactive / CI — export a service principal instead of az login:
+export ARM_TENANT_ID=<tenant> ARM_SUBSCRIPTION_ID=<sub> \
+       ARM_CLIENT_ID=<app-id> ARM_CLIENT_SECRET=<secret>
+#   create one once, from an account allowed to grant roles:
+#   az ad sp create-for-rbac --name pf-deployer --role Contributor \
+#     --scopes /subscriptions/<subscription-id>
 ```
 
-`deploy.sh` mints its own remote-state storage account and the infra keys
-(domain admin + Ansible WinRM) on this first run, auto-picks a valid VM SKU for
-your region, brings up the WireGuard tunnel, and runs the full Ansible
-`site.yml`. The population **user** passwords ship committed with the lab
-(`ansible/inventory/group_vars/all/population-secrets.yml`), so the lab is
-identical for everyone who deploys it. Nothing account-specific is baked in.
-
-### Zero-to-deployed on Proxmox (from a fresh clone)
-
-A `provider: proxmox` lab deploys onto your own Proxmox VE cluster. Same
-committed, self-contained lab; the only extras versus Azure are a one-time
-per-host binding file and Proxmox API credentials in the env (nothing
-host-specific is baked into the lab). Full path from nothing:
+Deploy:
 
 ```bash
-# 1. Clone WITH submodules (same as Azure — vendor/ holds the Ansible roles).
-git clone --recurse-submodules <this-repo>
-cd PurpleForge        # or: git submodule update --init --recursive
+./generated/<lab>/deploy.sh
+```
 
-# 2. Host tools (once): terraform >=1.5, docker, wireguard-tools, openssl, curl,
-#    python3, openssh-client. NO az CLI. Ansible runs in a python:3.10-slim
-#    container deploy.sh starts for you. Allow passwordless sudo for WireGuard:
-echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
-  | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
+`deploy.sh` creates its own remote-state storage account and auto-picks the
+cheapest available VM size for the region — you manage neither. Optional, without
+editing the spec: `PF_REGION=<region>` to deploy elsewhere, `PF_VM_SIZE=<sku>` to
+force a VM size your subscription allows.
 
-# 3. Point at YOUR Proxmox host — API token, never baked into the lab:
+### Deploy on Proxmox
+
+**1. Point at your Proxmox host** with an API token (never baked into the lab):
+
+```bash
 export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
-export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-xxxx-...."
-export PROXMOX_VE_INSECURE=true          # only if the PVE cert is self-signed
+export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-...."
+export PROXMOX_VE_INSECURE=true    # only if the PVE cert is self-signed
+```
 
-# 4. Fill the per-host binding ONCE (node/datastores/bridges/template ids):
+The token needs rights to create VMs, pools, snippets and firewall rules, and
+`openssh-client` must be on the host (the deploy reaches the bastion over SSH).
+
+**2. Fill the host binding once** — the only host-specific part. Copy the example
+and edit it:
+
+```bash
 cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
    generated/<lab>/terraform/proxmox/host.auto.tfvars.json
-$EDITOR generated/<lab>/terraform/proxmox/host.auto.tfvars.json
-
-# 5. Deploy the lab — one command, no generate step:
-./generated/<lab>/deploy.sh
-#   optional, without editing anything: clone every VM from a different template
-#   PF_TEMPLATE_ID=9002 ./generated/<lab>/deploy.sh
-
-# 6. Tear down when done (removes every VM in the lab's Proxmox pool):
-./generated/<lab>/teardown.sh
 ```
 
-What you fill in `host.auto.tfvars.json` (the only host-specific values —
-everything else is spec-derived and identical on any cluster):
-
-| Key | What it is |
+| Key | What to put |
 | --- | --- |
-| `node_name` | the PVE node the VMs are created on (`pvesh get /nodes`) |
+| `node_name` | your PVE node (`pvesh get /nodes`) |
 | `datastore_id` | datastore for VM disks, e.g. `local-lvm` |
-| `snippets_datastore_id` | datastore with the **`snippets`** content type enabled (holds the bastion + Windows-bootstrap cloud-init); often `local` |
-| `mgmt_bridge` / `lab_bridge` | routable bridge for the bastion / isolated bridge for lab AD traffic (set equal if you have only one) |
-| `template_map` | `os` → template **vm_id** to clone (only the `os` values this lab uses need an entry) |
-| `bastion_template_id` | vm_id of an Ubuntu 22.04+ cloud-init template (with qemu-guest-agent) for the WireGuard bastion |
-| `jumpbox_external_ip` / `_prefix` / `_gateway` | the bastion's routable address on `mgmt_bridge` (how you reach WireGuard) |
+| `snippets_datastore_id` | a datastore with the **Snippets** content type enabled (often `local`) |
+| `mgmt_bridge` / `lab_bridge` | routable bridge for the bastion / isolated bridge for the lab (set both the same if you only have one) |
+| `template_map` | each `os` in the lab → the **vm_id** of your Windows template to clone |
+| `bastion_template_id` | vm_id of an Ubuntu 22.04+ cloud-init template (with qemu-guest-agent) |
+| `jumpbox_external_ip` / `_prefix` / `_gateway` | the bastion's address on `mgmt_bridge` (how you reach WireGuard) |
 
-Requirements specific to Proxmox:
+Your **Windows templates** need only **cloudbase-init** installed (with its
+UserDataPlugin enabled). WinRM and the `ansible` account are set up automatically
+on first boot — you do **not** prepare a "golden" image. See
+[`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md) for a minimal-template
+checklist.
 
-- **API token** with rights to create VMs, pools, snippets and firewall rules on
-  the target node (e.g. a token for a `PVEAdmin`/root user). Enable the
-  **`snippets`** content type on `snippets_datastore_id`
-  (*Datacenter → Storage → <ds> → Content → Snippets*) — the deploy uploads
-  cloud-init there.
-- **Windows templates** referenced by `template_map` need only **cloudbase-init**
-  baked in (with its `UserDataPlugin` enabled); WinRM and the `ansible` account
-  are bootstrapped at first boot. See
-  [`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md) for a minimal-template
-  checklist.
-- **No remote-state bootstrap** (unlike Azure): the Proxmox layer uses a local
-  Terraform backend, so there is no storage account to create. `auto_shutdown`
-  is a best-effort cron installed on this deploy host; cost is informational
-  (no billing on-prem).
-
-`deploy.sh` mints the infra keys (domain admin + Ansible WinRM) on first run,
-applies Terraform, brings up the WireGuard tunnel, sets up inter-VLAN routing on
-the bastion, and runs the full Ansible `site.yml` — exactly like Azure. The lab
-is reachable **only** through the WireGuard tunnel (CLAUDE.md invariant #1).
-
-### Deploying a shared lab on your own (or another) Azure account
-
-A generated lab is account/subscription-independent: `deploy.sh` bakes **no**
-credentials and **no** subscription id — it deploys into whatever Azure identity
-you authenticate with, and mints its own remote-state storage account and infra
-secrets. So sharing a lab is just sharing the repo (or the `generated/<lab>/`
-folder); the recipient never re-runs `forge.py generate`. Pick the target
-account one of two ways:
-
-**A — Interactive user login (simplest, your own account):**
+**3. Deploy:**
 
 ```bash
-az login                               # sign in to the target account
-az account set --subscription <sub-id> # pick the target subscription
-./generated/<lab>/deploy.sh            # deploys into that subscription
-```
-
-**B — Service principal (CI, or a non-interactive / someone else's account):**
-export the four `ARM_*` variables before running — no `az login` needed:
-
-```bash
-export ARM_TENANT_ID=<tenant-id>
-export ARM_SUBSCRIPTION_ID=<subscription-id>
-export ARM_CLIENT_ID=<sp-app-id>
-export ARM_CLIENT_SECRET=<sp-password>
 ./generated/<lab>/deploy.sh
 ```
 
-Create the service principal once, from an account allowed to grant roles
-(the `--role`/`--scopes` are **required** — without them the SP gets zero
-access and Terraform 403s on every resource):
+Optional: `PF_TEMPLATE_ID=<vmid>` clones every VM from one template instead of
+the per-OS `template_map`.
+
+### Using a different image or template
+
+Redeploy the same lab on a newer or custom image without editing the spec or
+regenerating:
+
+- **Azure:** `PF_OS=windows-server-2022` (a stock image) or
+  `PF_IMAGE_ID=<resource-id>` (your own managed image / gallery version).
+- **Proxmox:** `PF_TEMPLATE_ID=<vmid>`.
 
 ```bash
-az ad sp create-for-rbac --name pf-deployer \
-  --role Contributor --scopes /subscriptions/<subscription-id>
-# -> prints appId (ARM_CLIENT_ID), password (ARM_CLIENT_SECRET), tenant (ARM_TENANT_ID)
-```
-
-`ARM_SUBSCRIPTION_ID` always wins over the `az` default, so exporting just that
-targets a specific subscription without `az account set`. To deploy in a
-different region or force a VM SKU your account/region allows — without editing
-the spec — export `PF_REGION=<region>` and/or `PF_VM_SIZE=<sku>` (also
-`PF_TFSTATE_RG=<rg>` to rename the remote-state resource group).
-
-#### Redeploying the same lab on a different image (no regenerate)
-
-A lab bakes an OS per host at generate time (e.g. `windows-server-2016`), but a
-later deploy can swap the **backing image** without touching the spec —
-`deploy.sh` turns these env vars into a gitignored `*.auto.tfvars.json` overlay
-applied to **every** Windows VM:
-
-| Env var (Azure) | Effect |
-| --- | --- |
-| `PF_OS=<key>` | Use a stock image: `windows-server-2016\|2019\|2022\|2025`, `windows-10-22h2`, `windows-11-23h2` |
-| `PF_IMAGE_ID=<resource-id>` | Clone a custom managed-image / Shared Image Gallery version (e.g. a golden image with EDR pre-installed); wins over `PF_OS` |
-| `PF_IMAGE_PUBLISHER` + `PF_IMAGE_OFFER` + `PF_IMAGE_SKU` | A marketplace image PurpleForge has no key for (set all three) |
-| `PF_IMAGE_VERSION=<ver>` | Pin the marketplace image version (default `latest`) |
-
-```bash
-# same committed lab, redeployed on Windows Server 2022:
 PF_OS=windows-server-2022 ./generated/<lab>/deploy.sh
-# or on a custom golden image:
-PF_IMAGE_ID=/subscriptions/.../images/win2022-edr/versions/1.0.0 ./generated/<lab>/deploy.sh
 ```
 
-On **Proxmox** the equivalent is `PF_TEMPLATE_ID=<vmid>`, cloning every Windows
-VM from that template instead of the per-OS `template_map` in
-`host.auto.tfvars.json` (the template only needs cloudbase-init — WinRM + the
-`ansible` admin are bootstrapped at first boot; see the Proxmox section above).
+This swaps only the base image; the hardening baseline stays as generated. Full
+details, all variables, and per-machine pins:
+[`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md).
 
-These swap only the backing image; the ansible-lockdown hardening baseline still
-targets the OS chosen at generate time — regenerate the spec to change the
-CIS/STIG baseline itself. A per-host `machines[].image_id` / `machines[].template_id`
-pin in the spec still wins over these deploy-time overrides. Full variable
-reference, the Azure image map and its Gen2/NVMe/marketplace gotchas, and the
-Proxmox template + first-boot bootstrap: [`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md).
+### After deploy
 
-Secrets on a shared lab: the population **user** passwords are fixed at lab
-creation and ship with it (`ansible/inventory/group_vars/all/population-secrets.yml`),
-so every deploy uses the same ones; the **infra** keys (domain admin + Ansible
-WinRM) are gitignored and minted per-deployer by `deploy.sh` on first run.
+- **Check it worked:** `python3 scripts/forge.py validate specs/<lab>.yml --run`
+  confirms each vulnerability is applied and exploitable, and writes
+  `validation-report.md`. Credentials and the attack path are in
+  `generated/<lab>/lab-report.md`.
+- **Tear it down:** `./generated/<lab>/teardown.sh` (or `forge.py teardown`)
+  destroys everything and verifies nothing billable is left.
 
-> **Reference only (Azure manual walkthrough).** You do **not** need to run the
-> steps in this subsection — the generated `deploy.sh` performs all of them.
-> This is the Azure path; for Proxmox use the
-> [Proxmox subsection above](#zero-to-deployed-on-proxmox-from-a-fresh-clone).
-> Kept to explain what the script does and to hand-run a single step when
-> debugging.
-
-### Prerequisites
-
-- `terraform` >= 1.5, `az` CLI (logged in: `az login`)
-- `ansible-core` pinned to the version GOAD itself was validated against —
-  `vendor/GOAD/requirements.yml` fixes `ansible-core==2.12.6`, which requires
-  a **Python 3.8–3.10 control node** (it crashes on 3.11/3.12 — a Python
-  import-hook incompatibility, not an ansible.cfg setting). If your host
-  Python is newer, don't fight it with pyenv/deadsnakes — run Ansible inside
-  a `python:3.10-slim` Docker container instead (`--network host` so it can
-  see your WireGuard interface); see `AZURE-DEPLOY-RUNBOOK.md` step 6 for the
-  exact commands, including the `community.general` Galaxy-client
-  workaround. Otherwise, use a venv on Python 3.10:
-  `pip install -r vendor/GOAD/requirements.yml`
-- The collections GOAD itself depends on, pinned to the same versions:
-  `ansible-galaxy collection install -r vendor/GOAD/ansible/requirements.yml`
-  (newer `community.windows`/`ansible.windows` remove modules — e.g.
-  `win_domain`, `win_domain_group` — that GOAD's roles still use; installing
-  a newer collection version than this pin will break `ad-topology.yml`.
-  **`community.general`, unpinned in that same file, will fail to install
-  under `ansible-core` 2.12.6's Galaxy client** — see the runbook for the
-  direct-tarball-download workaround.)
-- A WireGuard client (the only way to reach anything in the lab — see
-  CLAUDE.md invariant #1)
-
-### 1. Bootstrap remote Terraform state (once per Azure subscription)
-
-`versions.tf` declares a partial `backend "azurerm" {}` on purpose — it
-never falls back to local state (CLAUDE.md invariant #4). The storage
-account has to exist before any lab's own `terraform init` can point at it:
-
-```bash
-az group create -n purpleforge-tfstate-rg -l westeurope
-az storage account create -n <globally-unique-name> -g purpleforge-tfstate-rg -l westeurope --sku Standard_LRS
-az storage container create -n tfstate --account-name <globally-unique-name>
-```
-
-Edit `generated/<lab>/terraform/azure/backend.hcl`'s `storage_account_name`
-to match — the generated placeholder (`purpleforgetfstate`) is not real,
-Azure storage account names are a global namespace. One storage account
-serves every lab (one blob key per lab, from `lab.name`), it is not
-per-lab. See `.claude/skills/infra-azure/SKILL.md`.
-
-### 2. Apply the infrastructure
-
-```bash
-cd generated/<lab>/terraform/azure
-terraform init -backend-config=backend.hcl
-terraform apply
-```
-
-Creates the isolated VNet, the WireGuard bastion (the only host with a
-public IP), and the Windows VMs (private-IP-only, unreachable except
-through the bastion). `terraform output bastion_public_ip` gives you the
-address for the next step.
-
-### 3. Connect over WireGuard
-
-No peer is provisioned automatically — this is a manual, documented step
-(see `.claude/skills/network-topology/SKILL.md`):
-
-```bash
-ssh -i ssh_keys/bastion.pem purpleforge@<bastion_public_ip>
-sudo cat /etc/wireguard/publickey        # generated on first boot, not known to Terraform
-sudo wg set wg0 peer <your-client-pubkey> allowed-ips <your-tunnel-ip>/32
-```
-
-Point your local WireGuard client at `<bastion_public_ip>:51820` with that
-server public key. Only once connected can you reach the management subnet
-and, through it, every port on the Windows hosts (WinRM, SMB, RDP, ...) —
-there is no other path to them.
-
-### 4. Deploy AD topology, theming, hardening, and vulnerabilities
-
-```bash
-cd ../../ansible
-ansible-playbook -i inventory/hosts.yml playbooks/site.yml
-```
-
-`site.yml` is the single entry point — it already sequences
-ad-topology → ad-theming → defensive-controls (hardening, in the CIS/STIG
-level ansible-lockdown's own README documents as `--tags`-selected; see
-`.claude/skills/defensive-controls/SKILL.md` for the exact `--tags` value
-your baseline needs) → vuln-injection, so hardening always lands before the
-intentional gaps, per CLAUDE.md's deploy-order invariant.
-
-### Validating what actually got applied
-
-`site.yml` running cleanly proves Ansible executed without error — it
-doesn't prove the live host state matches what `lab-report.md` says was
-*intended*. Two ways to check, both from `generated/<lab>/ansible/`:
-
-**1. `verify.yml` — automated, but unverified against a real host** (this
-repo has never had a live Windows host to test it against; read as
-"syntax-checked and carefully cross-referenced against each injection
-task's own logic," not "proven correct against a real deploy"):
-
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/verify.yml
-```
-
-It checks, per host, exactly what `lab-report.md` says was requested: AD
-DNSRoot + population counts (against `lab-manifest.json`'s
-`population_plans`) and each theme's `extra_groups` on the
-domain controllers; every fixed hardening control from `defense.hardening`
-(LSA PPL, SMB signing, NTLMv2-only, Credential Guard, LLMNR/NBT-NS/mDNS,
-LAPS, plus LDAP signing and Protected Users membership on DCs only); Defender
-AV's real-time/network/tamper protection and ASR rule IDs when `defender-av`
-is configured; and, per injected vulnerability, the specific registry key,
-SPN, ACE, or account property that catalog entry sets — printing
-`SKIPPED: no verify.yml check exists yet` for any vulnerability id it
-doesn't have a check for yet.
-
-**2. Ad-hoc commands, spot-checking anything `verify.yml` doesn't cover** —
-`lab-report.md` has the exact account names/target hosts/expected values for
-*your* lab; the examples below use `medieval-2dom-azure`'s:
-
-```bash
-# Connectivity
-ansible all -i inventory/hosts.yml -m ansible.windows.win_ping
-
-# AD domain / DC count / trust (child domain's trust to its parent is automatic)
-ansible domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-ADDomain | Select-Object DNSRoot,DomainMode"
-ansible child_domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-ADTrust -Filter *"
-
-# Population — real names/passwords already in lab-report.md; this just confirms the live counts match
-ansible domain_controllers:child_domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "'{0} users, {1} groups, {2} computers' -f (Get-ADUser -Filter *).Count,(Get-ADGroup -Filter *).Count,(Get-ADComputer -Filter *).Count"
-
-# A theme group (one per catalog/themes/<theme>.yml's extra_groups — names in lab-report.md)
-ansible domain_controllers -i inventory/hosts.yml -m ansible.windows.win_shell -a "Get-ADGroup -Identity 'Small Council'"
-
-# Hardening — pick the control from lab-report.md's "Fixed controls" table
-ansible all -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name LMCompatibilityLevel,RunAsPPL -ErrorAction SilentlyContinue"
-ansible all -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' -Name RequireSecuritySignature"
-
-# EDR (Defender AV)
-ansible all -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-MpPreference | Select-Object DisableRealtimeMonitoring,EnableNetworkProtection,AttackSurfaceReductionRules_Ids"
-
-# A vulnerability — account name/target host from lab-report.md's "Vulnerability-injection accounts" table
-ansible kingdom-dc01 -i inventory/hosts.yml -m ansible.windows.win_shell \
-  -a "Get-ADUser -Identity svc-sqlreport -Properties ServicePrincipalNames | Select -ExpandProperty ServicePrincipalNames"
-```
-
-### Tearing down: `forge.py destroy`
-
-`terraform destroy` alone only removes what Terraform's own state tracks —
-it doesn't prove nothing billable was left behind (a failed partial destroy,
-a resource created out-of-band, etc.). `forge.py destroy` runs it and then
-independently asks Azure whether the lab's resource group (everything a lab
-creates lives inside the one `azurerm_resource_group` named after
-`lab.name`) is actually gone, rather than trusting a clean Terraform exit
-code:
-
-```bash
-python3 scripts/forge.py destroy specs/examples/simpsons-lab-azure.yml
-#   terraform init -backend-config=backend.hcl (same backend.hcl deploy used)
-#   terraform destroy                           (interactive confirmation, same as plain terraform)
-#   az group show -n springfield-lab             <- the actual verification step
-# OK: springfield-lab destroyed and verified — no expected leftover cost.
-```
-
-- `--check-only` runs `terraform plan -destroy` instead of destroying
-  anything — preview only.
-- `--yes` passes `-auto-approve` to `terraform destroy` (default: Terraform's
-  own interactive prompt, not bypassed unless you ask).
-- The `az group show` check distinguishes "confirmed gone"
-  (`ResourceGroupNotFound`) from "az CLI errored for some other reason, e.g.
-  not logged in" — an ambiguous error is reported as *could not verify*, not
-  silently treated as a successful teardown. If `az` isn't installed at all,
-  the check is skipped with an explicit warning rather than failing.
-- If a lab was generated for more than one provider, it iterates every
-  `terraform/<provider>/` subdirectory found; only `azure` has a
-  post-destroy verification implemented today.
-
-### What's still manual / missing
-
-- The deploy steps are now chained by `forge.py deploy` (the generated
-  `deploy.sh`); the walkthrough above is for understanding/one-off steps.
-- Adding the WireGuard peer is automated inside `deploy.sh` (step 4 of the
-  script); the manual commands are kept for reference.
-- No clean-state snapshot is taken automatically after provisioning and before
-  an attack — see the "Known gap" note above. `deploy.sh` does not snapshot;
-  `teardown.sh` does sweep any hand-made snapshots so they don't block teardown.
-- `infra-aws` is unimplemented — Azure only today.
+> **If a step fails:** the generated `deploy.sh` already encodes the full happy
+> path plus retries, so re-running usually clears transient errors.
+> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is the symptom→cause
+> reference (quota, image-generation mismatches, WinRM/NTLM quirks) and documents
+> the manual, step-by-step equivalent of what the script does. `infra-aws` is not
+> built yet — Azure and Proxmox only today.
