@@ -51,14 +51,17 @@ locals {
   # windows-server-2016-gensecond reports "SCSI" only — so a 2016 DC cannot
   # run on an NVMe-only size at all (no Gen2 SKU fixes it; it's the guest
   # image, not the hypervisor generation). Pick 2019+ for such subscriptions.
-  os_image_map = {
+  # var.custom_os_images (set at deploy time from PF_IMAGE_PUBLISHER/OFFER/SKU)
+  # is merged LAST so a deployer can add a Windows image PurpleForge ships no
+  # mapping for, or override a built-in entry, without editing this file.
+  os_image_map = merge({
     "windows-server-2016" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2016-datacenter-gensecond" }
     "windows-server-2019" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2019-datacenter-gensecond" }
     "windows-server-2022" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2022-datacenter-g2" }
     "windows-server-2025" = { publisher = "MicrosoftWindowsServer", offer = "WindowsServer", sku = "2025-datacenter-g2" }
     "windows-10-22h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-10", sku = "win10-22h2-pro-g2" }
     "windows-11-23h2"     = { publisher = "MicrosoftWindowsDesktop", offer = "Windows-11", sku = "win11-23h2-avd" }
-  }
+  }, var.custom_os_images)
 
   size_map = merge({
     "domain-controller" = "Standard_B2s"
@@ -67,6 +70,26 @@ locals {
   }, var.vm_size_overrides)
 
   machines_by_name = { for m in var.machines : m.name => m }
+
+  # Effective backing image per machine, resolving the deploy-time overrides
+  # (var.os_overrides / var.image_id_overrides, written by deploy.sh from
+  # PF_OS / PF_IMAGE_ID) against the values baked into machines[] at generate
+  # time. Precedence, most specific first:
+  #   image_id : per-machine machines[].image_id pin  >  per-role image_id_overrides
+  #   os       : per-role os_overrides                 >  per-machine machines[].os
+  # A resolved image_id wins over any os (source_image_id and a marketplace
+  # source_image_reference are mutually exclusive — see the VM resource below).
+  # Not coalesce(): it errors when BOTH are null (the common no-override case),
+  # but null is exactly what we need there to fall through to the marketplace
+  # source_image_reference below.
+  effective_image_id = {
+    for k, m in local.machines_by_name :
+    k => m.image_id != null ? m.image_id : lookup(var.image_id_overrides, m.role, null)
+  }
+  effective_os = {
+    for k, m in local.machines_by_name :
+    k => lookup(var.os_overrides, m.role, m.os)
+  }
 
   # MicrosoftWindowsDesktop client-OS images (Windows 10/11) are marketplace
   # offers gated behind a per-publisher/offer/plan Microsoft.MarketplaceOrdering
@@ -77,8 +100,16 @@ locals {
   # need no agreement. Keyed by os (not by sku) and only for os values
   # actually used by a machine in this spec, so a lab with only server roles
   # creates zero of these.
+  # Keyed on the EFFECTIVE os (after os_overrides), and only for hosts that
+  # actually land on a marketplace image (no resolved image_id), so a PF_OS
+  # that swaps a server lab onto a client SKU still accepts the right agreement,
+  # and an image_id override needs none.
   client_os_agreements = {
-    for os in toset([for m in var.machines : m.os if local.os_image_map[m.os].publisher == "MicrosoftWindowsDesktop"]) :
+    for os in toset([
+      for k, m in local.machines_by_name :
+      local.effective_os[k]
+      if local.effective_image_id[k] == null && local.os_image_map[local.effective_os[k]].publisher == "MicrosoftWindowsDesktop"
+    ]) :
     os => local.os_image_map[os]
   }
 }
@@ -127,21 +158,21 @@ resource "azurerm_windows_virtual_machine" "windows" {
   }
 
   # source_image_id and source_image_reference are mutually exclusive in
-  # azurerm_windows_virtual_machine — machines[].image_id (a managed image or
-  # Shared Image Gallery version resource ID, e.g. a golden workstation image
-  # with an EDR agent pre-installed) overrides the marketplace publisher/
-  # offer/sku lookup for os when set. `os` is still required either way — it
-  # still drives which ansible-lockdown role/OS-specific Ansible behavior
-  # applies downstream, independent of which image backs the VM.
-  source_image_id = each.value.image_id
+  # azurerm_windows_virtual_machine — a resolved image_id (machines[].image_id
+  # pin or the deploy-time image_id_overrides, e.g. a golden image with an EDR
+  # agent pre-installed) overrides the marketplace publisher/offer/sku lookup.
+  # The effective os (baked machines[].os, possibly replaced by the deploy-time
+  # os_overrides) still drives which ansible-lockdown role/OS-specific Ansible
+  # behavior applies downstream, independent of which image backs the VM.
+  source_image_id = local.effective_image_id[each.key]
 
   dynamic "source_image_reference" {
-    for_each = each.value.image_id == null ? [1] : []
+    for_each = local.effective_image_id[each.key] == null ? [1] : []
     content {
-      publisher = local.os_image_map[each.value.os].publisher
-      offer     = local.os_image_map[each.value.os].offer
-      sku       = local.os_image_map[each.value.os].sku
-      version   = "latest"
+      publisher = local.os_image_map[local.effective_os[each.key]].publisher
+      offer     = local.os_image_map[local.effective_os[each.key]].offer
+      sku       = local.os_image_map[local.effective_os[each.key]].sku
+      version   = var.image_version_override
     }
   }
 

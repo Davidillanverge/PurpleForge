@@ -18,6 +18,14 @@
 # template ids) from host.auto.tfvars.example.json. The Windows templates it
 # references MUST have WinRM + the local `ansible` admin + cloudbase-init baked
 # in (Proxmox has no VM extension to bootstrap WinRM, unlike Azure).
+#
+# TEMPLATE OVERRIDE — redeploy the SAME lab from a different golden template
+# without regenerating or editing template_map (the lab was e.g. generated
+# against a Server 2016 template; a later deploy wants a 2022 / EDR-baked one):
+#   PF_TEMPLATE_ID=<vmid>   clone EVERY Windows VM from this template vm_id,
+#                           overriding the os->template_map lookup. The template
+#                           still needs WinRM + `ansible` admin + cloudbase-init.
+# The hardening baseline still targets the os chosen at generate time.
 # =============================================================================
 set -uo pipefail   # deliberately NOT -e: failures are handled explicitly (retries)
 
@@ -84,6 +92,31 @@ with open(os.environ["ANS_OUT"], "w") as f:
     f.write("# minted by deploy.sh — gitignored, never commit\n")
     json.dump({"pf_admin_password": admin, "pf_ansible_password": ansible}, f, indent=2); f.write("\n")
 print("  minted domain-admin + ansible keys (population passwords untouched)")
+PY
+}
+
+# ---- optional template override (PF_TEMPLATE_ID) ----------------------------
+# Turn PF_TEMPLATE_ID into an auto.tfvars overlay that overrides the os->template
+# lookup baked into host.auto.tfvars.json, applied to EVERY Windows VM (all
+# roles). Unset => remove any stale overlay so a plain re-run reverts to the
+# per-os template_map.
+pick_template() {
+  log "0c. Template override (PF_TEMPLATE_ID)"
+  local overlay="$TF_DIR/template.auto.tfvars.json"
+  if [ -z "${PF_TEMPLATE_ID:-}" ]; then
+    rm -f "$overlay"
+    echo "  no template override — cloning from template_map[os] (host.auto.tfvars.json)"
+    return 0
+  fi
+  case "$PF_TEMPLATE_ID" in
+    ''|*[!0-9]*) die "PF_TEMPLATE_ID must be a numeric Proxmox vm_id, got '$PF_TEMPLATE_ID'";;
+  esac
+  ROLES_JSON='{{ roles_json }}' TID="$PF_TEMPLATE_ID" python3 - "$overlay" <<'PY'
+import json, os, sys
+roles = json.loads(os.environ["ROLES_JSON"])
+doc = {"template_id_overrides": {r: int(os.environ["TID"]) for r in roles}}
+open(sys.argv[1], "w").write(json.dumps(doc, indent=2) + "\n")
+print("  wrote " + sys.argv[1] + ": all roles -> template vm_id " + os.environ["TID"])
 PY
 }
 
@@ -261,6 +294,7 @@ HELPER
 main() {
   preflight
   ensure_secrets
+  pick_template
   tf_apply
   wg_up
   route_lab

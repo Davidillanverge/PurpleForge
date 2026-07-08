@@ -17,6 +17,9 @@ generated/**/*.tfstate
 generated/**/*.tfstate.*
 generated/**/sizes.auto.tfvars.json
 generated/**/region.auto.tfvars.json
+# deploy-time image/template overrides (PF_OS / PF_IMAGE_* / PF_TEMPLATE_ID)
+generated/**/images.auto.tfvars.json
+generated/**/template.auto.tfvars.json
 # Proxmox: per-deployer host binding (node/bridges/datastore/template ids).
 # The committed host.auto.tfvars.example.json stays tracked as the reference.
 generated/**/host.auto.tfvars.json

@@ -112,6 +112,12 @@ variable "template_map" {
   type        = map(number)
 }
 
+variable "template_id_overrides" {
+  description = "Deploy-time per-role template override (keys: domain-controller, member-server, workstation) -> Proxmox template vm_id to clone for every VM of that role, regardless of its os. Set by deploy.sh from PF_TEMPLATE_ID so the SAME lab can redeploy from a newer/different golden template (e.g. Server 2022, or one with EDR pre-installed) without regenerating or editing template_map. A per-host machines[].template_id pin still wins. Empty (default) = resolve each host through template_map[os]. The template must still have WinRM + the `ansible` admin + cloudbase-init baked in. NOTE: the hardening baseline still targets the os set at generate time."
+  type        = map(number)
+  default     = {}
+}
+
 variable "bastion_template_id" {
   description = "vm_id of an Ubuntu 22.04+ cloud-init template for the WireGuard bastion (cloud-init + qemu-guest-agent installed)."
   type        = number

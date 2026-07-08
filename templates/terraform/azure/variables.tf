@@ -78,6 +78,34 @@ variable "vm_size_overrides" {
   default     = {}
 }
 
+variable "os_overrides" {
+  description = "Deploy-time per-role Windows image override (keys: domain-controller, member-server, workstation), each a value present in windows.tf's local.os_image_map (or added via custom_os_images) — e.g. \"windows-server-2022\". Set by deploy.sh from PF_OS, and overrides the os baked into machines[] at generate time so the SAME committed lab can redeploy on a newer/different stock Windows image without regenerating. A per-machine machines[].image_id pin still wins. Empty (default) = every VM keeps its baked os. NOTE: this swaps only the backing marketplace image — the ansible-lockdown hardening baseline still targets the os chosen at generate time (regenerate the spec to change that)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "image_id_overrides" {
+  description = "Deploy-time per-role custom image override (same role keys as os_overrides): a managed image or Shared Image Gallery version resource ID cloned for every VM of that role — e.g. a golden image with an EDR agent/tooling pre-installed. Set by deploy.sh from PF_IMAGE_ID. Takes precedence over os/os_overrides for that role (a source_image_id and a marketplace source_image_reference are mutually exclusive). A per-machine machines[].image_id pin still wins over this. Empty (default) = use the marketplace image for os."
+  type        = map(string)
+  default     = {}
+}
+
+variable "custom_os_images" {
+  description = "Extra marketplace image definitions merged over windows.tf's built-in os->{publisher,offer,sku} map, letting os_overrides (PF_OS) name a Windows image PurpleForge ships no mapping for (a specific SKU or a non-default publisher). Set by deploy.sh from PF_IMAGE_PUBLISHER/PF_IMAGE_OFFER/PF_IMAGE_SKU under the key given by PF_OS. Keys already in the built-in map are overridden."
+  type = map(object({
+    publisher = string
+    offer     = string
+    sku       = string
+  }))
+  default = {}
+}
+
+variable "image_version_override" {
+  description = "Marketplace image version used for the source_image_reference of every marketplace-backed VM (default \"latest\" = current behavior). Set by deploy.sh from PF_IMAGE_VERSION; typically paired with PF_IMAGE_SKU to pin a specific custom image version. Hosts using image_id/image_id_overrides ignore this (they clone by resource ID)."
+  type        = string
+  default     = "latest"
+}
+
 variable "wireguard_port" {
   description = "UDP port the bastion's WireGuard interface listens on. This is the ONLY inbound port ever exposed to the internet in this template."
   type        = number

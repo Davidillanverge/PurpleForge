@@ -7,7 +7,7 @@
 # transient failures documented in AZURE-DEPLOY-RUNBOOK.md.
 #
 #   ./deploy.sh            # full deploy
-#   ./deploy.sh --sizes-only   # only (re)write sizes.auto.tfvars.json and exit
+#   ./deploy.sh --sizes-only   # only (re)write the sizes/images auto.tfvars and exit
 #
 # Prereqs (once per machine): terraform az docker wireguard-tools openssl curl.
 #
@@ -46,6 +46,22 @@ LAB="{{ lab_name }}"
 #   PF_REGION=<azure-region>   override the region (default: the spec's region)
 #   PF_VM_SIZE=<sku>           force a VM SKU your account/region supports
 #   PF_TFSTATE_RG=<rg-name>    override the remote-state resource group name
+#
+# IMAGE OVERRIDES — redeploy the SAME lab on a different Windows image without
+# regenerating (the lab was e.g. generated for windows-server-2016; a later
+# deploy wants 2022 or a golden image). All apply to EVERY Windows VM:
+#   PF_OS=<os>                 stock image key: windows-server-2016|2019|2022|
+#                              2025, windows-10-22h2, windows-11-23h2 (default:
+#                              each host's os baked at generate time)
+#   PF_IMAGE_ID=<resource-id>  clone a custom managed-image / Shared Image
+#                              Gallery version instead (e.g. a golden image with
+#                              EDR pre-installed); wins over PF_OS
+#   PF_IMAGE_PUBLISHER=<p> PF_IMAGE_OFFER=<o> PF_IMAGE_SKU=<s>
+#                              a marketplace image PurpleForge has no key for
+#                              (set all three; PF_OS, if given, names the key)
+#   PF_IMAGE_VERSION=<ver>     pin the marketplace image version (default latest)
+# The hardening baseline still targets the os chosen at generate time — swap the
+# backing image freely, but regenerate the spec to change the CIS/STIG baseline.
 REGION="${PF_REGION:-{{ region }}}"
 SUPERNET="{{ supernet }}"
 DOMAIN="{{ domain }}"
@@ -207,6 +223,57 @@ PY
   echo "  wrote $TF_DIR/region.auto.tfvars.json (location=$REGION)"
 }
 
+# ---- optional image override (PF_OS / PF_IMAGE_* ) --------------------------
+# Same idiom as pick_sizes: turn the PF_* env vars into an auto.tfvars overlay
+# that overrides the os/image baked into terraform.tfvars.json at generate time,
+# applied to EVERY Windows VM (all roles). No override env set => remove any
+# stale overlay so a plain re-run reverts to the generate-time images.
+pick_images() {
+  log "2b. Image override (PF_OS / PF_IMAGE_*)"
+  local images_file="$TF_DIR/images.auto.tfvars.json"
+  if [ -z "${PF_OS:-}" ] && [ -z "${PF_IMAGE_ID:-}" ] && [ -z "${PF_IMAGE_SKU:-}" ] \
+     && [ -z "${PF_IMAGE_PUBLISHER:-}" ] && [ -z "${PF_IMAGE_OFFER:-}" ] && [ -z "${PF_IMAGE_VERSION:-}" ]; then
+    rm -f "$images_file"
+    echo "  no image override — using the images baked at generate time"
+    return 0
+  fi
+  ROLES_JSON='{{ roles_json }}' python3 - "$images_file" <<'PY'
+import json, os, sys
+roles = json.loads(os.environ["ROLES_JSON"])
+def env(k):
+    v = os.environ.get(k, "").strip()
+    return v or None
+os_key   = env("PF_OS")
+image_id = env("PF_IMAGE_ID")
+pub, off, sku = env("PF_IMAGE_PUBLISHER"), env("PF_IMAGE_OFFER"), env("PF_IMAGE_SKU")
+ver      = env("PF_IMAGE_VERSION")
+doc = {}
+
+# A full marketplace triple defines/overrides a custom image entry, keyed by
+# PF_OS if given (else a synthetic key), and forces every role onto it.
+if pub and off and sku:
+    key = os_key or "__pf_custom_image__"
+    doc["custom_os_images"] = {key: {"publisher": pub, "offer": off, "sku": sku}}
+    doc["os_overrides"] = {r: key for r in roles}
+elif any([pub, off, sku]):
+    sys.stderr.write("PF_IMAGE_PUBLISHER/OFFER/SKU must all be set together — ignoring the partial set\n")
+
+# A stock os key (no custom triple) just remaps every role to it.
+if os_key and "os_overrides" not in doc:
+    doc["os_overrides"] = {r: os_key for r in roles}
+
+# A custom managed-image / SIG version wins over any os for every role.
+if image_id:
+    doc["image_id_overrides"] = {r: image_id for r in roles}
+
+if ver:
+    doc["image_version_override"] = ver
+
+open(sys.argv[1], "w").write(json.dumps(doc, indent=2) + "\n")
+print("  wrote " + sys.argv[1] + ": " + json.dumps(doc))
+PY
+}
+
 # ---- terraform apply (with the flags the runbook proved necessary) ----------
 tf_apply() {
   log "3. terraform init + apply"
@@ -341,6 +408,7 @@ main() {
   ensure_secrets
   bootstrap_state
   pick_sizes
+  pick_images
   if [ "${1:-}" = "--sizes-only" ]; then log "done (--sizes-only)"; exit 0; fi
   tf_apply
   wg_up

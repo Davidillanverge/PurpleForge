@@ -1,0 +1,85 @@
+#ps1_sysnative
+# =============================================================================
+# PurpleForge — Windows first-boot bootstrap, run by cloudbase-init's
+# UserDataPlugin on the cloned VM. This is the on-prem twin of the Azure layer's
+# ConfigureRemotingForAnsible.ps1 CustomScriptExtension: it means the Proxmox
+# template does NOT need WinRM or the `ansible` account pre-baked — only
+# cloudbase-init (which is required anyway for the static IP). Everything below
+# is idempotent, so a template that already has these baked is unharmed.
+#
+# It must run fully OFFLINE: the lab bridge is isolated (no internet uplink), so
+# nothing is downloaded — the WinRM setup is inlined here, not fetched.
+#
+# Rendered by Terraform (templatefile): the dollar-brace tokens are Terraform
+# vars (admin_username / admin_password / ansible_password / supernet).
+# PowerShell variables deliberately use the brace-less $name form so Terraform
+# does not treat them as interpolation.
+# =============================================================================
+$ErrorActionPreference = "Stop"
+
+Start-Transcript -Path "$env:SystemDrive\pf-bootstrap.log" -Append -ErrorAction SilentlyContinue | Out-Null
+
+# --- Local admin accounts --------------------------------------------------
+# purpleforge  : the domain-admin-to-be. The GOAD domain_controller role renames
+#                this local account to the real Administrator at DC promotion, so
+#                its LOGIN password must be admin_password (see forge.py
+#                build_ansible_groups). cloudbase-init's user_account also sets
+#                this; re-asserting here is a harmless belt-and-braces in case a
+#                custom user-data drops cipassword.
+# ansible      : the dedicated WinRM automation account Ansible connects as
+#                (inventory ansible_user: ansible), kept separate from the admin.
+$adminGroup = Get-LocalGroup -SID 'S-1-5-32-544'   # 'Administrators', locale-independent
+function Ensure-LocalAdmin($Name, $Password) {
+  $sec = ConvertTo-SecureString $Password -AsPlainText -Force
+  if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
+    Set-LocalUser -Name $Name -Password $sec -PasswordNeverExpires $true
+  } else {
+    New-LocalUser -Name $Name -Password $sec -PasswordNeverExpires -AccountNeverExpires | Out-Null
+  }
+  if (-not (Get-LocalGroupMember -Group $adminGroup -Member $Name -ErrorAction SilentlyContinue)) {
+    Add-LocalGroupMember -Group $adminGroup -Member $Name
+  }
+}
+Ensure-LocalAdmin '${admin_username}' '${admin_password}'
+Ensure-LocalAdmin 'ansible' '${ansible_password}'
+
+# --- WinRM: HTTPS 5986 + Basic auth, self-signed cert ----------------------
+# Matches the Ansible inventory exactly (transport basic, cert validation
+# ignore, port 5986). -SkipNetworkProfileCheck because a freshly cloned host is
+# not domain-joined yet, so its NIC is in the Public profile and a plain
+# Enable-PSRemoting/winrm quickconfig would refuse.
+Set-Service -Name WinRM -StartupType Automatic
+Start-Service -Name WinRM
+Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
+
+# Self-signed cert bound to this host's name (reuse one if it already exists).
+$cn = $env:COMPUTERNAME
+$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$cn" } | Select-Object -First 1
+if (-not $cert) {
+  $cert = New-SelfSignedCertificate -DnsName $cn -CertStoreLocation Cert:\LocalMachine\My
+}
+
+# (Re)create the HTTPS listener on 5986 bound to that cert.
+Get-ChildItem WSMan:\localhost\Listener |
+  Where-Object { $_.Keys -contains 'Transport=HTTPS' } |
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $cert.Thumbprint -Force | Out-Null
+
+# Auth: Basic over HTTPS (no CBT step to mismatch on a DC — see the inventory
+# comment). Unencrypted stays off; this is HTTPS.
+Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $false
+Set-Item -Path WSMan:\localhost\Service\MaxMemoryPerShellMB -Value 1024 -ErrorAction SilentlyContinue
+
+# --- Firewall --------------------------------------------------------------
+# Allow 5986 from the lab supernet only. The lab bridge has no internet uplink,
+# so WinRM never reaches outside the lab regardless (CLAUDE.md invariant #1);
+# this scoping mirrors the Azure layer's VNet-scoped rule.
+if (Get-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -ErrorAction SilentlyContinue) {
+  Set-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -RemoteAddress '${supernet}' -Enabled True
+} else {
+  New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -Direction Inbound -Protocol TCP -LocalPort 5986 -RemoteAddress '${supernet}' -Action Allow -Profile Any | Out-Null
+}
+
+Restart-Service -Name WinRM
+Stop-Transcript -ErrorAction SilentlyContinue | Out-Null

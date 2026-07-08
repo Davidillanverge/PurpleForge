@@ -169,8 +169,15 @@ provider) plus a Proxmox-specific `deploy.sh`/`teardown.sh`. Key differences
 from Azure (see `.claude/skills/infra-proxmox/SKILL.md`):
 
 - **Windows images are cloned from templates you maintain** (`template_map`
-  keyed by `machines[].os`), each with WinRM + the `ansible` admin +
-  cloudbase-init baked in — Proxmox has no marketplace and no VM extensions.
+  keyed by `machines[].os`). The only thing a template must have baked in is
+  **cloudbase-init** (with its UserDataPlugin enabled) — WinRM and the `ansible`
+  admin are **bootstrapped at first boot** by a cloudbase-init user-data script
+  Terraform injects (`terraform/proxmox/cloudinit/windows-bootstrap.ps1.tpl`,
+  the on-prem twin of Azure's `CustomScriptExtension`). It is idempotent and
+  runs fully offline, so a template that already has WinRM/`ansible` baked also
+  works. (A guest with *zero* in-guest agents can't be configured remotely at
+  all — that's a QEMU/Windows reality — so cloudbase-init is the one unavoidable
+  floor.)
 - **Isolation** uses the Proxmox firewall (deny-by-default per VM) + a VLAN per
   domain on an isolated bridge; the WireGuard bastion is the only host with a
   routable IP (static on a LAN bridge). Inter-VLAN routing is set up on the
@@ -192,7 +199,15 @@ export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-...."
 cd generated/single-dc-proxmox-test && ./deploy.sh
 ```
 
+For the full step-by-step (host tools, what each `host.auto.tfvars.json` key is,
+API-token/`snippets`-datastore requirements, teardown), see
+[**Zero-to-deployed on Proxmox**](#zero-to-deployed-on-proxmox-from-a-fresh-clone).
+
 ## Custom machine images
+
+> Full reference — spec pins, deploy-time `PF_*` overrides, the Azure image
+> map/gotchas, and the Proxmox template + first-boot bootstrap — is in
+> [`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md). The short version:
 
 `machines[]` entries can point at an existing image instead of the
 marketplace publisher/offer/sku PurpleForge picks for `os` — e.g. a golden
@@ -480,7 +495,14 @@ does and for hand-running a single step; you don't need to run these by hand.
 > against domain controllers, and more). `deploy.sh` already encodes the happy
 > path plus the retries; reach for the runbook only when a step fails.
 
-### Zero-to-deployed: deploy an already-built lab from a fresh clone
+The rest of this section is a full, copy-pasteable path from a fresh clone to a
+live lab, for each provider. Pick the one matching the lab's `lab.provider`:
+[**Azure**](#zero-to-deployed-on-azure-from-a-fresh-clone) ·
+[**Proxmox**](#zero-to-deployed-on-proxmox-from-a-fresh-clone). Both use the
+same generated `deploy.sh`; the only differences are how you authenticate and
+(Proxmox) a one-time host binding file.
+
+### Zero-to-deployed on Azure (from a fresh clone)
 
 Every lab under `generated/<lab>/` is committed and self-contained, so someone
 who just cloned the repo can deploy it **without running `forge.py generate`**
@@ -507,6 +529,7 @@ az login && az account set --subscription <your-subscription-id>
 ./generated/pirates-lab/deploy.sh          # any lab under generated/
 #   optional, without editing anything:
 #   PF_REGION=westeurope PF_VM_SIZE=Standard_B2s ./generated/pirates-lab/deploy.sh
+#   PF_OS=windows-server-2022 ./generated/pirates-lab/deploy.sh   # swap the base image
 
 # 5. Tear down to cost-zero when done:
 ./generated/pirates-lab/teardown.sh
@@ -518,6 +541,78 @@ your region, brings up the WireGuard tunnel, and runs the full Ansible
 `site.yml`. The population **user** passwords ship committed with the lab
 (`ansible/inventory/group_vars/all/population-secrets.yml`), so the lab is
 identical for everyone who deploys it. Nothing account-specific is baked in.
+
+### Zero-to-deployed on Proxmox (from a fresh clone)
+
+A `provider: proxmox` lab deploys onto your own Proxmox VE cluster. Same
+committed, self-contained lab; the only extras versus Azure are a one-time
+per-host binding file and Proxmox API credentials in the env (nothing
+host-specific is baked into the lab). Full path from nothing:
+
+```bash
+# 1. Clone WITH submodules (same as Azure — vendor/ holds the Ansible roles).
+git clone --recurse-submodules <this-repo>
+cd PurpleForge        # or: git submodule update --init --recursive
+
+# 2. Host tools (once): terraform >=1.5, docker, wireguard-tools, openssl, curl,
+#    python3, openssh-client. NO az CLI. Ansible runs in a python:3.10-slim
+#    container deploy.sh starts for you. Allow passwordless sudo for WireGuard:
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
+  | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
+
+# 3. Point at YOUR Proxmox host — API token, never baked into the lab:
+export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
+export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-xxxx-...."
+export PROXMOX_VE_INSECURE=true          # only if the PVE cert is self-signed
+
+# 4. Fill the per-host binding ONCE (node/datastores/bridges/template ids):
+cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
+   generated/<lab>/terraform/proxmox/host.auto.tfvars.json
+$EDITOR generated/<lab>/terraform/proxmox/host.auto.tfvars.json
+
+# 5. Deploy the lab — one command, no generate step:
+./generated/<lab>/deploy.sh
+#   optional, without editing anything: clone every VM from a different template
+#   PF_TEMPLATE_ID=9002 ./generated/<lab>/deploy.sh
+
+# 6. Tear down when done (removes every VM in the lab's Proxmox pool):
+./generated/<lab>/teardown.sh
+```
+
+What you fill in `host.auto.tfvars.json` (the only host-specific values —
+everything else is spec-derived and identical on any cluster):
+
+| Key | What it is |
+| --- | --- |
+| `node_name` | the PVE node the VMs are created on (`pvesh get /nodes`) |
+| `datastore_id` | datastore for VM disks, e.g. `local-lvm` |
+| `snippets_datastore_id` | datastore with the **`snippets`** content type enabled (holds the bastion + Windows-bootstrap cloud-init); often `local` |
+| `mgmt_bridge` / `lab_bridge` | routable bridge for the bastion / isolated bridge for lab AD traffic (set equal if you have only one) |
+| `template_map` | `os` → template **vm_id** to clone (only the `os` values this lab uses need an entry) |
+| `bastion_template_id` | vm_id of an Ubuntu 22.04+ cloud-init template (with qemu-guest-agent) for the WireGuard bastion |
+| `jumpbox_external_ip` / `_prefix` / `_gateway` | the bastion's routable address on `mgmt_bridge` (how you reach WireGuard) |
+
+Requirements specific to Proxmox:
+
+- **API token** with rights to create VMs, pools, snippets and firewall rules on
+  the target node (e.g. a token for a `PVEAdmin`/root user). Enable the
+  **`snippets`** content type on `snippets_datastore_id`
+  (*Datacenter → Storage → <ds> → Content → Snippets*) — the deploy uploads
+  cloud-init there.
+- **Windows templates** referenced by `template_map` need only **cloudbase-init**
+  baked in (with its `UserDataPlugin` enabled); WinRM and the `ansible` account
+  are bootstrapped at first boot. See
+  [`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md) for a minimal-template
+  checklist.
+- **No remote-state bootstrap** (unlike Azure): the Proxmox layer uses a local
+  Terraform backend, so there is no storage account to create. `auto_shutdown`
+  is a best-effort cron installed on this deploy host; cost is informational
+  (no billing on-prem).
+
+`deploy.sh` mints the infra keys (domain admin + Ansible WinRM) on first run,
+applies Terraform, brings up the WireGuard tunnel, sets up inter-VLAN routing on
+the bastion, and runs the full Ansible `site.yml` — exactly like Azure. The lab
+is reachable **only** through the WireGuard tunnel (CLAUDE.md invariant #1).
 
 ### Deploying a shared lab on your own (or another) Azure account
 
@@ -563,10 +658,50 @@ different region or force a VM SKU your account/region allows — without editin
 the spec — export `PF_REGION=<region>` and/or `PF_VM_SIZE=<sku>` (also
 `PF_TFSTATE_RG=<rg>` to rename the remote-state resource group).
 
+#### Redeploying the same lab on a different image (no regenerate)
+
+A lab bakes an OS per host at generate time (e.g. `windows-server-2016`), but a
+later deploy can swap the **backing image** without touching the spec —
+`deploy.sh` turns these env vars into a gitignored `*.auto.tfvars.json` overlay
+applied to **every** Windows VM:
+
+| Env var (Azure) | Effect |
+| --- | --- |
+| `PF_OS=<key>` | Use a stock image: `windows-server-2016\|2019\|2022\|2025`, `windows-10-22h2`, `windows-11-23h2` |
+| `PF_IMAGE_ID=<resource-id>` | Clone a custom managed-image / Shared Image Gallery version (e.g. a golden image with EDR pre-installed); wins over `PF_OS` |
+| `PF_IMAGE_PUBLISHER` + `PF_IMAGE_OFFER` + `PF_IMAGE_SKU` | A marketplace image PurpleForge has no key for (set all three) |
+| `PF_IMAGE_VERSION=<ver>` | Pin the marketplace image version (default `latest`) |
+
+```bash
+# same committed lab, redeployed on Windows Server 2022:
+PF_OS=windows-server-2022 ./generated/<lab>/deploy.sh
+# or on a custom golden image:
+PF_IMAGE_ID=/subscriptions/.../images/win2022-edr/versions/1.0.0 ./generated/<lab>/deploy.sh
+```
+
+On **Proxmox** the equivalent is `PF_TEMPLATE_ID=<vmid>`, cloning every Windows
+VM from that template instead of the per-OS `template_map` in
+`host.auto.tfvars.json` (the template only needs cloudbase-init — WinRM + the
+`ansible` admin are bootstrapped at first boot; see the Proxmox section above).
+
+These swap only the backing image; the ansible-lockdown hardening baseline still
+targets the OS chosen at generate time — regenerate the spec to change the
+CIS/STIG baseline itself. A per-host `machines[].image_id` / `machines[].template_id`
+pin in the spec still wins over these deploy-time overrides. Full variable
+reference, the Azure image map and its Gen2/NVMe/marketplace gotchas, and the
+Proxmox template + first-boot bootstrap: [`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md).
+
 Secrets on a shared lab: the population **user** passwords are fixed at lab
 creation and ship with it (`ansible/inventory/group_vars/all/population-secrets.yml`),
 so every deploy uses the same ones; the **infra** keys (domain admin + Ansible
 WinRM) are gitignored and minted per-deployer by `deploy.sh` on first run.
+
+> **Reference only (Azure manual walkthrough).** You do **not** need to run the
+> steps in this subsection — the generated `deploy.sh` performs all of them.
+> This is the Azure path; for Proxmox use the
+> [Proxmox subsection above](#zero-to-deployed-on-proxmox-from-a-fresh-clone).
+> Kept to explain what the script does and to hand-run a single step when
+> debugging.
 
 ### Prerequisites
 

@@ -1,15 +1,43 @@
 # Windows VMs are CLONED from templates the operator maintains (var.template_map
 # keyed by machines[].os), NOT installed from ISO and NOT pulled from a
-# marketplace — Proxmox has neither. The template is expected to already have
-# WinRM enabled and the local `ansible` admin account baked in (the Azure layer
-# does this at boot with a CustomScriptExtension; Proxmox has no VM extensions,
-# so it moves into the golden template). Static IPs are injected via cloud-init,
-# which on Windows requires cloudbase-init to be installed in the template.
+# marketplace — Proxmox has neither. The ONLY thing the template must have baked
+# in is cloudbase-init (needed to apply the static IP, and to run the first-boot
+# user-data below). WinRM and the local `ansible` admin are NOT required in the
+# template: they are bootstrapped at first boot by cloudinit/windows-bootstrap.ps1.tpl,
+# injected as cloudbase-init user-data (the on-prem twin of the Azure layer's
+# ConfigureRemotingForAnsible.ps1 CustomScriptExtension). The script is
+# idempotent, so a template that DOES have them baked still works.
 #
 # Every NIC is private-only on the isolated lab bridge with a per-domain VLAN
 # tag: no Windows host ever gets a routable/bridged-to-LAN interface. WinRM is
 # reachable only from the management subnet through the firewall (network.tf),
 # i.e. only via the WireGuard bastion — CLAUDE.md invariant #1.
+
+# First-boot bootstrap user-data, uploaded once as a Proxmox snippet and
+# referenced by every Windows VM's initialization.user_data_file_id below (same
+# mechanism the bastion uses for its cloud-init). cloudbase-init's UserDataPlugin
+# runs it as SYSTEM on first boot to create the admin + `ansible` accounts and
+# stand up the WinRM HTTPS/5986 + Basic listener the Ansible inventory expects.
+# It is shared by all hosts (same accounts + WinRM config everywhere); the
+# per-host static IP and hostname come from initialization/metadata, not here.
+resource "proxmox_virtual_environment_file" "windows_bootstrap" {
+  content_type = "snippets"
+  datastore_id = var.snippets_datastore_id
+  node_name    = var.node_name
+
+  source_raw {
+    # .yaml to match the bastion snippet Proxmox already accepts as user-data;
+    # the content is a cloudbase-init `#ps1_sysnative` PowerShell script (the
+    # leading header, not the extension, is what tells cloudbase-init to run it).
+    file_name = "${var.lab_name}-windows-bootstrap.yaml"
+    data = templatefile("${path.module}/cloudinit/windows-bootstrap.ps1.tpl", {
+      admin_username   = var.admin_username
+      admin_password   = var.admin_password
+      ansible_password = var.ansible_password
+      supernet         = var.supernet
+    })
+  }
+}
 
 locals {
   # Per-role cores/memory(MiB) defaults, overridable wholesale by
@@ -35,10 +63,19 @@ resource "proxmox_virtual_environment_vm" "windows" {
   started = true
 
   clone {
-    # Per-host override wins; otherwise the os->template map. full=true makes an
-    # independent copy so destroying the lab never touches the source template.
-    vm_id = coalesce(each.value.template_id, var.template_map[each.value.os])
-    full  = true
+    # Template resolution, most specific first: a per-host machines[].template_id
+    # pin > the deploy-time per-role template_id_overrides (deploy.sh, from
+    # PF_TEMPLATE_ID) > the os->template map (var.template_map, host.auto.tfvars).
+    # lookup(...,null) instead of a bare index so an overridden host needs no
+    # template_map entry for its os; coalesce still errors clearly if nothing
+    # resolves. full=true makes an independent copy so destroying the lab never
+    # touches the source template.
+    vm_id = coalesce(
+      each.value.template_id,
+      lookup(var.template_id_overrides, each.value.role, null),
+      lookup(var.template_map, each.value.os, null),
+    )
+    full = true
   }
 
   agent {
@@ -62,6 +99,12 @@ resource "proxmox_virtual_environment_vm" "windows" {
   initialization {
     datastore_id = var.datastore_id
 
+    # First-boot bootstrap (WinRM + the admin/ansible accounts) — see the
+    # windows_bootstrap snippet above. This removes the need for a
+    # WinRM-and-ansible-baked golden template; cloudbase-init is the only
+    # template prerequisite left.
+    user_data_file_id = proxmox_virtual_environment_file.windows_bootstrap.id
+
     ip_config {
       ipv4 {
         address = "${each.value.ip}/${split("/", var.domains[each.value.domain].subnet_cidr)[1]}"
@@ -74,6 +117,10 @@ resource "proxmox_virtual_environment_vm" "windows" {
       }
     }
 
+    # Keep user_account so cloudbase-init also sets the admin password the normal
+    # way where the provider still honours cipassword alongside a custom
+    # user_data; the bootstrap script re-asserts it regardless, so the two never
+    # disagree. The `ansible` account is created only by the script.
     user_account {
       username = var.admin_username
       password = var.admin_password

@@ -2,12 +2,14 @@
 name: infra-proxmox
 description: >
   Renders the on-prem Proxmox VE compute + network layer for a lab: Windows VMs
-  cloned from operator-maintained templates (WinRM + the `ansible` admin +
-  cloudbase-init baked in), a WireGuard bastion with the only routable IP, and a
+  cloned from operator-maintained templates (only cloudbase-init required —
+  WinRM + the `ansible` admin are bootstrapped at first boot via cloudbase-init
+  user-data), a WireGuard bastion with the only routable IP, and a
   deny-by-default Proxmox firewall — the on-prem sibling of infra-azure +
   network-topology. Consumes lab-manifest.json's network_plan and emits
   templates/terraform/proxmox/. Unlike Azure there is no marketplace and no VM
-  extension, so images come from clones and WinRM is pre-baked in the template.
+  extension, so images come from clones and WinRM is bootstrapped by an injected
+  cloudbase-init user-data script (the on-prem twin of Azure's CustomScriptExtension).
 ---
 
 # infra-proxmox
@@ -26,8 +28,8 @@ description: >
 | Concern | Azure (infra-azure) | Proxmox (this skill) |
 |---|---|---|
 | Windows image | marketplace `publisher/offer/sku` | **clone a template** the operator maintains (`var.template_map` keyed by `machines[].os`) |
-| WinRM bootstrap | `CustomScriptExtension` at boot | **baked into the template** (no VM extensions on Proxmox) |
-| Static IP | azurerm sets it | **cloud-init / cloudbase-init** in the clone (template must have cloudbase-init) |
+| WinRM bootstrap | `CustomScriptExtension` at boot | **cloudbase-init user-data** at first boot (`cloudinit/windows-bootstrap.ps1.tpl`, injected as a snippet) — no VM extensions on Proxmox, and no WinRM baked in the template |
+| Static IP | azurerm sets it | **cloud-init / cloudbase-init** in the clone (template must have cloudbase-init — the ONE remaining template prerequisite) |
 | Remote state | Azure Storage backend | **local backend** — documented relaxation of CLAUDE.md #4 |
 | auto_shutdown | native DevTest schedule | **best-effort cron** on the deploy host (deploy.sh), hitting the Proxmox API |
 | Cost | per-hour SKU | no billing; rates are $0, budget_alert_usd is informational |
@@ -41,7 +43,7 @@ One Terraform root module (bpg/proxmox provider):
 | `versions.tf` | provider pin (`bpg/proxmox ~> 0.66`), **local** backend, `PROXMOX_VE_*` env auth (never baked) |
 | `main.tf` | a `proxmox_virtual_environment_pool` per lab (the on-prem analog of the Azure resource group) |
 | `network.tf` | cluster firewall enable + per-VM deny-by-default (`input_policy DROP`) with narrow ACCEPT rules (mgmt subnet + own domain); bastion opens only WireGuard UDP |
-| `windows.tf` | one `proxmox_virtual_environment_vm` per host, **cloned** from `var.template_map[os]`, private-only NIC on `lab_bridge` with a **per-domain VLAN tag**, static IP via cloud-init |
+| `windows.tf` | one `proxmox_virtual_environment_vm` per host, **cloned** from `var.template_map[os]`, private-only NIC on `lab_bridge` with a **per-domain VLAN tag**, static IP via cloud-init; a shared `proxmox_virtual_environment_file` snippet (`cloudinit/windows-bootstrap.ps1.tpl`) referenced as each VM's `initialization.user_data_file_id` bootstraps WinRM + the admin/`ansible` accounts at first boot |
 | `bastion.tf` | Ubuntu clone with the only routable IP (static on `mgmt_bridge`), WireGuard cloud-init snippet uploaded via the API, SSH key written to `ssh_keys/bastion.pem` |
 | `outputs.tf` | `bastion_public_ip` (named to match Azure so the shared deploy-time WireGuard step reads it identically), `windows_hosts`, `pool_id` |
 | `host.auto.tfvars.example.json` | reference for the per-deployer host binding |
@@ -57,18 +59,37 @@ gitignored `host.auto.tfvars.json` the deployer fills from the committed
 `PROXMOX_VE_API_TOKEN`, and `PROXMOX_VE_INSECURE=true` for self-signed certs.
 So the same generated lab deploys on anyone's cluster without editing the spec.
 
-## Template prerequisites (operator-maintained, the load-bearing assumption)
+## Template prerequisites (operator-maintained)
 
-The Windows templates referenced by `template_map` MUST have, baked in:
-1. **WinRM enabled** for the `ansible` account (Ansible reaches them over the
-   tunnel after clone — there is no CustomScriptExtension to enable it).
-2. The **`ansible` local admin** account (password is set per-lab via cloud-init
-   `user_account`; the account itself must exist / be creatable at first boot).
-3. **cloudbase-init** so the static `ip_config` from Terraform is applied.
+The Windows templates referenced by `template_map` MUST have, baked in, exactly
+ONE thing:
+
+1. **cloudbase-init**, with its `UserDataPlugin` enabled (the default). It is
+   needed to apply the static `ip_config` from Terraform AND to run the
+   first-boot user-data that does everything else.
+
+Everything else is bootstrapped at first boot and no longer needs baking:
+
+- **WinRM** (HTTPS 5986 + Basic + self-signed cert, matching the Ansible
+  inventory) and
+- the **`ansible` local admin** (plus the `purpleforge` admin) accounts
+
+are created by `cloudinit/windows-bootstrap.ps1.tpl`, uploaded once as a Proxmox
+snippet (`proxmox_virtual_environment_file.windows_bootstrap`) and referenced by
+every Windows VM's `initialization.user_data_file_id`. cloudbase-init runs it as
+SYSTEM. The script is **idempotent and fully offline** (the lab bridge has no
+internet uplink, so the WinRM setup is inlined, not downloaded like Azure's
+ConfigureRemotingForAnsible.ps1) — so a legacy template that DOES have WinRM +
+`ansible` pre-baked still deploys unchanged. Why cloudbase-init is an
+unavoidable floor: a guest with zero in-guest agents (no cloudbase-init, no
+qemu-guest-agent, no pre-enabled WinRM) exposes no channel for the hypervisor or
+the network to configure it — that is a QEMU/Windows reality, not a PurpleForge
+limitation.
 
 The bastion template is an Ubuntu 22.04+ cloud-init image with
-qemu-guest-agent. There is no Packer/ISO automation — that was an explicit
-scope decision.
+qemu-guest-agent. There is still no Packer/ISO automation for the Windows
+templates — that was an explicit scope decision; the cloudbase-init user-data
+bootstrap is what removed the need for it.
 
 ## Networking model (isolation invariant #1)
 

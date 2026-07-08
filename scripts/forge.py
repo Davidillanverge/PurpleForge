@@ -2072,7 +2072,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print("  wrote ansible/playbooks/site.yml (run this, not the individual playbooks — enforces hardening-before-vulns)")
     print("  wrote deploy.sh + teardown.sh (deterministic no-AI deploy/teardown — run directly or via `forge.py deploy`/`teardown`)")
     if provider == "proxmox":
-        print(f"  NOTE: provider 'proxmox' — before deploy, fill terraform/proxmox/host.auto.tfvars.json (see host.auto.tfvars.example.json) and export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN. Windows templates must have WinRM + the `ansible` admin + cloudbase-init baked in.")
+        print(f"  NOTE: provider 'proxmox' — before deploy, fill terraform/proxmox/host.auto.tfvars.json (see host.auto.tfvars.example.json) and export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN. Windows templates now only need cloudbase-init (with UserDataPlugin enabled) baked in — WinRM + the `ansible` admin are bootstrapped at first boot via cloudbase-init user-data (terraform/proxmox/cloudinit/windows-bootstrap.ps1.tpl).")
 
     if args.plan:
         return run_terraform_plan(out_dir / "terraform" / provider)
