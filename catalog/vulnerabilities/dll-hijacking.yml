@@ -1,0 +1,38 @@
+id: dll-hijacking
+name: "DLL search-order hijacking - directorio de binario de servicio escribible"
+severity: high
+attack:
+  mitre_attack: [T1574.001]
+  requires_services: []
+  target_role: workstation
+  intended_path: >
+    Un servicio que corre como LocalSystem carga su ejecutable desde un
+    directorio (C:\PFApps\PFMonitor) escribible por Authenticated Users. El
+    primer directorio del orden de búsqueda de DLLs es el propio del binario, así
+    que un usuario de bajo privilegio deja ahí una DLL con el nombre de una que el
+    proceso carga -> se ejecuta en el contexto SYSTEM del servicio -> escalada
+    local a SYSTEM.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/dll-hijacking.yml
+  params: { service_name: "PFHijackSvc", writable_bindir: "C:\\PFApps\\PFMonitor" }
+detect:
+  data_source: "Sysmon 7 (ImageLoad) de DLL sin firmar desde un directorio escribible por usuarios; Sysmon 11 (FileCreate) de *.dll en el directorio del binario del servicio"
+  signal: "Carga de una DLL desde un directorio escribible por no administradores en un proceso que corre como SYSTEM, o creación de una DLL en el directorio del binario de un servicio"
+  siem_rule: templates/detection/{siem}/dll_hijacking
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
+# catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED
+# control->rule mappings). The reconciliation still treats it as 'bundled in this
+# baseline' for warn/exclude-control purposes, but defensive-controls cannot
+# derive a concrete skip_rule for it — only the baseline-level conflict is recorded.
+neutralized_by:
+  - hardening.controls.safe_dll_search_mode   # etiqueta libre: SafeDllSearchMode + retirar escritura de Authenticated Users en directorios de binarios de servicio
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Retirar permisos de escritura de Authenticated Users sobre directorios de binarios de servicio; mantener SafeDllSearchMode habilitado; firmar binarios y forzar rutas de carga de DLL absolutas / KnownDLLs."
+validate:
+  atomic: T1574.001
+  local_check: "ACL del directorio del binario del servicio escribible por Authenticated Users y el servicio corre como LocalSystem"
+chain:
+  target_shape: none

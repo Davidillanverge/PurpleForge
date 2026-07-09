@@ -1,0 +1,37 @@
+id: unquoted-service-path
+name: "Unquoted service path - servicio LocalSystem con ImagePath sin comillas y prefijo escribible"
+severity: high
+attack:
+  mitre_attack: [T1574.009]
+  requires_services: []
+  target_role: workstation
+  intended_path: >
+    Un servicio que corre como LocalSystem tiene un ImagePath sin comillas con
+    espacios (p. ej. C:\PFApps\Purple Agent\agent.exe) y un segmento previo
+    (C:\PFApps) escribible por Authenticated Users. Un usuario de bajo privilegio
+    deja C:\PFApps\Purple.exe; al arrancar el servicio, Windows resuelve el
+    espacio y ejecuta ese binario como SYSTEM -> escalada local a SYSTEM.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/unquoted-service-path.yml
+  params: { service_name: "PFUnquotedSvc", writable_prefix: "C:\\PFApps", binary_path: "C:\\PFApps\\Purple Agent\\agent.exe" }
+detect:
+  data_source: "Security 4697/7045 (instalación de servicio); Sysmon 1 (ProcessCreate); auditoría de creación de ficheros en el prefijo escribible"
+  signal: "Servicio con ImagePath sin comillas que contiene espacios + proceso hijo de services.exe lanzado desde un directorio escribible por usuarios no privilegiados"
+  siem_rule: templates/detection/{siem}/unquoted_service_path
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
+# catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED
+# control->rule mappings). The reconciliation still treats it as 'bundled in this
+# baseline' for warn/exclude-control purposes, but defensive-controls cannot
+# derive a concrete skip_rule for it — only the baseline-level conflict is recorded.
+neutralized_by:
+  - hardening.controls.service_path_quoting   # etiqueta libre: entrecomillar ImagePath / mover binarios a rutas sin espacios ni ACL débil
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Entrecomillar el ImagePath de todo servicio; retirar permisos de escritura de Authenticated Users sobre directorios en la ruta de binarios de servicio; instalar servicios solo bajo %ProgramFiles% con ACL por defecto."
+validate:
+  atomic: T1574.009
+  local_check: "Get-CimInstance Win32_Service | Where PathName sin comillas con espacio; ACL escribible por Authenticated Users en el prefijo"
+chain:
+  target_shape: none

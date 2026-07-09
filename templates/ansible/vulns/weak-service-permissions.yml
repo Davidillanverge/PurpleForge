@@ -1,0 +1,53 @@
+---
+# Vuln inject task-file: weak-service-permissions (T1574.011)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). Creates a
+# LocalSystem service and then WIDENS its DACL so Authenticated Users get
+# SERVICE_ALL_ACCESS (0xF01FF) — including SERVICE_CHANGE_CONFIG. A low-priv user
+# then `sc config PFWeakPermSvc binPath= <payload>` + restart -> SYSTEM.
+#
+# The ACE is INSERTED into the existing SDDL (right after the D: DACL flags),
+# never replacing the default SYSTEM/Administrators ACEs, so the service keeps
+# working. Idempotent: the widen step is skipped when the AU ACE is already there.
+- name: "weak-service-permissions | plant LocalSystem service with an over-permissive DACL"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param()
+      $ServiceName = 'PFWeakPermSvc'
+      $BinaryPath  = 'C:\PFApps\PFUpdater\updater.exe'
+      $GrantAce    = '(A;;0xF01FF;;;AU)'   # Authenticated Users -> SERVICE_ALL_ACCESS
+      $changed = $false
+
+      $dir = Split-Path -Parent $BinaryPath
+      if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null; $changed = $true }
+      if (-not (Test-Path -LiteralPath $BinaryPath)) {
+        Copy-Item -LiteralPath "$env:SystemRoot\System32\cmd.exe" -Destination $BinaryPath -Force; $changed = $true
+      }
+
+      if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        New-Service -Name $ServiceName -BinaryPathName "`"$BinaryPath`"" -StartupType Manual -DisplayName $ServiceName | Out-Null
+        $changed = $true
+      }
+
+      $cur = (& sc.exe sdshow $ServiceName | Where-Object { $_ -match '^D:' }) -join ''
+      if ([string]::IsNullOrWhiteSpace($cur)) { $cur = (& sc.exe sdshow $ServiceName) -join '' }
+      if ($cur -notmatch [regex]::Escape($GrantAce)) {
+        # Insert the AU ACE immediately after the D: flags, before the first ACE.
+        $new = [regex]::Replace($cur, '(D:[A-Z]*)', ('$1' + $GrantAce), 1)
+        & sc.exe sdset $ServiceName $new | Out-Null
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "weak-service-permissions | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Weak-service-permissions gap live on {{ inventory_hostname }}: service
+      PFWeakPermSvc runs as LocalSystem and its DACL grants Authenticated Users
+      SERVICE_ALL_ACCESS -> `sc config PFWeakPermSvc binPath= <payload>` + restart
+      to run as SYSTEM.

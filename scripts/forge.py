@@ -196,6 +196,16 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
                     f"vulnerabilities: '{vuln_id}' requires service(s) {missing} "
                     f"but no machine in the spec declares them"
                 )
+        # OS-level / application vulns declare attack.target_role (workstation |
+        # member-server | domain-controller) instead of an AD service prereq —
+        # they inject on the first machine of that role (see plan_vuln_injection).
+        # requires_services takes precedence, so a vuln never needs both.
+        target_role = catalog[vuln_id].get("attack", {}).get("target_role")
+        if target_role and not required and not any(m["role"] == target_role for m in spec["machines"]):
+            errors.append(
+                f"vulnerabilities: '{vuln_id}' targets role '{target_role}' "
+                f"but the spec has no machine with that role"
+            )
 
     return errors
 
@@ -1094,9 +1104,18 @@ def plan_vuln_injection(
     for vid in spec["vulnerabilities"]:
         v = catalog[vid]
         requires = v["attack"].get("requires_services") or []
+        target_role = v["attack"].get("target_role")
         if requires:
             # semantic_checks already guaranteed a host provides these services.
             host = next(m for m in machines if all(s in m.get("services", []) for s in requires))
+            run_on, target_domain = host["name"], host["domain"]
+        elif target_role:
+            # OS-level / application privesc: land on the first machine of the
+            # declared role (semantic_checks guaranteed one exists). This is the
+            # non-AD counterpart to requires_services — the vuln is a local box
+            # misconfiguration, not a domain-object artifact, so it does NOT
+            # default to the root DC the way the AD vulns below do.
+            host = next(m for m in machines if m["role"] == target_role)
             run_on, target_domain = host["name"], host["domain"]
         else:
             run_on, target_domain = primary_dc["name"], primary_dc["domain"]
@@ -1738,6 +1757,11 @@ VULN_CREDENTIAL_NOTES = {
     "ntlm-downgrade": "No account — machine-wide registry policy (LmCompatibilityLevel=2).",
     "adcs-esc1": "No account — publishes the ESC1 certificate template (ENROLLEE_SUPPLIES_SUBJECT) for enrollment by Domain Users.",
     "laps-read-acl": "No named account — grants CONTROL_ACCESS read on msLAPS-Password (domain-wide) to an existing group, `Domain Users` by default.",
+    "unquoted-service-path": "No account — local privesc: a LocalSystem service with an unquoted, space-bearing ImagePath and an attacker-writable path prefix (`C:\\PFApps`).",
+    "weak-service-permissions": "No account — local privesc: a LocalSystem service whose DACL grants Authenticated Users SERVICE_ALL_ACCESS (sc config reconfigurable).",
+    "dll-hijacking": "No account — local privesc: a LocalSystem service whose own binary directory is writable by Authenticated Users (DLL search-order hijack).",
+    "scheduled-task-privesc": "No account — local privesc: a scheduled task running as SYSTEM whose script (`C:\\PFScripts\\maintenance.ps1`) is writable by Authenticated Users.",
+    "always-install-elevated": "No account — local privesc: AlwaysInstallElevated=1 in both HKLM and HKCU (any user's MSI installs run as SYSTEM).",
 }
 
 

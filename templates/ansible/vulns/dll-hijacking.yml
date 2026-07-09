@@ -1,0 +1,56 @@
+---
+# Vuln inject task-file: dll-hijacking (T1574.001)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). Creates a
+# LocalSystem service whose binary lives in a directory (C:\PFApps\PFMonitor)
+# writable by Authenticated Users. Because a process's own directory is first in
+# the DLL search order, a low-priv user drops a same-named DLL there and it loads
+# into the SYSTEM service -> SYSTEM.
+#
+# binPath is properly QUOTED here (the flaw is the writable directory, not an
+# unquoted path — that's unquoted-service-path's distinct gap). Idempotent: each
+# step is existence/ACL-guarded.
+- name: "dll-hijacking | plant LocalSystem service in an Authenticated-Users-writable directory"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param()
+      $ServiceName   = 'PFHijackSvc'
+      $WritableBinDir = 'C:\PFApps\PFMonitor'
+      $BinaryPath    = 'C:\PFApps\PFMonitor\monitor.exe'
+      $changed = $false
+
+      if (-not (Test-Path -LiteralPath $WritableBinDir)) { New-Item -ItemType Directory -Path $WritableBinDir -Force | Out-Null; $changed = $true }
+      if (-not (Test-Path -LiteralPath $BinaryPath)) {
+        Copy-Item -LiteralPath "$env:SystemRoot\System32\cmd.exe" -Destination $BinaryPath -Force; $changed = $true
+      }
+
+      # The exploit primitive: the service binary's OWN directory is writable by
+      # Authenticated Users (first entry in the DLL search order).
+      $acl = Get-Acl -LiteralPath $WritableBinDir
+      $hasAce = $acl.Access | Where-Object {
+        $_.IdentityReference.Value -like '*Authenticated Users' -and
+        $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights.ToString() -match 'Write|Modify|FullControl')
+      }
+      if (-not $hasAce) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          'Authenticated Users','Modify','ContainerInherit,ObjectInherit','None','Allow')
+        $acl.AddAccessRule($rule); Set-Acl -LiteralPath $WritableBinDir -AclObject $acl; $changed = $true
+      }
+
+      if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        New-Service -Name $ServiceName -BinaryPathName "`"$BinaryPath`"" -StartupType Manual -DisplayName $ServiceName | Out-Null
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "dll-hijacking | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      DLL-hijacking gap live on {{ inventory_hostname }}: service PFHijackSvc runs
+      as LocalSystem from C:\PFApps\PFMonitor, which is writable by Authenticated
+      Users -> drop a hijacked DLL there (search-order #1) to run as SYSTEM.

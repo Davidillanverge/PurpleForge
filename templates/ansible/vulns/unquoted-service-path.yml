@@ -1,0 +1,70 @@
+---
+# Vuln inject task-file: unquoted-service-path (T1574.009)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). Creates a
+# LocalSystem service whose ImagePath is UNQUOTED and contains a space, with an
+# attacker-writable path prefix (C:\PFApps) before that space. A low-priv user
+# drops C:\PFApps\Purple.exe and Windows runs it as SYSTEM on service start.
+#
+# The service is registered directly through the registry (not sc.exe / New-Service)
+# on purpose: PowerShell's argument marshalling re-quotes any space-bearing path,
+# which would defeat the whole vuln. Writing ImagePath as a raw ExpandString keeps
+# it verbatim-unquoted. start=3 (demand) so it never auto-starts / boot-loops on the
+# placeholder binary. Idempotent: each write is guarded by a value/existence check.
+- name: "unquoted-service-path | plant unquoted LocalSystem service + writable prefix"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param()
+      $ServiceName    = 'PFUnquotedSvc'
+      $WritablePrefix = 'C:\PFApps'
+      $BinaryPath     = 'C:\PFApps\Purple Agent\agent.exe'   # note the space in "Purple Agent"
+      $changed = $false
+
+      $subdir = Split-Path -Parent $BinaryPath
+      foreach ($d in @($WritablePrefix, $subdir)) {
+        if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; $changed = $true }
+      }
+      if (-not (Test-Path -LiteralPath $BinaryPath)) {
+        Copy-Item -LiteralPath "$env:SystemRoot\System32\cmd.exe" -Destination $BinaryPath -Force
+        $changed = $true
+      }
+
+      # Writable prefix: grant Authenticated Users Modify (the exploit primitive).
+      $acl = Get-Acl -LiteralPath $WritablePrefix
+      $hasAce = $acl.Access | Where-Object {
+        $_.IdentityReference.Value -like '*Authenticated Users' -and
+        $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights.ToString() -match 'Write|Modify|FullControl')
+      }
+      if (-not $hasAce) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          'Authenticated Users','Modify','ContainerInherit,ObjectInherit','None','Allow')
+        $acl.AddAccessRule($rule); Set-Acl -LiteralPath $WritablePrefix -AclObject $acl; $changed = $true
+      }
+
+      # Register the service via the registry so ImagePath stays UNQUOTED verbatim.
+      $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+      if (-not (Test-Path -LiteralPath $svcKey)) { New-Item -Path $svcKey -Force | Out-Null; $changed = $true }
+      $desired = @{ Type = 16; Start = 3; ErrorControl = 1 }   # WIN32_OWN_PROCESS, demand-start
+      foreach ($k in $desired.Keys) {
+        $cur = (Get-ItemProperty -LiteralPath $svcKey -Name $k -ErrorAction SilentlyContinue).$k
+        if ($cur -ne $desired[$k]) { New-ItemProperty -Path $svcKey -Name $k -Value $desired[$k] -PropertyType DWord -Force | Out-Null; $changed = $true }
+      }
+      $curImage = (Get-ItemProperty -LiteralPath $svcKey -Name ImagePath -ErrorAction SilentlyContinue).ImagePath
+      if ($curImage -ne $BinaryPath) { New-ItemProperty -Path $svcKey -Name ImagePath -Value $BinaryPath -PropertyType ExpandString -Force | Out-Null; $changed = $true }
+      $curObj = (Get-ItemProperty -LiteralPath $svcKey -Name ObjectName -ErrorAction SilentlyContinue).ObjectName
+      if ($curObj -ne 'LocalSystem') { New-ItemProperty -Path $svcKey -Name ObjectName -Value 'LocalSystem' -PropertyType String -Force | Out-Null; $changed = $true }
+
+      $Ansible.Changed = $changed
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "unquoted-service-path | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Unquoted-service-path gap live on {{ inventory_hostname }}: service
+      PFUnquotedSvc runs as LocalSystem with ImagePath "C:\PFApps\Purple Agent\agent.exe"
+      (unquoted) and C:\PFApps is writable by Authenticated Users -> drop
+      C:\PFApps\Purple.exe and start the service to run as SYSTEM.

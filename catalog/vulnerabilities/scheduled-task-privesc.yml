@@ -1,0 +1,37 @@
+id: scheduled-task-privesc
+name: "Scheduled task privesc - tarea programada como SYSTEM con script escribible"
+severity: high
+attack:
+  mitre_attack: [T1053.005]
+  requires_services: []
+  target_role: workstation
+  intended_path: >
+    Una tarea programada corre como SYSTEM y ejecuta un script
+    (C:\PFScripts\maintenance.ps1) escribible por Authenticated Users. Un usuario
+    de bajo privilegio sobrescribe el contenido del script; en el siguiente
+    disparo de la tarea su código se ejecuta como SYSTEM -> escalada local a
+    SYSTEM (y persistencia).
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/scheduled-task-privesc.yml
+  params: { task_name: "PurpleForge Maintenance", script_path: "C:\\PFScripts\\maintenance.ps1" }
+detect:
+  data_source: "Security 4698 (creación de tarea programada) y 4702; Microsoft-Windows-TaskScheduler/Operational; Sysmon 11 (FileCreate/modify de maintenance.ps1)"
+  signal: "Modificación de un script invocado por una tarea que corre como SYSTEM por un principal no administrativo, o tarea nueva que ejecuta desde una ruta escribible por usuarios"
+  siem_rule: templates/detection/{siem}/scheduled_task_privesc
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
+# catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED
+# control->rule mappings). The reconciliation still treats it as 'bundled in this
+# baseline' for warn/exclude-control purposes, but defensive-controls cannot
+# derive a concrete skip_rule for it — only the baseline-level conflict is recorded.
+neutralized_by:
+  - hardening.controls.scheduled_task_acl_hardening   # etiqueta libre: retirar escritura de Authenticated Users sobre scripts/carpetas invocados por tareas SYSTEM
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Almacenar scripts de tareas SYSTEM en rutas protegidas (%SystemRoot%\\System32 o %ProgramFiles% con ACL por defecto); retirar la escritura de Authenticated Users; firmar scripts y auditar 4698."
+validate:
+  atomic: T1053.005
+  local_check: "Tarea programada corre como SYSTEM y su script objetivo es escribible por Authenticated Users"
+chain:
+  target_shape: none

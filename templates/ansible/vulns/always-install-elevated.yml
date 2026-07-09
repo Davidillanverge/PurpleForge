@@ -1,0 +1,53 @@
+---
+# Vuln inject task-file: always-install-elevated (T1548.002)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). Sets the
+# AlwaysInstallElevated policy to 1 in BOTH the machine (HKLM) and user (HKCU)
+# hives, so any user can install a crafted MSI as SYSTEM. Both keys must be 1 for
+# the gap to be live — that is exactly why validation checks both.
+#
+# HKCU is written under the runas become user's hive AND seeded into the Default
+# hive (HKU:\.DEFAULT + newly created profiles inherit it), so a low-priv lab user
+# who logs in afterwards also carries the value. Idempotent: win_regedit only
+# reports changed when a value actually flips.
+- name: "always-install-elevated | enable in the machine hive (HKLM)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer
+    name: AlwaysInstallElevated
+    data: 1
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "always-install-elevated | enable in the current user hive (HKCU)"
+  ansible.windows.win_regedit:
+    path: HKCU:\SOFTWARE\Policies\Microsoft\Windows\Installer
+    name: AlwaysInstallElevated
+    data: 1
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "always-install-elevated | seed the Default user hive so new profiles inherit the gap"
+  ansible.windows.win_regedit:
+    path: HKU:\.DEFAULT\SOFTWARE\Policies\Microsoft\Windows\Installer
+    name: AlwaysInstallElevated
+    data: 1
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "always-install-elevated | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      AlwaysInstallElevated gap live on {{ inventory_hostname }}: HKLM and HKCU
+      AlwaysInstallElevated = 1 -> any user installs a crafted MSI
+      (msfvenom -f msi / msiexec /quiet /i evil.msi) that runs as SYSTEM.

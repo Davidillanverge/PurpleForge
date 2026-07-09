@@ -1,0 +1,66 @@
+---
+# Vuln inject task-file: scheduled-task-privesc (T1053.005)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). A scheduled task
+# runs as SYSTEM and executes a script (C:\PFScripts\maintenance.ps1) that is
+# writable by Authenticated Users. A low-priv user overwrites the script; on the
+# next trigger it runs as SYSTEM.
+- name: "scheduled-task-privesc | drop SYSTEM-run script in an Authenticated-Users-writable location"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param()
+      $ScriptDir  = 'C:\PFScripts'
+      $ScriptPath = 'C:\PFScripts\maintenance.ps1'
+      $changed = $false
+
+      if (-not (Test-Path -LiteralPath $ScriptDir)) { New-Item -ItemType Directory -Path $ScriptDir -Force | Out-Null; $changed = $true }
+      $body = "# PurpleForge maintenance placeholder — benign by default.`r`nWrite-Output ('maintenance ran at ' + (Get-Date))`r`n"
+      if (-not (Test-Path -LiteralPath $ScriptPath) -or (Get-Content -LiteralPath $ScriptPath -Raw -ErrorAction SilentlyContinue) -ne $body) {
+        Set-Content -LiteralPath $ScriptPath -Value $body -Encoding UTF8; $changed = $true
+      }
+
+      # The exploit primitive: the SYSTEM task's script is writable by Authenticated Users.
+      $acl = Get-Acl -LiteralPath $ScriptPath
+      $hasAce = $acl.Access | Where-Object {
+        $_.IdentityReference.Value -like '*Authenticated Users' -and
+        $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights.ToString() -match 'Write|Modify|FullControl')
+      }
+      if (-not $hasAce) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule('Authenticated Users','Modify','Allow')
+        $acl.AddAccessRule($rule); Set-Acl -LiteralPath $ScriptPath -AclObject $acl; $changed = $true
+      }
+      $Ansible.Changed = $changed
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "scheduled-task-privesc | register the SYSTEM scheduled task"
+  ansible.windows.win_scheduled_task:
+    name: "PurpleForge Maintenance"
+    description: "PurpleForge lab maintenance task (intentional privesc gap)"
+    username: SYSTEM
+    logon_type: service_account
+    run_level: highest
+    actions:
+      - path: powershell.exe
+        arguments: '-NonInteractive -ExecutionPolicy Bypass -File "C:\PFScripts\maintenance.ps1"'
+    triggers:
+      - type: daily
+        start_boundary: "2020-01-01T03:00:00"
+    state: present
+    enabled: true
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "scheduled-task-privesc | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Scheduled-task-privesc gap live on {{ inventory_hostname }}: task
+      "PurpleForge Maintenance" runs as SYSTEM and executes
+      C:\PFScripts\maintenance.ps1, which is writable by Authenticated Users ->
+      overwrite the script to run as SYSTEM on the next trigger.

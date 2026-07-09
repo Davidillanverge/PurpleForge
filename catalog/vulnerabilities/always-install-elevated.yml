@@ -1,0 +1,36 @@
+id: always-install-elevated
+name: "AlwaysInstallElevated - MSI de cualquier usuario se instala como SYSTEM"
+severity: high
+attack:
+  mitre_attack: [T1548.002]
+  requires_services: []
+  target_role: workstation
+  intended_path: >
+    Las políticas AlwaysInstallElevated están a 1 tanto en HKLM como en HKCU, así
+    que cualquier usuario puede instalar un paquete MSI con privilegios de SYSTEM.
+    Un usuario de bajo privilegio construye un MSI malicioso (msfvenom / msiexec)
+    y lo instala -> ejecución como SYSTEM -> escalada local a SYSTEM.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/always-install-elevated.yml
+  params: {}
+detect:
+  data_source: "Sysmon 13 (RegistryValueSet en ...\\Installer\\AlwaysInstallElevated); Security 4657 (modificación de valor de registro); MsiInstaller 11707/1040 con contexto SYSTEM"
+  signal: "AlwaysInstallElevated=1 presente en HKLM y HKCU, o instalación de un MSI que arranca un proceso hijo como SYSTEM iniciada por un usuario no privilegiado"
+  siem_rule: templates/detection/{siem}/always_install_elevated
+# NOTE: unlike the other four OS-privesc entries, disabling AlwaysInstallElevated
+# IS a real CIS Windows benchmark item (User/Computer Config policy set to
+# Disabled). It is still listed here as a free-label control because
+# catalog/defense/hardening/control-cis-rules.yml has not been extended with its
+# verified rule number yet; defensive-controls therefore records only the
+# baseline-level conflict, not a concrete skip_rule (same handling as the rest).
+neutralized_by:
+  - hardening.controls.disable_always_install_elevated   # etiqueta libre: política AlwaysInstallElevated = Disabled (HKLM + HKCU)
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Poner la política AlwaysInstallElevated a Disabled (o borrar los valores) en la configuración de equipo y de usuario; desplegar software solo por medios administrativos (GPO/SCCM), nunca vía MSI de usuario elevado."
+validate:
+  atomic: T1548.002
+  local_check: "Ambos valores AlwaysInstallElevated (HKLM y HKCU, ...\\Policies\\Microsoft\\Windows\\Installer) = 1"
+chain:
+  target_shape: none

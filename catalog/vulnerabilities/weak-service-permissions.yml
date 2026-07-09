@@ -1,0 +1,36 @@
+id: weak-service-permissions
+name: "Weak service permissions - servicio LocalSystem reconfigurable por Authenticated Users"
+severity: high
+attack:
+  mitre_attack: [T1574.011]
+  requires_services: []
+  target_role: workstation
+  intended_path: >
+    El DACL de un servicio que corre como LocalSystem concede SERVICE_ALL_ACCESS
+    (incl. SERVICE_CHANGE_CONFIG) a Authenticated Users. Un usuario de bajo
+    privilegio ejecuta `sc config PFWeakPermSvc binPath= <payload>` y reinicia el
+    servicio -> su payload se ejecuta como SYSTEM -> escalada local a SYSTEM.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/weak-service-permissions.yml
+  params: { service_name: "PFWeakPermSvc", grant_sddl_ace: "(A;;0xF01FF;;;AU)" }
+detect:
+  data_source: "Security 4697/7045 (instalación de servicio) y 7040 (cambio de tipo de arranque); Sysmon 13 (RegistryValueSet en Services\\*\\ImagePath); auditoría de cambios de servicio"
+  signal: "Reconfiguración del binPath/ImagePath de un servicio por un principal no administrativo, o DACL de servicio que otorga escritura a Authenticated Users"
+  siem_rule: templates/detection/{siem}/weak_service_permissions
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
+# catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED
+# control->rule mappings). The reconciliation still treats it as 'bundled in this
+# baseline' for warn/exclude-control purposes, but defensive-controls cannot
+# derive a concrete skip_rule for it — only the baseline-level conflict is recorded.
+neutralized_by:
+  - hardening.controls.service_acl_hardening   # etiqueta libre: restablecer DACL de servicio por defecto (sin ACE para Authenticated Users)
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Retirar los ACE de escritura/change-config de Authenticated Users sobre servicios; auditar DACL de servicios (sc sdshow / accesschk -c); usar cuentas de servicio con privilegio mínimo en lugar de LocalSystem."
+validate:
+  atomic: T1574.011
+  local_check: "sc.exe sdshow PFWeakPermSvc contiene un ACE de acceso amplio para AU (Authenticated Users)"
+chain:
+  target_shape: none
