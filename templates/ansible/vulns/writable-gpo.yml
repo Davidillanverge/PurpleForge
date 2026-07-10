@@ -29,8 +29,11 @@
       if (-not $gpo) { $gpo = New-GPO -Name $GpoName -Comment 'PurpleForge writable-gpo (T1484.001)'; $changed = $true }
       $domainDN = (Get-ADDomain).DistinguishedName
       # Link at the domain root so it applies to every host/user (idempotent create).
-      if (-not (Get-GPInheritance -Target $domainDN).GpoLinks | Where-Object { $_.DisplayName -eq $GpoName }) {
-        New-GPLink -Name $GpoName -Target $domainDN -LinkEnabled Yes -ErrorAction SilentlyContinue | Out-Null
+      # NB: capture the filtered links into a variable first — `-not (...).GpoLinks | Where-Object`
+      # binds `-not` to .GpoLinks BEFORE the pipe, so the link would never be created.
+      $existingLink = (Get-GPInheritance -Target $domainDN).GpoLinks | Where-Object { $_.DisplayName -eq $GpoName }
+      if (-not $existingLink) {
+        New-GPLink -Name $GpoName -Target $domainDN -LinkEnabled Yes -ErrorAction Stop | Out-Null
         $changed = $true
       }
       # Delegate full edit (this is the vuln): the account can now modify the GPO.

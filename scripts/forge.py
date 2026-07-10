@@ -2322,9 +2322,16 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
     if not tfvars_path.exists():
         raise SpecError(f"{tfvars_path} not found — generate + deploy the lab first (need the live credentials).")
     tv = json.loads(tfvars_path.read_text(encoding="utf-8"))
+    # admin_password lives in the gitignored secrets.auto.tfvars.json overlay
+    # (the account-independent/shareable split — see render_azure_terraform),
+    # not in the committed terraform.tfvars.json. Fall back to it.
     admin_pass = tv.get("admin_password")
     if not admin_pass:
-        raise SpecError("terraform.tfvars.json has no admin_password.")
+        secrets_path = tfvars_path.parent / "secrets.auto.tfvars.json"
+        if secrets_path.exists():
+            admin_pass = json.loads(secrets_path.read_text(encoding="utf-8")).get("admin_password")
+    if not admin_pass:
+        raise SpecError("no admin_password in terraform.tfvars.json or secrets.auto.tfvars.json — deploy the lab first (secrets are minted at deploy).")
     admin_user = "Administrator"  # the domain's RID-500, not the local admin_username
 
     machines = manifest.get("machines_flat", [])

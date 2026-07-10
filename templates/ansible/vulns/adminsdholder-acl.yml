@@ -34,7 +34,18 @@
           $sid, [System.DirectoryServices.ActiveDirectoryRights]::GenericAll,
           [System.Security.AccessControl.AccessControlType]::Allow)
         $acl.AddAccessRule($ace)
-        Set-Acl -Path $target -AclObject $acl
+        try {
+          Set-Acl -Path $target -AclObject $acl -ErrorAction Stop
+        } catch {
+          throw "Set-Acl on AdminSDHolder failed: $($_.Exception.Message)"
+        }
+        # Set-Acl on the AD: provider can silently no-op; re-read and confirm the ACE landed.
+        $verify = (Get-Acl -Path $target).Access | Where-Object {
+          $_.IdentityReference -eq $nt -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+        }
+        if (-not $verify) {
+          throw "GenericAll ACE for $nt on AdminSDHolder was not persisted after Set-Acl."
+        }
         $changed = $true
       }
       $Ansible.Changed = $changed
