@@ -1,0 +1,93 @@
+# PurpleForge — WinRM live-validation smoke test.
+#
+# PURPOSE: exercise the new automated WinRM validation path added to
+# forge.py (WINRM_APPLIED_CHECKS / _winrm_run / _winrm_check_result) against
+# a real workstation + DC. Covers exactly the 7 vulns that path handles:
+#   - the 5 Tier A OS-level local-privesc vulns (never smoke-tested live —
+#     see NON-AD-VULNS-ROADMAP.md item 3), all target_role: workstation
+#   - writable-gpo / adminsdholder-acl (upgraded from REQUIRES-HUMAN to an
+#     automated WinRM check, reusing the exact commands hand-verified on
+#     acl-revalidate-lab on 2026-07-10)
+# Nothing else — smallest topology that can host all 7 (DC + one workstation).
+#
+# SIZING / QUOTA (same subscription as avengers-lab-azure.yml, the validated
+# DC+workstation+bastion pattern): HARD 4-total-vCPU-per-region quota in
+# eastus; Standard_F1as_v7 (1 vCPU) is the only unrestricted SKU. Budget:
+# DC (1) + workstation (1) + WireGuard bastion (1) = 3 vCPU, 1 vCPU headroom.
+lab:
+  name: winrm-validate-lab
+  theme: avengers
+  provider: azure
+  region: eastus
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 30
+
+forest:
+  - domain: shield.local
+    netbios: SHIELD
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    # Server 2019 (not 2016): NVMe-only Fasv7 sizes need it — see AZURE-DEPLOY-RUNBOOK.md.
+    os: windows-server-2019
+    domain: shield.local
+    count: 1
+  - role: workstation
+    os: windows-10-22h2
+    domain: shield.local
+    count: 1
+
+population:
+  users: 15
+  density: realistic
+  seed: 616
+
+# ctf mode casts ONE real pivot for writable-gpo/adminsdholder-acl (account-shaped);
+# the 5 OS vulns have target_shape: none (machine-level, no account cast).
+vulnerabilities:
+  - writable-gpo             # account — ANCHOR pivot (GenericWrite on GPO linked at root)
+  - adminsdholder-acl        # account — reuse pivot (GenericAll on AdminSDHolder)
+  - unquoted-service-path    # workstation — LocalSystem svc, unquoted ImagePath + writable prefix
+  - weak-service-permissions # workstation — LocalSystem svc, AU-writable DACL
+  - dll-hijacking            # workstation — LocalSystem svc, AU-writable bin dir
+  - scheduled-task-privesc   # workstation — SYSTEM task, AU-writable script
+  - always-install-elevated  # workstation — AlwaysInstallElevated=1 (HKLM+HKCU)
+
+attack_chain:
+  mode: ctf
+
+defense:
+  profile: realistic
+  hardening:
+    baseline: baseline-controls
+    apply_to: all
+    controls:
+      laps: true
+    intentional_gaps_auto: true
+  edr:
+    - product: defender-av
+      mode: enabled
+      settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
+      targets: all
+  deception:
+    honey_accounts: 2
+    canarytokens: []
+
+on_conflict: exclude-control
+
+detection_rules: auto
+
+validation:
+  bloodhound: true
+  pingcastle: true
+  atomic_red_team:
+    - T1484.001   # writable-gpo
+    - T1574.009   # unquoted-service-path
+    - T1574.011   # weak-service-permissions
+    - T1574.001   # dll-hijacking
+    - T1053.005   # scheduled-task-privesc
+    - T1548.002   # always-install-elevated
+    # skipped (validate.atomic: null): adminsdholder-acl

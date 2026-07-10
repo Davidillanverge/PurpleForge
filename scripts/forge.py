@@ -2307,6 +2307,70 @@ LDAP_APPLIED_FILTERS = {
     "rbcd-abuse": ("(msDS-AllowedToActOnBehalfOfOtherIdentity=*)", "RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity) set"),
 }
 
+# vuln id -> PowerShell one-shot check executed over WinRM (nxc/netexec winrm -X),
+# the twin of LDAP_APPLIED_FILTERS for vulns with no LDAP-visible artifact: the
+# five OS-level local-privesc vulns (workstation, no AD object at all) plus
+# writable-gpo/adminsdholder-acl, whose "applied" state lives in GroupPolicy/the
+# AD: PowerShell provider rather than a raw LDAP filter. Each script prints
+# exactly one line, "PF_CHECK:True" or "PF_CHECK:False" — parsed by
+# _winrm_check_result, ignoring nxc's own banner/auth noise around it. Scripts
+# for account-scoped checks (writable-gpo, adminsdholder-acl) carry the literal
+# placeholder __ACCOUNT__, substituted with the vuln's cast account at run time
+# (never .format()'d — the scripts are full of literal PowerShell `{ }` blocks).
+WINRM_APPLIED_CHECKS = {
+    "unquoted-service-path": (
+        "$svc = Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PFUnquotedSvc' -ErrorAction SilentlyContinue; "
+        "$img = $svc.ImagePath; "
+        "$unquoted = [bool]($img -and ($img -notmatch '^\"') -and ($img -match ' ')); "
+        "$acl = Get-Acl 'C:\\PFApps' -ErrorAction SilentlyContinue; "
+        "$writable = [bool]($acl -and ($acl.Access | Where-Object { $_.IdentityReference.Value -like '*Authenticated Users' -and $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl' })); "
+        "Write-Output ('PF_CHECK:' + [bool]($unquoted -and $writable))"
+    ),
+    "weak-service-permissions": (
+        # sc.exe sdshow always renders the access mask as symbolic SDDL letters
+        # (never the raw hex the inject task-file writes), so match the AU ACE by
+        # its DC (SERVICE_CHANGE_CONFIG) bit — the one that actually enables
+        # `sc config` reconfiguration, rather than the literal '0xF01FF' string.
+        "$sddl = (& sc.exe sdshow PFWeakPermSvc) -join ''; "
+        "$hasAce = [bool]($sddl -match '\\(A;;[A-Z]*DC[A-Z]*;;;AU\\)'); "
+        "Write-Output ('PF_CHECK:' + $hasAce)"
+    ),
+    "dll-hijacking": (
+        "$acl = Get-Acl -LiteralPath 'C:\\PFApps\\PFMonitor' -ErrorAction SilentlyContinue; "
+        "$hasAce = [bool]($acl -and ($acl.Access | Where-Object { $_.IdentityReference.Value -like '*Authenticated Users' -and $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl' })); "
+        "$svc = Get-CimInstance Win32_Service -Filter \"Name='PFHijackSvc'\" -ErrorAction SilentlyContinue; "
+        "$isSystem = [bool]($svc -and $svc.StartName -eq 'LocalSystem'); "
+        "Write-Output ('PF_CHECK:' + [bool]($hasAce -and $isSystem))"
+    ),
+    "scheduled-task-privesc": (
+        "$task = Get-ScheduledTask -TaskName 'PurpleForge Maintenance' -ErrorAction SilentlyContinue; "
+        "$isSystem = [bool]($task -and $task.Principal.UserId -match 'SYSTEM'); "
+        "$acl = Get-Acl -LiteralPath 'C:\\PFScripts\\maintenance.ps1' -ErrorAction SilentlyContinue; "
+        "$writable = [bool]($acl -and ($acl.Access | Where-Object { $_.IdentityReference.Value -like '*Authenticated Users' -and $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl' })); "
+        "Write-Output ('PF_CHECK:' + [bool]($isSystem -and $writable))"
+    ),
+    "always-install-elevated": (
+        "$hklm = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated; "
+        "$hkcu = (Get-ItemProperty 'HKCU:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated; "
+        "if ($null -eq $hkcu) { $hkcu = (Get-ItemProperty 'Registry::HKEY_USERS\\.DEFAULT\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated }; "
+        "Write-Output ('PF_CHECK:' + [bool]($hklm -eq 1 -and $hkcu -eq 1))"
+    ),
+    "writable-gpo": (
+        "Import-Module GroupPolicy; "
+        "$dn = (Get-ADDomain).DistinguishedName; "
+        "$linked = [bool]((Get-GPInheritance -Target $dn).GpoLinks | Where-Object { $_.DisplayName -eq 'Workstation Deployment Policy' -and $_.Enabled }); "
+        "$perm = Get-GPPermission -Name 'Workstation Deployment Policy' -All -ErrorAction SilentlyContinue | Where-Object { $_.Trustee.Name -eq '__ACCOUNT__' -and $_.Permission -eq 'GpoEditDeleteModifySecurity' }; "
+        "Write-Output ('PF_CHECK:' + [bool]($linked -and $perm))"
+    ),
+    "adminsdholder-acl": (
+        "Import-Module ActiveDirectory; "
+        "$dn = (Get-ADDomain).DistinguishedName; "
+        "$acl = Get-Acl (\"AD:\\CN=AdminSDHolder,CN=System,\" + $dn); "
+        "$hasAce = [bool]($acl.Access | Where-Object { $_.IdentityReference -match '__ACCOUNT__' -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll }); "
+        "Write-Output ('PF_CHECK:' + $hasAce)"
+    ),
+}
+
 
 def _nxc_bin() -> str | None:
     return shutil.which("nxc") or shutil.which("netexec")
@@ -2378,11 +2442,28 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                 row.update(applied="YES", exploitable="REQUIRES-HUMAN", evidence=f"LDAP confirms {label}; exploit it manually (command below).")
             else:
                 row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence=f"LDAP query for {label} returned nothing parseable — confirm by hand.")
+        elif vid in WINRM_APPLIED_CHECKS:
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence=f"no IP for host {r['run_on']!r} in the manifest.")
+            else:
+                script = WINRM_APPLIED_CHECKS[vid].replace("__ACCOUNT__", r.get("account") or "")
+                out = _winrm_run(nxc, target_ip, admin_user, admin_pass, script)
+                result = _winrm_check_result(out or "")
+                if result is True:
+                    row.update(applied="YES", exploitable="REQUIRES-HUMAN",
+                               evidence=f"WinRM check on {r['run_on']} ({target_ip}) confirms the artifact is present; exploit it manually (command below).")
+                elif result is False:
+                    row.update(applied="NO", exploitable="NO",
+                               evidence=f"WinRM check on {r['run_on']} ({target_ip}) found the artifact absent or not matching.")
+                else:
+                    row.update(applied="PENDING", exploitable="REQUIRES-HUMAN",
+                               evidence="WinRM check did not run (auth/timeout/unreachable) — retry the command below.")
         else:
             row.update(applied="REQUIRES-HUMAN", exploitable="REQUIRES-HUMAN",
                        evidence="ACL/SYSVOL/registry state — confirm with the command below (bloodhound-python / nxc / dacledit).")
 
-        row["command"] = _live_command(vid, dc_ip, domain, admin_user)
+        row["command"] = _live_command(vid, dc_ip, domain, admin_user, host.get("ip"), r.get("account"))
         confirmed.append(row)
 
         if row["applied"] == "NO":
@@ -2405,6 +2486,32 @@ def _nxc_run(cmd: list[str]) -> str | None:
         return None
 
 
+def _winrm_run(nxc: str, host_ip: str, user: str, password: str, script: str) -> str | None:
+    """Run a PowerShell one-liner over WinRM via nxc/netexec's `-X`, returning
+    combined stdout+stderr, or None if it could not run at all (auth/timeout —
+    a failed live check is data, not a crash)."""
+    try:
+        res = subprocess.run(
+            [nxc, "winrm", host_ip, "-u", user, "-p", password, "-X", script],
+            capture_output=True, text=True, timeout=180,
+        )
+        return (res.stdout or "") + (res.stderr or "")
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _winrm_check_result(out: str) -> bool | None:
+    """Parse the PF_CHECK:True/False marker line a WINRM_APPLIED_CHECKS script
+    prints. None if the marker never appeared (auth failure, WinRM down, the
+    host unreachable over the tunnel)."""
+    for line in out.splitlines():
+        if "PF_CHECK:True" in line:
+            return True
+        if "PF_CHECK:False" in line:
+            return False
+    return None
+
+
 def _nxc_query_nonempty(out: str) -> bool:
     """Heuristic: netexec's ldap --query prints one line per matched attribute
     (containing 'CN=', a DN, or 'Response:'/'objectClass' markers) after its
@@ -2414,7 +2521,7 @@ def _nxc_query_nonempty(out: str) -> bool:
     return any(any(mk in line for mk in markers) for line in out.splitlines())
 
 
-def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str) -> str:
+def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str, target_ip: str | None = None, account: str | None = None) -> str:
     """The exact copy-pasteable command an operator runs to confirm a vuln the
     harness can't safely auto-confirm. Uses <PASS> as a placeholder — the real
     password is in lab-report.md / terraform.tfvars.json, not echoed here."""
@@ -2424,6 +2531,9 @@ def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str) -> str:
         return f"{base} {ROAST_FLAGS[vid][0]} out --kdcHost {dc_ip}"
     if vid in LDAP_APPLIED_FILTERS:
         return f"{base} --query \"{LDAP_APPLIED_FILTERS[vid][0]}\" \"\""
+    if vid in WINRM_APPLIED_CHECKS:
+        script = WINRM_APPLIED_CHECKS[vid].replace("__ACCOUNT__", account or "<account>")
+        return f"nxc winrm {target_ip or '<host-ip>'} -u {admin_user} -p '<PASS>' -X \"{script}\""
     return f"bloodhound-python -d {domain} -u {admin_user} -p '<PASS>' -dc {dc_ip} -c All  # then inspect the {vid} edge in BloodHound"
 
 
@@ -2434,10 +2544,13 @@ def build_vuln_check(vuln: dict, catalog_entry: dict) -> dict:
     validate/attack metadata — no detection/coverage prediction."""
     validate = (catalog_entry or {}).get("validate", {}) or {}
     attack = (catalog_entry or {}).get("attack", {}) or {}
+    account_key = VULN_CREDENTIAL_VARS.get(vuln["id"], (None, None))[0]
+    account = (vuln.get("vars") or {}).get(account_key) if account_key else None
     return {
         "id": vuln["id"],
         "mitre": vuln["mitre"],
         "run_on": vuln["run_on"],
+        "account": account,
         "neutralization": vuln["neutralization"].split(" (")[0],
         "applied_signature": validate.get("bloodhound_edge") or "AD artifact created by the inject primitive",
         "exploit_check": validate.get("atomic") or "run the vuln's attack primitive",

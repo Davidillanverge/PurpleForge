@@ -40,25 +40,29 @@ Verified end-to-end: `lab-spec` OK, `guardrail` PASS (invariant #2), all five pl
 target the workstation (not the DC), task-files copied to `generated/`, negative
 test (no workstation ⇒ clear semantic error).
 
+### ✅ WinRM local validation — DONE (2026-07-10)
+
+`WINRM_APPLIED_CHECKS` in `scripts/forge.py` (`run_live_validation`) now
+auto-confirms `applied` for all 5 OS vulns plus writable-gpo/adminsdholder-acl,
+via `nxc winrm <ip> -X "<PowerShell>"` one-liners that each print a
+`PF_CHECK:True/False` marker. `exploitable` stays `REQUIRES-HUMAN` by design
+(actually exploiting is a state-changing manual step, same as
+`LDAP_APPLIED_FILTERS`). Full writeup + the two real bugs this surfaced (a
+deploy-blocking wrong Ansible collection on `scheduled-task-privesc`, and a
+check-script regex that didn't account for `sc.exe sdshow`'s symbolic SDDL
+rendering) is in the `winrm-live-validation` memory entry.
+
+### ✅ Deploy smoke test — DONE (2026-07-10)
+
+Stood up `winrm-validate-lab` (`specs/winrm-validate-lab.yml`, DC + 1
+workstation) with all 5 OS vulns + writable-gpo/adminsdholder-acl. Deployed,
+validated (7/7 auto-confirmed applied=YES after fixing the two bugs above),
+destroyed to cost-zero. First-ever live run of the 5 Tier A vulns. Kept as a
+committed regression-test spec for re-running this smoke test later.
+
 ### ⬜ Pending to close Tier A
 
-1. **WinRM local validation (highest priority).** `purple-validation` /
-   `purple-validator` is `nxc`/LDAP-only today — it cannot confirm these OS vulns.
-   Each catalog entry carries a `validate.local_check` hint; a WinRM-based local
-   validator needs to be added that, per vuln, checks over the tunnel:
-   - `unquoted-service-path`: `Win32_Service.PathName` unquoted + contains a space,
-     and the prefix dir ACL is writable by Authenticated Users.
-   - `weak-service-permissions`: `sc.exe sdshow <svc>` contains a wide `;AU)` ACE.
-   - `dll-hijacking`: service binary dir ACL writable by Authenticated Users + runs
-     as LocalSystem.
-   - `scheduled-task-privesc`: task runs as SYSTEM and its script is writable by
-     Authenticated Users.
-   - `always-install-elevated`: both HKLM and HKCU `AlwaysInstallElevated == 1`.
-   This is a new validation path parallel to the AD one in `scripts/forge.py`
-   (search `nxc`/`netexec` around the validate command) and in
-   `.claude/skills/purple-validation/SKILL.md`.
-
-2. **Real hardening reconciliation.** `neutralized_by` uses free-label controls
+1. **Real hardening reconciliation.** `neutralized_by` uses free-label controls
    (placeholder pattern), so `defensive-controls` records only a baseline-level
    conflict, never a concrete `skip_rule`. Two of them map to REAL CIS items and
    should be wired into `catalog/defense/hardening/control-cis-rules.yml`:
@@ -67,11 +71,6 @@ test (no workstation ⇒ clear semantic error).
    - `dll-hijacking` → CIS SafeDllSearchMode.
    The service-ACL / unquoted-path / scheduled-task controls have no direct CIS
    rule; leave them as free-label (documented in each vuln's NOTE comment).
-
-3. **Deploy smoke test.** None of the five has been through a live deploy +
-   validate yet. Stand up a small lab with a workstation and at least
-   `always-install-elevated` (purely registry, lowest risk) to confirm the runas
-   become path works on a non-DC host, then the service-based ones.
 
 ---
 
