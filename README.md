@@ -463,6 +463,11 @@ force a VM size your subscription allows.
 
 ### Deploy on Proxmox
 
+> **Fresh Proxmox host (nothing configured yet)?** [`PROXMOX-DEPLOY-RUNBOOK.md`](PROXMOX-DEPLOY-RUNBOOK.md)
+> walks through preparing the host itself — network bridges, storage, the
+> API token, and building the two required templates — before any of the
+> steps below apply.
+
 **1. Point at your Proxmox host** with an API token (never baked into the lab):
 
 ```bash
@@ -535,7 +540,9 @@ details, all variables, and per-machine pins:
 
 > **If a step fails:** the generated `deploy.sh` already encodes the full happy
 > path plus retries, so re-running usually clears transient errors.
-> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is the symptom→cause
-> reference (quota, image-generation mismatches, WinRM/NTLM quirks) and documents
-> the manual, step-by-step equivalent of what the script does. `infra-aws` is not
-> built yet — Azure and Proxmox only today.
+> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) /
+> [`PROXMOX-DEPLOY-RUNBOOK.md`](PROXMOX-DEPLOY-RUNBOOK.md) are the symptom→cause
+> references (quota, image-generation mismatches, WinRM/NTLM quirks for Azure;
+> host prep, templates, cloudbase-init for Proxmox) and document the manual,
+> step-by-step equivalent of what the script does. `infra-aws` is not built
+> yet — Azure and Proxmox only today.

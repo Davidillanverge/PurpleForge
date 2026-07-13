@@ -112,6 +112,11 @@ bootstrap is what removed the need for it.
 
 ## Known limitations / iteration notes
 
+See [`PROXMOX-DEPLOY-RUNBOOK.md`](../../../PROXMOX-DEPLOY-RUNBOOK.md) for the
+end-to-end checklist (fresh host prep through first deploy) — written before
+this skill's own output has been exercised against a live PVE host
+(iteration 3), so treat it as the current best-known path, not a verified one.
+
 - auto_shutdown is best-effort (cron on the deploy host). A truly host-side
   schedule would need SSH to the PVE node (only the API token is assumed).
 - The bastion VLAN sub-interfaces are set at deploy (idempotent) but not made

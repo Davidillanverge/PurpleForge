@@ -267,5 +267,7 @@ That's it — no WinRM config, no `ansible` user, no manual PowerShell.
 | `templates/deploy-proxmox.sh.j2` → `pick_template()` | writes `template.auto.tfvars.json` from `PF_TEMPLATE_ID` |
 
 See also: [`README.md`](README.md) (§ Custom machine images, § Proxmox VE),
+[`PROXMOX-DEPLOY-RUNBOOK.md`](PROXMOX-DEPLOY-RUNBOOK.md) (preparing a fresh
+Proxmox host end-to-end, including this template checklist in context),
 [`.claude/skills/infra-azure/SKILL.md`](.claude/skills/infra-azure/SKILL.md),
 [`.claude/skills/infra-proxmox/SKILL.md`](.claude/skills/infra-proxmox/SKILL.md).
