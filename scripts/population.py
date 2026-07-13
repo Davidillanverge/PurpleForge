@@ -177,7 +177,7 @@ def _generate_users(rng: random.Random, count: int, vocab: dict, ou_paths: list[
         sam = _dedupe_name(rng, base, used_names)
 
         password_in_desc = rng.randint(1, 1000) < 10  # BadBlood: ~1%
-        password = generate_password()
+        password = generate_password(rng=rng)
         description = f"Just so I dont forget my password is {password}" if password_in_desc else "Created by PurpleForge population generator."
 
         users.append({

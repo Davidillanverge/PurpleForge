@@ -497,7 +497,7 @@ def load_and_resolve(spec_path: Path) -> tuple[dict, dict] | None:
     return spec, manifest
 
 
-def generate_password(length: int = 20) -> str:
+def generate_password(length: int = 20, rng: random.Random | None = None) -> str:
     """Random password meeting basic Windows complexity rules (upper/lower/digit/symbol).
 
     The symbol set deliberately EXCLUDES cmd.exe-hostile characters
@@ -505,11 +505,20 @@ def generate_password(length: int = 20) -> str:
     WinRM user with `net user ansible <pw>` under cmd.exe, where an unquoted `&`
     silently splits the command and the user is never created (WinRM then never
     comes up). We also quote the password there now, but keeping these out of the
-    alphabet is the load-bearing fix — see terraform/azure/windows.tf."""
+    alphabet is the load-bearing fix — see terraform/azure/windows.tf.
+
+    `rng`: pass a seeded random.Random to make the result reproducible from
+    population.seed (population user passwords, most vuln account passwords —
+    CLAUDE.md invariant #5). Left as None (the default), it draws from
+    `secrets` — Python's CSPRNG, deliberately NOT seedable — which is the
+    correct behavior for the two real per-deployer infra secrets
+    (admin_password/ansible_password) that must stay unguessable and must NOT
+    be reproducible across a regenerate."""
+    choice = rng.choice if rng is not None else secrets.choice
     symbols = "!@#*-_=+"
     alphabet = string.ascii_letters + string.digits + symbols
     while True:
-        pw = "".join(secrets.choice(alphabet) for _ in range(length))
+        pw = "".join(choice(alphabet) for _ in range(length))
         if (
             any(c.islower() for c in pw)
             and any(c.isupper() for c in pw)
@@ -1001,8 +1010,14 @@ def resolve_attack_chain(spec: dict, catalog: dict[str, dict], population_plans:
 # vuln sharing that account to reuse the exact same value, so every reset
 # along the chain is idempotent (same value every time) instead of a race.
 def build_vuln_vars(
-    vid: str, machines: list[dict], primary_dc: dict, cast_name: str | None = None, forced_password: str | None = None
+    vid: str, machines: list[dict], primary_dc: dict, cast_name: str | None = None, forced_password: str | None = None,
+    rng: random.Random | None = None,
 ) -> dict:
+    """`rng`: seeded from population.seed by plan_vuln_injection so every
+    generate_password() fallback below is reproducible across regenerates of
+    the same spec (invariant #5) — see [[password-determinism-fix]]. Only
+    matters when cast_name/forced_password are absent (independent mode, or a
+    target_shape:none vuln); ctf-mode chaining already reuses forced_password."""
     if vid == "kerberoasting":
         return {"vuln_kerberoast_account": cast_name or "svc-sqlreport", "vuln_kerberoast_password": forced_password or VULN_WEAK_PASSWORD}
     if vid == "asreproast":
@@ -1012,11 +1027,11 @@ def build_vuln_vars(
     if vid == "shadow-credentials":
         return {
             "vuln_shadowcred_target": "svc-tier0-admin",
-            "vuln_shadowcred_target_password": generate_password(),
+            "vuln_shadowcred_target_password": generate_password(rng=rng),
             "vuln_shadowcred_writer_group": cast_name or "Domain Users",
         }
     if vid == "dnsadmins-privesc":
-        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password(rng=rng))
         return {"vuln_dnsadmins_account": cast_name or "svc-dns-operator", "vuln_dnsadmins_password": password}
     if vid == "rbcd-abuse":
         members = [m for m in machines if m["role"] == "member-server"]
@@ -1027,13 +1042,13 @@ def build_vuln_vars(
             "vuln_rbcd_target_computer": computer,
         }
     if vid == "backup-operators-membership":
-        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password(rng=rng))
         return {"vuln_backupop_account": cast_name or "svc-backup-agent", "vuln_backupop_password": password}
     if vid == "dcsync-acl":
-        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password())
+        password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password(rng=rng))
         return {"vuln_dcsync_account": cast_name or "svc-replication", "vuln_dcsync_password": password}
     if vid == "passwords-in-description":
-        return {"vuln_pwddesc_account": cast_name or "temp-contractor", "vuln_pwddesc_password": forced_password or generate_password()}
+        return {"vuln_pwddesc_account": cast_name or "temp-contractor", "vuln_pwddesc_password": forced_password or generate_password(rng=rng)}
     if vid == "gpp-cpassword":
         return {"vuln_gpp_name": "Workstations - Local Admin Password"}
     if vid == "unconstrained-delegation":
@@ -1042,7 +1057,7 @@ def build_vuln_vars(
         return {"vuln_unconstrained_computer": computer}
     if vid == "constrained-delegation":
         dc_fqdn = f"{primary_dc['name']}.{primary_dc['domain']}"
-        password = forced_password or (VULN_WEAK_PASSWORD_3 if cast_name else generate_password())
+        password = forced_password or (VULN_WEAK_PASSWORD_3 if cast_name else generate_password(rng=rng))
         return {
             "vuln_delegation_account": cast_name or "svc-webapp",
             "vuln_delegation_password": password,
@@ -1051,24 +1066,24 @@ def build_vuln_vars(
     if vid == "writable-gpo":
         return {
             "vuln_gpo_account": cast_name or "svc-gpo-editor",
-            "vuln_gpo_password": forced_password or generate_password(),
+            "vuln_gpo_password": forced_password or generate_password(rng=rng),
             "vuln_gpo_name": "Workstation Deployment Policy",
         }
     if vid == "adminsdholder-acl":
         return {
             "vuln_adminsdholder_account": cast_name or "svc-legacy-audit",
-            "vuln_adminsdholder_password": forced_password or generate_password(),
+            "vuln_adminsdholder_password": forced_password or generate_password(rng=rng),
         }
     if vid == "readable-gmsa":
         return {
             "vuln_gmsa_reader_account": cast_name or "svc-monitoring",
-            "vuln_gmsa_reader_password": forced_password or generate_password(),
+            "vuln_gmsa_reader_password": forced_password or generate_password(rng=rng),
             "vuln_gmsa_name": "gmsa-websvc",
         }
     if vid == "esc4-template-acl":
         return {
             "vuln_esc4_account": cast_name or "svc-pki-operator",
-            "vuln_esc4_password": forced_password or generate_password(),
+            "vuln_esc4_password": forced_password or generate_password(rng=rng),
             "vuln_esc4_template": "User",
         }
     if vid == "mssql-weak-sa":
@@ -1103,6 +1118,11 @@ def plan_vuln_injection(
     warned = {c.get("vuln") for c in reconciliation.get("warnings", [])}
     cast_names = {s["id"]: s["cast_name"] for s in (attack_chain or {}).get("steps", [])}
     cast_password_cache: dict[str, str] = {}  # cast_name -> password, see build_vuln_vars' forced_password doc
+    # +9000: distinct from resolve_attack_chain's +8000 and population.py's own
+    # per-domain seeds (population.seed + domain index) — makes every
+    # generate_password() fallback inside build_vuln_vars reproducible across
+    # regenerates of the same spec, instead of drawing from the CSPRNG.
+    vuln_password_rng = random.Random(spec["population"]["seed"] + 9000)
 
     planned = []
     for vid in spec["vulnerabilities"]:
@@ -1133,7 +1153,7 @@ def plan_vuln_injection(
 
         cast_name = cast_names.get(vid)
         forced_password = cast_password_cache.get(cast_name) if cast_name else None
-        vvars = build_vuln_vars(vid, machines, primary_dc, cast_name, forced_password)
+        vvars = build_vuln_vars(vid, machines, primary_dc, cast_name, forced_password, vuln_password_rng)
 
         password_key = (VULN_CREDENTIAL_VARS.get(vid) or (None, None))[1]
         if cast_name and password_key and password_key in vvars and cast_name not in cast_password_cache:
