@@ -134,6 +134,34 @@ tf_apply() {
   echo "  apply complete"
 }
 
+# ---- start any stopped VMs (redeploying a lab auto_shutdown stopped) --------
+# terraform apply reconciles CONFIGURATION drift, not power state — it will
+# NOT start an already-stopped VM. A fresh deploy's VMs are already running
+# (harmless no-op start below); redeploying/continuing a lab after
+# setup_auto_shutdown's cron stopped it needs this, or wg_up/ansible never
+# reach a live host. Same pool-membership query the auto_shutdown helper
+# uses, inverted (start instead of shutdown).
+start_vms() {
+  log "1b. Starting any stopped VMs"
+  local k=""; [ "${PROXMOX_VE_INSECURE:-false}" = "true" ] && k="-k"
+  local base="${PROXMOX_VE_ENDPOINT%/}"
+  local auth="Authorization: PVEAPIToken=$PROXMOX_VE_API_TOKEN"
+  local members
+  members="$(curl -s $k -H "$auth" "$base/api2/json/pools/$LAB" \
+    | python3 -c 'import json,sys
+try: d=json.load(sys.stdin).get("data",{})
+except Exception: d={}
+for m in d.get("members",[]):
+    if m.get("type")=="qemu": print(m["node"], m["vmid"])' 2>/dev/null || true)"
+  [ -z "$members" ] && { echo "  no VMs found yet — continuing"; return; }
+  while read -r node vmid; do
+    [ -n "$node" ] && [ -n "$vmid" ] || continue
+    curl -s $k -H "$auth" -X POST "$base/api2/json/nodes/$node/qemu/$vmid/status/start" >/dev/null 2>&1 || true
+  done <<< "$members"
+  # brief settle so WinRM/SSH have a chance to come up before wg_up/ansible_up probe them
+  sleep 30
+}
+
 # ---- WireGuard tunnel (the only path into the lab) --------------------------
 # Same server-side wiring as the Azure flow: read the bastion's routable IP,
 # pull the SSH key from state, register this host as a WireGuard peer.
@@ -296,6 +324,7 @@ main() {
   ensure_secrets
   pick_template
   tf_apply
+  start_vms
   wg_up
   route_lab
   ansible_up

@@ -320,6 +320,29 @@ PY
   echo "  apply complete"
 }
 
+# ---- start any deallocated VMs (redeploying a lab auto_shutdown stopped) ----
+# terraform apply reconciles CONFIGURATION drift, not power state — it will
+# NOT start an existing-but-deallocated VM. A fresh deploy's VMs are already
+# running (harmless no-op start below); redeploying/continuing a lab the
+# morning after auto_shutdown deallocated it needs this or wg_up/ansible never
+# reach a live host. Same az-rest approach teardown.sh uses (avoids the
+# broken `az vm` command-loading path some environments hit).
+start_vms() {
+  log "3b. Starting any deallocated VMs"
+  local ids
+  ids="$(az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$LAB/providers/Microsoft.Compute/virtualMachines?api-version=2023-07-01" 2>/dev/null \
+        | python3 -c 'import json,sys;
+try: d=json.load(sys.stdin)
+except Exception: d={}
+[print(v["id"]) for v in d.get("value",[])]' || true)"
+  [ -z "$ids" ] && { echo "  no VMs found yet — continuing"; return; }
+  for id in $ids; do
+    az rest --method post --url "https://management.azure.com${id}/start?api-version=2023-07-01" >/dev/null 2>&1 || true
+  done
+  # brief settle so WinRM/SSH have a chance to come up before wg_up/ansible_up probe them
+  sleep 30
+}
+
 # ---- WireGuard tunnel (the only path into the lab) --------------------------
 wg_up() {
   log "4. WireGuard tunnel to the bastion"
@@ -411,6 +434,7 @@ main() {
   pick_images
   if [ "${1:-}" = "--sizes-only" ]; then log "done (--sizes-only)"; exit 0; fi
   tf_apply
+  start_vms
   wg_up
   ansible_up
   run_site
