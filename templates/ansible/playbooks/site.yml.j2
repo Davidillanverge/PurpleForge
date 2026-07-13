@@ -2,11 +2,15 @@
   PurpleForge — master deploy sequence (GENERATED, do not edit).
   Rendered by scripts/forge.py generate. CLAUDE.md invariant: hardening
   applies BEFORE vulnerabilities are injected; deploy order is
-  infra(terraform) -> ad-topology -> ad-population -> hardening baseline ->
-  vuln-injection -> EDR/telemetry -> snapshot. This file is the single entry
-  point a /deploy command should run — never invoke the individual playbooks
-  out of order by hand. Only imports playbooks scripts/forge.py actually
-  rendered (e.g. vuln-injection.yml doesn't exist for a 0-vuln spec).
+  infra(terraform) -> ad-topology -> service-provisioning -> ad-population ->
+  hardening baseline -> vuln-injection -> EDR/telemetry -> snapshot.
+  service-provisioning installs what machines[].services declares (e.g.
+  mssql) SECURELY — it's establishing what the machine IS, not a vuln or a
+  hardening control; requires_services vulns land afterwards, in
+  vuln-injection. This file is the single entry point a /deploy command
+  should run — never invoke the individual playbooks out of order by hand.
+  Only imports playbooks scripts/forge.py actually rendered (e.g.
+  vuln-injection.yml doesn't exist for a 0-vuln spec).
 
   NOTE: no post-deploy snapshot step exists yet. CLAUDE.md's deploy order
   calls for a clean-state snapshot here, after vuln-injection and before any
@@ -18,6 +22,9 @@
 #}
 ---
 - import_playbook: ad-topology.yml
+{% if has_service_provisioning %}
+- import_playbook: service-provisioning.yml
+{% endif %}
 - import_playbook: ad-population.yml
 - import_playbook: defensive-controls.yml
 {% if has_vuln_injection %}

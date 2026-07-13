@@ -1,0 +1,47 @@
+---
+# Vuln inject task-file: mssql-weak-sa (T1505.001)
+# service-provisioning.yml already installed SQL Server 2019 Express SECURELY
+# on this host ({{ inventory_hostname }}, services: [mssql]): sa disabled,
+# Windows-auth only, xp_cmdshell off, ADDCURRENTUSERASSQLADMIN=True so
+# {{ domain_username }} is already a sysadmin Windows-integrated login. This
+# task is the actual gap: enable sa with a known weak password, switch to
+# Mixed Mode authentication, and turn xp_cmdshell on. Idempotent: ALTER LOGIN/
+# sp_configure re-runs are no-ops when already in the desired state; the
+# service restart only fires when the auth mode actually changed.
+- name: "mssql-weak-sa | check current authentication mode"
+  ansible.windows.win_shell: |
+    SqlCmd -E -h -1 -Q "SET NOCOUNT ON; EXEC xp_instance_regread N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode'"
+  register: vuln_mssql_loginmode_before
+  changed_when: false
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "mssql-weak-sa | enable sa (weak password), Mixed Mode auth, and xp_cmdshell"
+  ansible.windows.win_shell: |
+    SqlCmd -E -Q "ALTER LOGIN sa ENABLE"
+    SqlCmd -E -Q "ALTER LOGIN sa WITH PASSWORD = '{{ vuln_mssql_sa_password }}', CHECK_POLICY = OFF"
+    SqlCmd -E -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode', REG_DWORD, 2"
+    SqlCmd -E -Q "EXEC sp_configure 'show advanced options', 1; RECONFIGURE;"
+    SqlCmd -E -Q "EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "mssql-weak-sa | restart MSSQLSERVER to apply Mixed Mode authentication"
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+    state: restarted
+  when: "'2' not in vuln_mssql_loginmode_before.stdout"
+
+- name: "mssql-weak-sa | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      MSSQL weak-sa gap live on {{ inventory_hostname }}: sa login enabled
+      with a known weak password under Mixed Mode auth, and xp_cmdshell is on
+      -> authenticate as sa and run xp_cmdshell for OS command execution as
+      the SQL Server service account (NT AUTHORITY\NETWORK SERVICE).

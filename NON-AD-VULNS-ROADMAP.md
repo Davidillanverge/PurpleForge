@@ -76,18 +76,62 @@ committed regression-test spec for re-running this smoke test later.
 
 ## Tier B — Application vulnerabilities on Windows
 
-**⬜ Pending.** Bigger lift: the `services` enum (`iis`/`mssql`/`sccm`) is declared
-in the machine schema but **only `adcs` is actually provisioned** — nothing consumes
-`iis`/`mssql`/`sccm` today (verified: no consumer in `scripts/` or `templates/`).
+### ✅ MSSQL: xp_cmdshell + weak sa — DONE (2026-07-13)
 
-Concrete work:
-- Wire provisioning for a service (start with MSSQL): install + configure the stack
-  in an Ansible role, the way `adcs` is provisioned for `adcs-esc1`.
-- Author app vulns that reuse the `requires_services` targeting that already exists:
-  - MSSQL: `xp_cmdshell` enabled / weak `sa` / linked-server privesc (half-AD, a
-    well-known lab pattern, good first target).
-  - IIS: a deliberately vulnerable web app (deployment artifact required).
-- `neutralized_by` maps cleanly to app-hardening / CIS where available.
+First Tier B vuln landed and smoke-tested live end-to-end. New pieces:
+
+- **service-provisioning phase** (`templates/ansible/playbooks/service-provisioning.yml.j2`,
+  wired into `site.yml` between `ad-topology` and `ad-population` —
+  `scripts/forge.py`'s `plan_service_provisioning`/`render_service_provisioning`):
+  installs a machine's declared `services` SECURELY, before any vuln lands.
+  Only `mssql` is wired; `iis`/`sccm` remain declared-but-unconsumed.
+- **`templates/ansible/services/mssql-install.yml`**: wraps
+  `vendor/GOAD/ansible/roles/mssql`'s install mechanics (unattended config +
+  installer download/run), trimmed to a SECURE base install — sa disabled,
+  Windows-auth only, xp_cmdshell off. `ADDCURRENTUSERASSQLADMIN=True` makes
+  the domain admin a sysadmin login, reused by vuln inject tasks via
+  `SqlCmd -E`.
+- **`catalog/vulnerabilities/mssql-weak-sa.yml`** + `templates/ansible/vulns/mssql-weak-sa.yml`
+  (T1505.001): enables sa (weak password) + Mixed Mode auth + xp_cmdshell on
+  top of the secure baseline — `requires_services: [mssql]` routes it to the
+  right member-server, the existing targeting mechanism.
+- **Live validation**: `nxc mssql <ip> -u sa -p <pass> --local-auth -x whoami`
+  proves both applied AND exploitable in one shot (same pattern as
+  `ROAST_FLAGS`) — wired into `run_live_validation`/`_live_command`.
+
+**Three real bugs found and fixed during the first-ever live deploy:**
+1. `{{ domain }}` is DC-only in the inventory (member-servers only carry
+   `member_domain`), and `domain_username` is already NETBIOS-qualified
+   (`CORP\Administrator`) — my `SQLYSADMIN` var was doubly wrong. Fixed to
+   just `{{ domain_username }}`.
+2. The SSEI bootstrap installer failed silently at
+   "Downloading install package..." — confirmed live that `SchUseStrongCrypto`
+   was unset in both .NET Framework registry hives, a well-documented cause
+   for exactly this symptom on fresh Windows images. Fixed by setting it
+   before running the installer.
+3. **The real connectivity bug**: SQL Server installed and listened on 1433
+   fine, but was unreachable from off-box. Confirmed live: the member-server's
+   NIC stayed `NetworkCategory: Public` well after domain-join (a known Azure
+   NLA-misclassification quirk), so the firewall rule's `Profile: "Domain"`
+   never applied to real traffic (`win_wait_for`'s own port check passed
+   because it's a loopback check, masking this). Fixed by opening the rule on
+   `Domain, Private, Public` — isolation is enforced at the NSG layer
+   (deny-by-default, management-subnet-only), not the guest firewall, so this
+   doesn't weaken anything.
+
+Smoke-tested on `mssql-weak-sa-lab` (`specs/mssql-weak-sa-lab.yml`, kept as a
+regression-test spec): deployed, validated (1/1 applied=YES exploitable=YES),
+destroyed to cost-zero.
+
+### ⬜ Still pending in Tier B
+
+- IIS: a deliberately vulnerable web app (deployment artifact required) — no
+  provisioning phase exists for it yet (only `mssql` is wired).
+- `neutralized_by` for mssql-weak-sa is a free-label placeholder (no matching
+  ansible-lockdown CIS rule — SQL Server hardening isn't a Windows-OS CIS/STIG
+  surface ansible-lockdown covers).
+- No linked-server / cross-database privesc chain yet — this first vuln is
+  the single-hop sa/xp_cmdshell primitive only.
 
 ---
 

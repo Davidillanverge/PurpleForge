@@ -1,0 +1,133 @@
+---
+# PurpleForge service provisioning: MSSQL Server 2019 Express, base install.
+# Wraps vendor/GOAD/ansible/roles/mssql's install mechanics (the unattended
+# config template + installer download/run), trimmed to the base install
+# only — no sysadmin/impersonation ceremony from GOAD's fuller role, since
+# this box must be SECURE by default: sa stays DISABLED, auth stays
+# Windows-only, xp_cmdshell stays off. Any vuln selected for this service
+# (e.g. mssql-weak-sa) weakens it afterwards, in the vuln-injection phase —
+# same hardening-before-gaps order as every other vuln.
+#
+# ADDCURRENTUSERASSQLADMIN=True in the rendered config makes the installing
+# account ({{ domain_username }}, already a domain admin in every lab) a
+# sysadmin Windows-integrated login, which vuln inject tasks reuse via
+# `SqlCmd -E` (trusted/integrated auth) — no extra service account plumbing
+# needed. Idempotent: the service-existence check (mirrors GOAD's own
+# `win_service` probe pattern) skips the ~10-minute install on repeat runs.
+- name: "mssql-install | create setup directories"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - C:\setup
+    - C:\setup\mssql
+    - C:\setup\mssql\media
+
+- name: "mssql-install | render the unattended install config"
+  ansible.windows.win_template:
+    src: "{{ service_files_dir }}/mssql/sql_conf.ini.MSSQL_2019.j2"
+    dest: C:\setup\mssql\sql_conf.ini
+  vars:
+    sql_instance_name: MSSQLSERVER
+    SQLSVCACCOUNT: "NT AUTHORITY\\NETWORK SERVICE"
+    SQLSVCPASSWORD: ""
+    sa_password: "{{ mssql_baseline_sa_password }}"
+    # domain_username is already NETBIOS-qualified in the inventory (e.g.
+    # "CORP\Administrator") — don't re-prefix it. Also member-servers only
+    # carry member_domain, not domain (that's DC-only), so {{ domain }} was
+    # undefined here regardless.
+    SQLYSADMIN: "{{ domain_username }}"
+
+- name: "mssql-install | enable strong crypto for .NET Framework (SSEI bootstrap needs TLS 1.2)"
+  ansible.windows.win_regedit:
+    path: "{{ item }}"
+    name: SchUseStrongCrypto
+    data: 1
+    type: dword
+  loop:
+    - "HKLM:\\SOFTWARE\\Microsoft\\.NETFramework\\v4.0.30319"
+    - "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\.NETFramework\\v4.0.30319"
+  # Confirmed live: unset by default on this image, and the SSEI bootstrap's
+  # internal downloader ("Downloading install package...") fails silently
+  # without it — a well-documented .NET 4.x quirk (SystemDefault security
+  # protocol resolves inconsistently for non-interactive/service contexts
+  # without this explicit flag).
+
+- name: "mssql-install | check whether the installer was already downloaded"
+  ansible.windows.win_stat:
+    path: C:\setup\mssql\sql_installer.exe
+  register: mssql_installer_file
+
+- name: "mssql-install | download the SQL Server 2019 Express installer"
+  ansible.windows.win_get_url:
+    url: "https://download.microsoft.com/download/7/f/8/7f8a9c43-8c8a-4f7c-9f92-83c18d96b681/SQL2019-SSEI-Expr.exe"
+    dest: C:\setup\mssql\sql_installer.exe
+  when: not mssql_installer_file.stat.exists
+
+- name: "mssql-install | check whether the MSSQLSERVER service already exists"
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+  register: mssql_service_check
+  failed_when: mssql_service_check is not defined
+  ignore_errors: true
+
+- name: "mssql-install | run the unattended install (skips if the service already exists)"
+  ansible.windows.win_command: >
+    C:\setup\mssql\sql_installer.exe /configurationfile=C:\setup\mssql\sql_conf.ini
+    /IACCEPTSQLSERVERLICENSETERMS /MEDIAPATH=C:\setup\mssql\media /QUIET /HIDEPROGRESSBAR
+  args:
+    chdir: C:\setup
+  async: 2400
+  poll: 30
+  register: mssql_install_result
+  when: mssql_service_check.state is not defined or mssql_service_check.name is not defined
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+    # Matches vendor/GOAD/ansible/roles/mssql's own install task exactly: a
+    # plain `runas` session's network profile/token fails the bootstrap
+    # installer's internal HTTPS download of the SQL Server media (confirmed
+    # live — "Downloading install package... Operation finished with result:
+    # Failure"). new_credentials + netcredentials_only (runas /netonly) gives
+    # the elevated session a working network identity for that download.
+    ansible_become_flags: logon_type=new_credentials logon_flags=netcredentials_only
+
+- name: "mssql-install | Firewall | allow MSSQL (TCP 1433) through the firewall"
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for MSSQL (TCP-In)"
+    Ensure: present
+    Enabled: True
+    # NOT "Domain": confirmed live that a freshly domain-joined Azure member-
+    # server's NIC can stay classified NetworkCategory=Public well after
+    # domain-join (NLA misclassification, a known cloud-VM quirk) — a
+    # Domain-only rule then silently never applies to real traffic even
+    # though the port shows LISTENing locally (loopback checks bypass this).
+    # Isolation is enforced at the NSG layer (deny-by-default, reachable
+    # only from the management subnet) — the guest firewall being open on
+    # all profiles doesn't weaken that.
+    Profile: "Domain, Private, Public"
+    Direction: "Inbound"
+    Localport: "1433"
+    Protocol: "TCP"
+    Description: "Opens the listener port for MSSQL"
+
+- name: "mssql-install | be sure the MSSQLSERVER service is started"
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+    force_dependent_services: true
+    state: started
+
+- name: "mssql-install | wait for port 1433 to become open"
+  ansible.windows.win_wait_for:
+    port: 1433
+    delay: 5
+
+- name: "mssql-install | record baseline state"
+  ansible.builtin.debug:
+    msg: >-
+      MSSQL Server 2019 Express installed on {{ inventory_hostname }} —
+      SECURE baseline: sa disabled, Windows-auth only, xp_cmdshell off.
+      {{ domain_username }} is sysadmin via ADDCURRENTUSERASSQLADMIN.

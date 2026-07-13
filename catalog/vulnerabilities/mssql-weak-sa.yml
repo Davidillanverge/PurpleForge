@@ -1,0 +1,40 @@
+id: mssql-weak-sa
+name: "MSSQL sa habilitada con contraseña débil y xp_cmdshell activo"
+severity: critical
+attack:
+  mitre_attack: [T1505.001]
+  requires_services: [mssql]
+  intended_path: >
+    El login SQL 'sa' está habilitado con autenticación mixta (SQL + Windows)
+    y una contraseña débil, y el procedimiento extendido xp_cmdshell está
+    activo. Un atacante autentica como sa (contraseña débil, alcanzable por
+    fuerza bruta/diccionario) y ejecuta xp_cmdshell para correr comandos del
+    sistema operativo con el contexto de la cuenta de servicio de SQL Server
+    -> ejecución de código en el host que aloja la base de datos.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/mssql-weak-sa.yml
+  reuses: "vendor/GOAD/ansible/roles/mssql (instalador de SQL Server 2019 Express + config.ini) para el aprovisionamiento base seguro en service-provisioning.yml; la inyección en sí (habilitar sa/mixed-mode/xp_cmdshell) es autoría de PurpleForge, vía SqlCmd -E reutilizando la cuenta de administrador de dominio ya sysadmin por ADDCURRENTUSERASSQLADMIN"
+  params: { sa_password: "{{ vuln_mssql_sa_password }}" }
+detect:
+  data_source: "SQL Server Audit (Successful/Failed Login), Extended Events; Sysmon 1 (ProcessCreate) para el proceso hijo de sqlservr.exe"
+  signal: "Login exitoso del principal 'sa' seguido de un proceso hijo de sqlservr.exe (cmd.exe/powershell.exe) — indicativo de abuso de xp_cmdshell"
+  siem_rule: templates/detection/{siem}/mssql_weak_sa
+# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
+# placeholder — no matching ansible-lockdown CIS rule was found for it during
+# the audit that produced catalog/defense/hardening/control-cis-rules.yml
+# (which only lists VERIFIED control->rule mappings; SQL Server hardening
+# isn't a Windows-OS CIS/STIG surface ansible-lockdown covers). The
+# reconciliation still treats it as 'bundled in this baseline' for
+# warn/exclude-control purposes, but defensive-controls cannot derive a
+# concrete skip_rule for it — only the baseline-level conflict is recorded.
+neutralized_by:
+  - hardening.controls.mssql_hardening   # etiqueta libre: deshabilitar sa / forzar solo autenticación Windows / deshabilitar xp_cmdshell
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Deshabilitar el login sa (o forzarle una contraseña fuerte + CHECK_POLICY=ON); usar solo autenticación Windows; deshabilitar xp_cmdshell vía sp_configure salvo necesidad explícita y auditada; auditar logins de sa."
+validate:
+  atomic: null
+  local_check: "SqlCmd -E -Q \"SELECT is_disabled FROM sys.server_principals WHERE name='sa'\" = 0 y sp_configure 'xp_cmdshell' = 1; o nxc mssql <ip> -u sa -p <pass> --local-auth -x whoami devuelve salida"
+chain:
+  target_shape: none

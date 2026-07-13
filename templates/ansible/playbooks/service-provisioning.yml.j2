@@ -1,0 +1,25 @@
+{#
+  PurpleForge — service-provisioning playbook for {{ lab_name }} (GENERATED,
+  do not edit). Installs the infra services machines[].services declares —
+  today only `mssql` is wired (iis/sccm remain declared-but-unconsumed, Tier B
+  backlog — see NON-AD-VULNS-ROADMAP.md). Reuses vendor/GOAD's mssql role's
+  install mechanics, trimmed to a SECURE base install (sa disabled,
+  Windows-auth only, xp_cmdshell off) — any vuln that requires_services this
+  host lands afterwards, in vuln-injection, same hardening-before-gaps order.
+
+  Deploy order (CLAUDE.md / site.yml.j2): runs after ad-topology (the
+  member-server is already domain-joined) and before ad-population/hardening
+  — this establishes what the machine IS, not a vuln or a hardening control.
+#}
+---
+{% for m in mssql_hosts %}
+- name: "PurpleForge | service-provisioning | mssql -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  vars:
+    service_files_dir: "{{ '{{' }} playbook_dir {{ '}}' }}/files"
+    mssql_baseline_sa_password: "{{ '{{' }} lookup('password', '/dev/null length=24 chars=ascii_letters,digits') {{ '}}' }}"
+  tasks:
+    - name: "mssql-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/mssql-install.yml"
+{% endfor %}

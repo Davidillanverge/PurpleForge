@@ -1071,6 +1071,10 @@ def build_vuln_vars(
             "vuln_esc4_password": forced_password or generate_password(),
             "vuln_esc4_template": "User",
         }
+    if vid == "mssql-weak-sa":
+        # target_shape: none — no population account cast; sa is a fixed SQL
+        # login, not an AD object, so it never reuses cast_name/forced_password.
+        return {"vuln_mssql_sa_password": VULN_WEAK_PASSWORD}
     # machine-account-quota is domain-level (target_shape: none) — no per-vuln
     # account vars; the playbook only reads domain_username/domain_password.
     # adcs-esc1 and any future service-scoped vuln need no extra vars beyond the
@@ -1182,7 +1186,46 @@ def render_vuln_injection(spec: dict, planned: list[dict], out_dir: Path) -> Non
     (dst / "playbooks" / "vuln-injection.yml").write_text(rendered, encoding="utf-8")
 
 
-def render_site_playbook(has_vuln_injection: bool, out_dir: Path) -> None:
+def plan_service_provisioning(machines: list[dict]) -> dict[str, list[str]]:
+    """machines[].services -> {service: [host names]} for services this
+    generator actually provisions. Only `mssql` is wired today; `iis`/`sccm`
+    remain declared-but-unconsumed (Tier B backlog, NON-AD-VULNS-ROADMAP.md).
+    `adcs` is deliberately excluded — it stays handled inline by adcs-esc1's
+    own vuln-injection task (no separate CA-install step exists for it yet)."""
+    hosts = [m["name"] for m in machines if "mssql" in m.get("services", [])]
+    return {"mssql": hosts} if hosts else {}
+
+
+def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) -> None:
+    """Renders service-provisioning.yml (one play per host needing a service)
+    plus its supporting task-file + config template. Installs SECURELY by
+    design (see templates/ansible/services/mssql-install.yml) — the vuln that
+    requires_services this host lands later, in vuln-injection."""
+    if not service_hosts.get("mssql"):
+        return
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "service-provisioning.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
+    )
+    (dst / "service-provisioning.yml").write_text(
+        template.render(lab_name=lab_name, mssql_hosts=service_hosts["mssql"]), encoding="utf-8"
+    )
+
+    services_dst = out_dir / "ansible" / "services"
+    services_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "mssql-install.yml", services_dst / "mssql-install.yml")
+
+    files_dst = dst / "files" / "mssql"
+    files_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        REPO_ROOT / "vendor" / "GOAD" / "ansible" / "roles" / "mssql" / "files" / "sql_conf.ini.MSSQL_2019.j2",
+        files_dst / "sql_conf.ini.MSSQL_2019.j2",
+    )
+
+
+def render_site_playbook(has_vuln_injection: bool, has_service_provisioning: bool, out_dir: Path) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
     leaving it up to whoever runs the individual playbooks by hand."""
@@ -1192,7 +1235,10 @@ def render_site_playbook(has_vuln_injection: bool, out_dir: Path) -> None:
         (TEMPLATES_DIR / "ansible" / "playbooks" / "site.yml.j2").read_text(encoding="utf-8"),
         keep_trailing_newline=True,
     )
-    (dst / "site.yml").write_text(template.render(has_vuln_injection=has_vuln_injection), encoding="utf-8")
+    (dst / "site.yml").write_text(
+        template.render(has_vuln_injection=has_vuln_injection, has_service_provisioning=has_service_provisioning),
+        encoding="utf-8",
+    )
 
 
 def render_deploy_scripts(
@@ -1748,6 +1794,7 @@ VULN_CREDENTIAL_VARS = {
     "adminsdholder-acl": ("vuln_adminsdholder_account", "vuln_adminsdholder_password"),
     "readable-gmsa": ("vuln_gmsa_reader_account", "vuln_gmsa_reader_password"),
     "esc4-template-acl": ("vuln_esc4_account", "vuln_esc4_password"),
+    "mssql-weak-sa": (None, "vuln_mssql_sa_password"),   # sa is a fixed SQL login, not a cast AD account
 }
 
 VULN_CREDENTIAL_NOTES = {
@@ -1769,8 +1816,10 @@ def describe_vuln_credentials(vid: str, vvars: dict) -> str:
     entry = VULN_CREDENTIAL_VARS.get(vid)
     if entry:
         account_key, password_key = entry
-        account = vvars.get(account_key, "?")
         password = vvars.get(password_key, "?")
+        if account_key is None:
+            return f"`sa` / `{password}`"   # fixed SQL login, not a cast AD account
+        account = vvars.get(account_key, "?")
         return f"`{account}` / `{password}`"
     return VULN_CREDENTIAL_NOTES.get(vid, "—")
 
@@ -2032,6 +2081,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     population_plans = render_ad_population(theme, spec, ansible_groups, out_dir)
     write_lab_secrets(out_dir, admin_password, ansible_password, population_plans)
 
+    service_hosts = plan_service_provisioning(machines)
+    render_service_provisioning(service_hosts, spec["lab"]["name"], out_dir)
+
     catalog = load_vuln_catalog()
     attack_chain_mode = spec.get("attack_chain", {}).get("mode", "independent")
     attack_chain = resolve_attack_chain(spec, catalog, population_plans, attack_chain_mode)
@@ -2043,7 +2095,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     edr_plan = plan_edr(resolved_defense, machines)
     deception_plan = plan_deception(resolved_defense, theme, ansible_groups)
     render_defensive_controls(hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir)
-    render_site_playbook(bool(planned_vulns), out_dir)
+    render_site_playbook(bool(planned_vulns), bool(service_hosts.get("mssql")), out_dir)
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
     render_deploy_scripts(spec, manifest, machines, network_plan, out_dir)
@@ -2051,6 +2103,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     manifest["machines_flat"] = machines
     manifest["ansible_groups"] = ansible_groups
     manifest["theme"] = theme["id"]
+    manifest["service_hosts"] = service_hosts
     manifest["population_plans"] = population_plans
     manifest["attack_chain"] = attack_chain
     manifest["vulnerabilities_planned"] = planned_vulns
@@ -2081,6 +2134,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     total_groups = sum(len(p["groups"]) for p in population_plans)
     total_computers = sum(len(p["computers"]) for p in population_plans)
     print(f"  wrote ansible/playbooks/ad-population.yml (theme '{theme['id']}', {total_users} users / {total_groups} groups / {total_computers} computers, deterministic — no BadBlood)")
+    if service_hosts.get("mssql"):
+        print(f"  wrote ansible/playbooks/service-provisioning.yml (mssql -> {', '.join(service_hosts['mssql'])}, secure baseline: sa disabled/Windows-auth only/xp_cmdshell off)")
     if attack_chain["mode"] == "ctf":
         print(f"  attack_chain: ctf mode — {len(attack_chain['steps'])} vuln(s) cast onto real population objects, {len(attack_chain.get('chained', []))} chained")
     if planned_vulns:
@@ -2459,11 +2514,26 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                 else:
                     row.update(applied="PENDING", exploitable="REQUIRES-HUMAN",
                                evidence="WinRM check did not run (auth/timeout/unreachable) — retry the command below.")
+        elif vid == "mssql-weak-sa":
+            target_ip = host.get("ip")
+            sa_password = r.get("password")
+            if not target_ip or not sa_password:
+                row.update(applied="PENDING", exploitable="PENDING", evidence="missing host IP or sa password in the manifest.")
+            else:
+                out = _nxc_run([nxc, "mssql", target_ip, "-u", "sa", "-p", sa_password, "--local-auth", "-x", "whoami"])
+                # nxc's mssql protocol authenticates as sa, THEN runs -x via xp_cmdshell —
+                # a returned "nt authority\..." line proves both sa auth AND xp_cmdshell exec.
+                if out is None:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence="nxc did not run (missing/timeout) — retry the command below.")
+                elif out and "nt authority" in out.lower():
+                    row.update(applied="YES", exploitable="YES", evidence="nxc authenticated as sa and ran `whoami` via xp_cmdshell.")
+                else:
+                    row.update(applied="NO", exploitable="NO", evidence="sa auth or xp_cmdshell execution failed — see nxc output; a control may have neutralized it.")
         else:
             row.update(applied="REQUIRES-HUMAN", exploitable="REQUIRES-HUMAN",
                        evidence="ACL/SYSVOL/registry state — confirm with the command below (bloodhound-python / nxc / dacledit).")
 
-        row["command"] = _live_command(vid, dc_ip, domain, admin_user, host.get("ip"), r.get("account"))
+        row["command"] = _live_command(vid, dc_ip, domain, admin_user, host.get("ip"), r.get("account"), r.get("password"))
         confirmed.append(row)
 
         if row["applied"] == "NO":
@@ -2521,10 +2591,17 @@ def _nxc_query_nonempty(out: str) -> bool:
     return any(any(mk in line for mk in markers) for line in out.splitlines())
 
 
-def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str, target_ip: str | None = None, account: str | None = None) -> str:
+def _live_command(
+    vid: str, dc_ip: str, domain: str, admin_user: str,
+    target_ip: str | None = None, account: str | None = None, password: str | None = None,
+) -> str:
     """The exact copy-pasteable command an operator runs to confirm a vuln the
-    harness can't safely auto-confirm. Uses <PASS> as a placeholder — the real
-    password is in lab-report.md / terraform.tfvars.json, not echoed here."""
+    harness can't safely auto-confirm. Uses <PASS> as a placeholder for the lab
+    admin's password (a real secret, not echoed here) — the real password is in
+    lab-report.md / terraform.tfvars.json. mssql-weak-sa is the one exception:
+    its `password` IS the vulnerability (a deliberately known-weak sa
+    credential, same treatment as the roastable accounts' cracked hashes in the
+    validation report), so it's safe and useful to print directly."""
     dc_ip = dc_ip or "<dc-ip>"
     base = f"nxc ldap {dc_ip} -u {admin_user} -p '<PASS>' -d {domain}"
     if vid in ROAST_FLAGS:
@@ -2534,6 +2611,8 @@ def _live_command(vid: str, dc_ip: str, domain: str, admin_user: str, target_ip:
     if vid in WINRM_APPLIED_CHECKS:
         script = WINRM_APPLIED_CHECKS[vid].replace("__ACCOUNT__", account or "<account>")
         return f"nxc winrm {target_ip or '<host-ip>'} -u {admin_user} -p '<PASS>' -X \"{script}\""
+    if vid == "mssql-weak-sa":
+        return f"nxc mssql {target_ip or '<host-ip>'} -u sa -p '{password or '<sa-pass>'}' --local-auth -x whoami"
     return f"bloodhound-python -d {domain} -u {admin_user} -p '<PASS>' -dc {dc_ip} -c All  # then inspect the {vid} edge in BloodHound"
 
 
@@ -2544,13 +2623,15 @@ def build_vuln_check(vuln: dict, catalog_entry: dict) -> dict:
     validate/attack metadata — no detection/coverage prediction."""
     validate = (catalog_entry or {}).get("validate", {}) or {}
     attack = (catalog_entry or {}).get("attack", {}) or {}
-    account_key = VULN_CREDENTIAL_VARS.get(vuln["id"], (None, None))[0]
+    account_key, password_key = VULN_CREDENTIAL_VARS.get(vuln["id"], (None, None))
     account = (vuln.get("vars") or {}).get(account_key) if account_key else None
+    password = (vuln.get("vars") or {}).get(password_key) if password_key else None
     return {
         "id": vuln["id"],
         "mitre": vuln["mitre"],
         "run_on": vuln["run_on"],
         "account": account,
+        "password": password,
         "neutralization": vuln["neutralization"].split(" (")[0],
         "applied_signature": validate.get("bloodhound_edge") or "AD artifact created by the inject primitive",
         "exploit_check": validate.get("atomic") or "run the vuln's attack primitive",
