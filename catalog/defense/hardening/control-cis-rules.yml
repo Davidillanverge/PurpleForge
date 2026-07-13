@@ -63,6 +63,37 @@ controls:
     windows-server-2022: { level: l1, rules: [win22cis_rule_2_3_11_7] }
     windows-server-2025: { level: l1, rules: [win25cis_rule_2_3_11_7], unverified: true }
 
+  disable_always_install_elevated:
+    # Neutralizes always-install-elevated (T1548.002). Two GPO settings, same
+    # policy value, different registry hive/CIS section — Computer Config
+    # (18.10.81.2 on server, 18.10.80.2 on Win10/11) and User Config (19.7.44.1
+    # on server, 19.7.42.1 on Win10/11 — the rule number genuinely differs
+    # between the server and workstation CIS benchmarks, same as ldap_signing's
+    # 2.3.11.8/2.3.11.9 split above). Both level1 on every OS checked. Server
+    # roles land under domaincontroller/memberserver tags; workstation roles
+    # under "level1-corporate-enterprise-environment" — same CIS Level 1
+    # either way. This vuln's target_role is workstation, so the win10/win11
+    # rows are what actually matter; server rows are included for completeness
+    # since the control could in principle apply to any Windows role.
+    windows-server-2019: { level: l1, rules: [win19cis_rule_18_10_81_2, win19cis_rule_19_7_44_1] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_18_10_81_2, win22cis_rule_19_7_44_1] }
+    windows-server-2025: { level: l1, rules: [win25cis_rule_18_10_81_2, win25cis_rule_19_7_44_1] }
+    windows-10-22h2:     { level: l1, rules: [win10cis_rule_18_10_80_2, win10cis_rule_19_7_42_1] }
+    windows-11-23h2:     { level: l1, rules: [win11cis_rule_18_10_80_2, win11cis_rule_19_7_42_1] }
+
+  safe_dll_search_mode:
+    # Neutralizes dll-hijacking (T1574.001) — MSS SafeDllSearchMode=1 forces
+    # DLL search to check system directories before the application's own
+    # directory, closing exactly the search-order gap this vuln opens. Rule
+    # number differs between server (18.5.8) and workstation (18.5.9) CIS
+    # benchmarks — level1 on every OS checked. This vuln's target_role is
+    # workstation, so win10/win11 are what actually matter.
+    windows-server-2019: { level: l1, rules: [win19cis_rule_18_5_8] }
+    windows-server-2022: { level: l1, rules: [win22cis_rule_18_5_8] }
+    windows-server-2025: { level: l1, rules: [win25cis_rule_18_5_8] }
+    windows-10-22h2:     { level: l1, rules: [win10cis_rule_18_5_9] }
+    windows-11-23h2:     { level: l1, rules: [win11cis_rule_18_5_9] }
+
   # laps and credential_guard are applied by pf_controls directly; their CIS
   # rule mappings are intentionally omitted until verified per-OS (they are not
   # exercised by any seed vuln's neutralized_by, so no skip_rule is needed yet).

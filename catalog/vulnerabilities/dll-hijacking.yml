@@ -20,17 +20,28 @@ detect:
   data_source: "Sysmon 7 (ImageLoad) de DLL sin firmar desde un directorio escribible por usuarios; Sysmon 11 (FileCreate) de *.dll en el directorio del binario del servicio"
   signal: "Carga de una DLL desde un directorio escribible por no administradores en un proceso que corre como SYSTEM, o creación de una DLL en el directorio del binario de un servicio"
   siem_rule: templates/detection/{siem}/dll_hijacking
-# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
-# placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
-# catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED
-# control->rule mappings). The reconciliation still treats it as 'bundled in this
-# baseline' for warn/exclude-control purposes, but defensive-controls cannot
-# derive a concrete skip_rule for it — only the baseline-level conflict is recorded.
+# safe_dll_search_mode now maps to a VERIFIED ansible-lockdown rule
+# (18.5.8 server / 18.5.9 Win10/11 CIS, HKLM SafeDllSearchMode=1) in
+# catalog/defense/hardening/control-cis-rules.yml — defensive-controls derives
+# a concrete skip_rule when it's excluded.
+#
+# IMPORTANT CAVEAT (confirmed against Microsoft's documented DLL search order):
+# SafeDllSearchMode only moves the CURRENT WORKING DIRECTORY later in the
+# search order (position 2 -> 5) — it does NOT change step 1, "the directory
+# the loading module/executable is in", which is ALWAYS searched first,
+# safe-mode or not. This vuln plants its evil DLL in the SERVICE'S OWN binary
+# directory (step 1), so SafeDllSearchMode alone does NOT actually close this
+# specific gap. It is still tracked here (a real, worthwhile control in its
+# own right, and it DOES close the more common "planted in %CWD%" DLL-hijack
+# variant) but the REAL fix for this vuln's primitive is the ACL change in
+# mitigate.summary below — removing Authenticated Users' write access to the
+# service binary directory. Don't rely on this neutralized_by entry alone as
+# proof the gap is closed.
 neutralized_by:
-  - hardening.controls.safe_dll_search_mode   # etiqueta libre: SafeDllSearchMode + retirar escritura de Authenticated Users en directorios de binarios de servicio
+  - hardening.controls.safe_dll_search_mode   # SafeDllSearchMode=1 — partial: closes the %CWD% variant, NOT the own-directory one this vuln uses (see caveat above)
   - hardening.baseline: [cis-l1, cis-l2, stig]
 mitigate:
-  summary: "Retirar permisos de escritura de Authenticated Users sobre directorios de binarios de servicio; mantener SafeDllSearchMode habilitado; firmar binarios y forzar rutas de carga de DLL absolutas / KnownDLLs."
+  summary: "Retirar permisos de escritura de Authenticated Users sobre directorios de binarios de servicio (la mitigación real para este primitivo); mantener SafeDllSearchMode habilitado como defensa adicional para la variante %CWD%; firmar binarios y forzar rutas de carga de DLL absolutas / KnownDLLs."
 validate:
   atomic: T1574.001
   local_check: "ACL del directorio del binario del servicio escribible por Authenticated Users y el servicio corre como LocalSystem"

@@ -60,17 +60,42 @@ validated (7/7 auto-confirmed applied=YES after fixing the two bugs above),
 destroyed to cost-zero. First-ever live run of the 5 Tier A vulns. Kept as a
 committed regression-test spec for re-running this smoke test later.
 
-### ⬜ Pending to close Tier A
+### ✅ Real hardening reconciliation — DONE (2026-07-13), Tier A fully closed
 
-1. **Real hardening reconciliation.** `neutralized_by` uses free-label controls
-   (placeholder pattern), so `defensive-controls` records only a baseline-level
-   conflict, never a concrete `skip_rule`. Two of them map to REAL CIS items and
-   should be wired into `catalog/defense/hardening/control-cis-rules.yml`:
-   - `always-install-elevated` → CIS "Always install with elevated privileges =
-     Disabled" (Computer + User config).
-   - `dll-hijacking` → CIS SafeDllSearchMode.
-   The service-ACL / unquoted-path / scheduled-task controls have no direct CIS
-   rule; leave them as free-label (documented in each vuln's NOTE comment).
+`disable_always_install_elevated` and `safe_dll_search_mode` now map to
+VERIFIED ansible-lockdown rules in `control-cis-rules.yml` (checked directly
+against the pinned `vendor/ansible-lockdown` submodule, all 5 relevant OSes —
+server 2019/2022/2025 and Win10/11, since these vulns' `target_role:
+workstation` makes the Win10/11 rows the ones that actually matter):
+- `always-install-elevated`: Computer Config (18.10.81.2 server /
+  18.10.80.2 Win10/11) + User Config (19.7.44.1 server / 19.7.42.1 Win10/11),
+  CIS Level 1 on every OS checked.
+- `dll-hijacking`: SafeDllSearchMode=1 (18.5.8 server / 18.5.9 Win10/11), CIS
+  Level 1. **Caveat documented in the catalog entry**: SafeDllSearchMode only
+  moves %CWD% later in the DLL search order — it does NOT change step 1
+  ("directory of the loading module"), which is where this vuln plants its
+  DLL. The control is real and worth tracking (closes the more common %CWD%
+  hijack variant) but does NOT actually neutralize THIS vuln's specific
+  primitive; the real fix is the ACL change in `mitigate.summary`.
+
+**Found and fixed a deeper, pre-existing architectural bug while wiring
+this**: `resolve_hardening_skip_rules` only ever consulted
+`control-cis-rules.yml` for `kind: "control"` conflicts (real
+`FIXED_HARDENING_TOGGLES` like `smb_signing`) — it unconditionally skipped
+the lookup for `kind: "baseline"` conflicts (free-label controls paired with
+a `hardening.baseline` list, the pattern EVERY OS-privesc vuln plus
+`adcs_template_hardening`/`service_path_quoting` etc. actually use). That
+meant control-cis-rules.yml could never resolve a concrete skip_rule for a
+free-label control, no matter how well-verified — my two new entries would
+have silently gone nowhere without this fix too. Now the lookup keys off
+`c.get("control")` regardless of `kind`. See `tier-a-cis-mapping` memory
+entry for the full writeup + verification (confirmed unmapped free-labels
+like `service_path_quoting` still correctly report "no entry exists" — no
+false positives from the broader fix).
+
+Service-ACL / unquoted-path / scheduled-task controls still have no direct
+CIS rule; they remain free-label (documented in each vuln's NOTE comment) —
+this is a correct, permanent state, not a gap.
 
 ---
 

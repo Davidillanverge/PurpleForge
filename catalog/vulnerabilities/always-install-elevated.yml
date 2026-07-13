@@ -18,14 +18,13 @@ detect:
   data_source: "Sysmon 13 (RegistryValueSet en ...\\Installer\\AlwaysInstallElevated); Security 4657 (modificación de valor de registro); MsiInstaller 11707/1040 con contexto SYSTEM"
   signal: "AlwaysInstallElevated=1 presente en HKLM y HKCU, o instalación de un MSI que arranca un proceso hijo como SYSTEM iniciada por un usuario no privilegiado"
   siem_rule: templates/detection/{siem}/always_install_elevated
-# NOTE: unlike the other four OS-privesc entries, disabling AlwaysInstallElevated
-# IS a real CIS Windows benchmark item (User/Computer Config policy set to
-# Disabled). It is still listed here as a free-label control because
-# catalog/defense/hardening/control-cis-rules.yml has not been extended with its
-# verified rule number yet; defensive-controls therefore records only the
-# baseline-level conflict, not a concrete skip_rule (same handling as the rest).
+# disable_always_install_elevated maps to a VERIFIED ansible-lockdown rule pair
+# in catalog/defense/hardening/control-cis-rules.yml (18.10.81.2/18.10.80.2
+# Computer Config + 19.7.44.1/19.7.42.1 User Config, server vs Win10/11 CIS
+# benchmark numbering) — defensive-controls derives a concrete skip_rule when
+# this control is excluded, not just a baseline-level conflict.
 neutralized_by:
-  - hardening.controls.disable_always_install_elevated   # etiqueta libre: política AlwaysInstallElevated = Disabled (HKLM + HKCU)
+  - hardening.controls.disable_always_install_elevated   # AlwaysInstallElevated = Disabled (HKLM + HKCU)
   - hardening.baseline: [cis-l1, cis-l2, stig]
 mitigate:
   summary: "Poner la política AlwaysInstallElevated a Disabled (o borrar los valores) en la configuración de equipo y de usuario; desplegar software solo por medios administrativos (GPO/SCCM), nunca vía MSI de usuario elevado."

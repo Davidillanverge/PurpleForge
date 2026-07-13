@@ -1015,9 +1015,9 @@ def build_vuln_vars(
 ) -> dict:
     """`rng`: seeded from population.seed by plan_vuln_injection so every
     generate_password() fallback below is reproducible across regenerates of
-    the same spec (invariant #5) — see [[password-determinism-fix]]. Only
-    matters when cast_name/forced_password are absent (independent mode, or a
-    target_shape:none vuln); ctf-mode chaining already reuses forced_password."""
+    the same spec (invariant #5). Only matters when cast_name/forced_password
+    are absent (independent mode, or a target_shape:none vuln); ctf-mode
+    chaining already reuses forced_password."""
     if vid == "kerberoasting":
         return {"vuln_kerberoast_account": cast_name or "svc-sqlreport", "vuln_kerberoast_password": forced_password or VULN_WEAK_PASSWORD}
     if vid == "asreproast":
@@ -1346,7 +1346,18 @@ def resolve_hardening_skip_rules(baseline_id: str, reconciliation: dict, oses_in
     ONLY from verified catalog/defense/hardening/control-cis-rules.yml entries
     — plus an honest note for every exclusion that could NOT be turned into a
     concrete skip_rule (unmapped control, STIG, or a rule whose level isn't
-    even selected by this baseline)."""
+    even selected by this baseline).
+
+    The lookup keys off `c["control"]` (the free-label name), which is
+    populated for BOTH conflict kinds: `kind: "control"` (a real spec-settable
+    hardening.controls.* toggle in FIXED_HARDENING_TOGGLES, e.g. smb_signing)
+    AND `kind: "baseline"` (a purely descriptive label paired with a
+    hardening.baseline list, e.g. disable_always_install_elevated,
+    safe_dll_search_mode, adcs_template_hardening — there is no real toggle to
+    exclude, only "don't apply this specific CIS rule"). Gating the lookup on
+    `kind == "control"` alone (as this used to) meant control-cis-rules.yml
+    could NEVER resolve a concrete skip_rule for any free-label control, no
+    matter how well-verified its mapping was."""
     skip_rules: dict[str, list[str]] = {os_: [] for os_ in oses_in_scope}
     notes: list[str] = []
 
@@ -1359,13 +1370,13 @@ def resolve_hardening_skip_rules(baseline_id: str, reconciliation: dict, oses_in
     baseline_levels = BASELINE_LEVELS.get(baseline_id, set())
 
     for c in reconciliation.get("excluded_controls", []):
-        if c["kind"] != "control":
+        control_name = c.get("control")
+        if not control_name:
             notes.append(
-                f"vuln '{c['vuln']}': baseline-level exclusion (control label '{c.get('control')}') has no "
-                f"verified ansible-lockdown rule mapping in control-cis-rules.yml — no skip_rule applied."
+                f"vuln '{c['vuln']}': baseline-level exclusion has no associated control label at all — "
+                f"no skip_rule possible."
             )
             continue
-        control_name = c["control"]
         if baseline_id == "stig":
             notes.append(
                 f"control '{control_name}' excluded, but no STIG skip_rule mapping is implemented "
