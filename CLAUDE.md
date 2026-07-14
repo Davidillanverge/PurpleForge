@@ -67,8 +67,10 @@ Validación: `forge validate --run`. Desmontaje: `forge teardown`.
   garantiza artefactos idénticos, invariante #5).
 - **`vendor/`** son submodules con versión fijada. No se editan; se envuelven
   desde `templates/` y las skills.
-- **Añadir una vuln** = un `.yml` en `catalog/vulnerabilities/` con `detect`,
-  `mitigate`, `neutralized_by` y `mitre_attack` válido. Sin tocar el generador.
+- **Añadir una vuln** = un `.yml` en `catalog/vulnerabilities/` con `mitigate`,
+  `neutralized_by` y `mitre_attack` válido (sin bloque `detect`: la detección
+  queda fuera de alcance). Debe validar contra
+  `catalog/schema/vulnerability.schema.json`. Sin tocar el generador.
 - **Independencia de cuenta.** La generación no hornea `subscription_id`/`tenant`;
   se resuelven al desplegar (`ARM_SUBSCRIPTION_ID` o login `az`). Estado remoto
   en storage account por-desplegador; región/SKU vía `PF_REGION`/`PF_VM_SIZE`/

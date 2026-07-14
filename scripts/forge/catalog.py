@@ -5,16 +5,32 @@ resolve_defense (defense.profile defaults merged with the spec's overrides).
 
 from __future__ import annotations
 
+import json
+
 from .core import (
     CONTROL_CIS_RULES_PATH,
     DEFENSE_PROFILES_DIR,
     HARDENING_DIR,
+    THEME_SCHEMA_PATH,
     THEMES_DIR,
     VULN_CATALOG_DIR,
+    VULN_SCHEMA_PATH,
     SpecError,
     deep_merge,
     load_yaml,
 )
+
+
+def load_vulnerability_schema() -> dict:
+    """JSON Schema for a catalog/vulnerabilities/*.yml entry (author-time contract
+    for CLAUDE.md invariant #2). Used by the catalog schema tests and available to
+    the catalog-author agent to validate a new vuln before it lands."""
+    return json.loads(VULN_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def load_theme_schema() -> dict:
+    """JSON Schema for a catalog/themes/*.yml entry."""
+    return json.loads(THEME_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def load_vuln_catalog() -> dict[str, dict]:

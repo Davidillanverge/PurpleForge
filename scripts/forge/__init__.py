@@ -39,7 +39,9 @@ from .catalog import (
     load_defense_profile,
     load_hardening_baseline,
     load_theme,
+    load_theme_schema,
     load_vuln_catalog,
+    load_vulnerability_schema,
     resolve_defense,
 )
 from .core import (
@@ -560,8 +562,8 @@ __all__ = [
     "WINDOWS_ADMIN_USERNAME", "WINRM_AUTOMATION_USERNAME", "SpecError", "deep_merge", "generate_password",
     "load_schema", "load_yaml", "stable_octet", "yaml_scalar",
     # catalog
-    "load_control_cis_rules", "load_defense_profile", "load_hardening_baseline", "load_theme", "load_vuln_catalog",
-    "resolve_defense",
+    "load_control_cis_rules", "load_defense_profile", "load_hardening_baseline", "load_theme", "load_theme_schema",
+    "load_vuln_catalog", "load_vulnerability_schema", "resolve_defense",
     # planning
     "BASELINE_LEVELS", "BROKEN_UPSTREAM_CIS_RULES", "ENUM_HARDENING_TOGGLES", "FIXED_HARDENING_TOGGLES",
     "HOURLY_RATE_USD", "IANA_TO_WINDOWS_TIMEZONE", "VULN_WEAK_PASSWORD", "VULN_WEAK_PASSWORD_3",

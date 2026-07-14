@@ -32,6 +32,21 @@ no generator code" (CLAUDE.md). Read an existing entry (`adcs-esc1.yml`,
 - `validate` (bloodhound_edge and/or atomic) and, where relevant, a `chain`
   block with `target_shape`.
 
+## Validate the shape before you finish
+
+Every entry has a JSON Schema (`catalog/schema/vulnerability.schema.json`,
+`catalog/schema/theme.schema.json`). After writing a `.yml`, check it — the
+schema catches a stray key, a missing field, a malformed ATT&CK id or a honey
+pattern without `{n}` at author time, not during a deploy:
+
+```bash
+python3 -c "import json,sys,yaml,jsonschema,forge; \
+  jsonschema.Draft202012Validator(forge.load_vulnerability_schema()).validate(yaml.safe_load(open(sys.argv[1]))); \
+  print('OK')" catalog/vulnerabilities/<id>.yml
+```
+
+`pytest tests/test_catalog_schema.py` validates the whole catalog the same way.
+
 ## Hardening / control entries
 
 When `neutralized_by` names `hardening.controls.<label>`, either back it with a

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://purpleforge/catalog/theme.schema.json",
+  "title": "PurpleForge theme catalog entry",
+  "description": "Shape of one catalog/themes/*.yml. Consumed by scripts/population.py (vocabulary -> deterministic AD population) and by plan_deception (honey_account_naming). Validated at author time so a malformed theme fails before a deploy, not during one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "description", "vocabulary", "extra_groups", "honey_account_naming"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "vocabulary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["houses", "given_names_male", "given_names_female", "family_names"],
+      "properties": {
+        "houses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "name"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "given_names_male": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "given_names_female": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "family_names": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "extra_groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "honey_account_naming": {
+      "type": "string",
+      "pattern": "\\{n\\}",
+      "description": "Must contain the {n} placeholder — plan_deception formats it per honey account."
+    }
+  }
+}
