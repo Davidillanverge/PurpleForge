@@ -2,83 +2,70 @@
 name: purple-validation
 description: >
   Validates a deployed PurpleForge lab's injected vulnerabilities: for each one,
-  confirm the config was APPLIED correctly (the AD artifact the injection should
-  have created is present) and that it is actually EXPLOITABLE (the attack
-  primitive works). This is NOT a detection/coverage matrix — whether a SIEM/EDR
-  would catch the technique is out of scope for this harness, not vulnerability
-  validation. Runs against the live lab over the WireGuard tunnel, after the clean
-  snapshot. Consumed by the purple-validator agent; produces validation-report.md.
+  confirm the config was APPLIED (the AD artifact the injection should have
+  created is present) and that it is actually EXPLOITABLE (the primitive works).
+  NOT a detection/coverage matrix — whether a SIEM/EDR would catch it is out of
+  scope. Runs against the live lab over the WireGuard tunnel, after the clean
+  snapshot. Produces validation-report.md.
 ---
 
 # purple-validation
 
-## When to use this skill
+## When to use
 
-- The user runs `/validate`, or the `purple-validator` agent needs to confirm a
-  deployed lab's vulnerabilities landed and are exploitable.
-- Only against a LIVE, isolated lab reachable over the bastion tunnel, after
-  `deploy-operator` took the clean snapshot.
+- `/validate`, or the `purple-validator` agent confirming a deployed lab's vulns.
+- Only against a LIVE, isolated lab over the bastion tunnel, after the clean
+  snapshot.
 
 ## What validation is (and isn't)
 
-For each injected vuln, confirm exactly two things:
+Per injected vuln, confirm two things:
 
-1. **Applied** — the config the injection was supposed to create is actually
-   present in AD (a `userAccountControl` flag, an SPN, an ACE, a group
-   membership, a SYSVOL file…). Present ⇒ the injection landed.
-2. **Exploitable** — running the vuln's own primitive actually yields what it
-   should (a roastable hash, a readable cpassword, a usable ACL).
+1. **Applied** — the config the injection should have created is present in AD (a
+   `userAccountControl` flag, an SPN, an ACE, a group membership, a SYSVOL file).
+2. **Exploitable** — running the vuln's own primitive yields what it should (a
+   roastable hash, a readable cpassword, a usable ACL).
 
-It is **not** about PREVENIDO/DETECTADO/NO VISTO — a vuln's whole point is to be
-reachable. Detection coverage (would a SIEM alert?) is out of scope for this
-harness, which ships no detection pipeline.
+It is NOT about detection state — a vuln's whole point is to be reachable.
+Detection coverage is out of scope; this harness ships no detection pipeline.
 
 ## Flow
 
-### 1. Build the checklist (deterministic)
+**1. Build the checklist (deterministic)**
 
 ```bash
 python3 scripts/forge.py validate specs/<lab>.yml
 ```
 
-Writes `generated/<lab>/validation-plan.{json,md}` — per vuln, the **applied
-signature** to confirm present and the **exploitability check** to run — plus a
-`validation-results.template.json` to fill in.
+Writes `validation-plan.{json,md}` (per vuln: the applied signature + the
+exploitability check) + `validation-results.template.json` to fill.
 
-### 2. Confirm live (over the tunnel)
+**2. Confirm live (over the tunnel)** — the hardening baseline usually enforces
+**LDAP signing**, so plain-LDAP tools (`impacket-dacledit`, bare `ldap3`,
+`forge.py ad-inventory`) fail `strongerAuthRequired`. Use a signing-aware client,
+**`nxc`/netexec**:
 
-The hardening baseline usually enforces **LDAP signing**, so plain-LDAP tools
-(`impacket-dacledit`, bare `ldap3`, `forge.py ad-inventory`) fail
-`strongerAuthRequired`. Use a signing-aware client — **`nxc`/netexec**:
+- **Applied**: `nxc ldap <dc> -u <user> -p <pass> --query "(<filter>)" "<attrs>"`;
+  `-M daclread` to confirm ACEs.
+- **Exploitable**: `--asreproast`, `--kerberoasting out --kdcHost <dc-ip>` (pass
+  `--kdcHost` when the attacker box has no DNS to the domain), `-M gpp_password`,
+  read the description, etc.
+- Record `applied`/`exploitable` as **YES / NO / PARTIAL** + evidence per vuln.
 
-- **Applied**: `nxc ldap <dc> -u <user> -p <pass> --query "(<filter>)" "<attrs>"`
-  to read the artifact; `nxc ldap ... -M daclread` to confirm ACEs (DCSync
-  grant, KeyCredentialLink write, etc.).
-- **Exploitable**: run the primitive — `--asreproast`, `--kerberoasting out
-  --kdcHost <dc-ip>` (pass `--kdcHost` when the attacker box has no DNS to the
-  domain), `nxc smb ... -M gpp_password`, read the description field, etc.
-- Record `applied` and `exploitable` as **YES / NO / PARTIAL** + an evidence
-  string per vuln in the template.
-
-### 3. Confirm — write the report (deterministic)
+**3. Write the report (deterministic)**
 
 ```bash
-python3 scripts/forge.py validate specs/<lab>.yml --results <filled-template>.json
+python3 scripts/forge.py validate specs/<lab>.yml --results <filled>.json
 ```
 
-Writes `generated/<lab>/validation-report.md` (+ `.json`): per vuln, Applied and
-Exploitable with evidence, an `N/total` summary, and Findings for anything not
-applied (injection didn't land) or applied-but-not-exploitable (a control may
-have neutralized it).
+Writes `validation-report.md` (+`.json`): per vuln Applied + Exploitable with
+evidence, an `N/total` summary, and Findings for anything not applied or
+applied-but-not-exploitable.
 
 ## Output
 
-`validation-report.md` is the intermediate deliverable; `purple-validator` folds
-it + the manifest into `lab-report.md` in the same pass. Do not fire attacks
-before the clean snapshot exists.
+`validation-report.md` is intermediate; `purple-validator` folds it + the
+manifest into `lab-report.md`. Don't fire attacks before the clean snapshot.
 
-## What is / isn't automated
-
-Phases 1 and 3 (checklist, and merge→report) are deterministic in `forge.py` and
-tested. Phase 2 — the live `nxc` queries/exploits over the tunnel — is run by the
-agent following this skill.
+Phases 1 and 3 are deterministic in `forge.py` and tested. Phase 2 (live nxc
+queries/exploits) is run by the agent.

@@ -1,166 +1,103 @@
 ---
 name: defensive-controls
 description: >
-  Applies the resolved defense.hardening baseline (via the pinned
-  vendor/ansible-lockdown Windows-*-CIS/-STIG roles, with skip_rules derived
-  from the reconciliation), the fixed hardening.controls.* toggles (LAPS, LSA
-  protection, SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Credential Guard,
-  Protected Users — pf_controls, PurpleForge-authored), EDR (defender-av
-  only — every other product needs a backend this project does not build),
-  and deception (honey accounts). This is where the
-  hardening<->vuln reconciliation becomes a real ansible-lockdown skip_rule,
-  not just a manifest entry.
+  Applies the resolved defense.hardening baseline (via pinned
+  vendor/ansible-lockdown Windows-*-CIS/-STIG roles with skip_rules from the
+  reconciliation), the fixed hardening.controls.* toggles (LAPS, LSA protection,
+  SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Credential Guard, Protected Users —
+  pf_controls), EDR (defender-av only), and deception (honey accounts). This is
+  where the reconciliation becomes a real ansible-lockdown skip_rule.
 ---
 
 # defensive-controls
 
-## When to use this skill
+## When to use
 
-- During `/generate`, after `vuln-injection`, to render
-  `generated/<lab>/ansible/playbooks/defensive-controls.yml`.
-- During `/deploy`, in the CLAUDE.md order: `... → hardening baseline →
-  vuln-injection → EDR/telemetry → snapshot`. In practice the generated
-  playbook applies hardening → EDR → pf_controls → deception, in that order
-  within itself (see the playbook's own play order).
-- No detection pipeline (SIEM/Sysmon/WEF) exists in this project by design —
-  this skill is PREVENT/RESPOND only. Don't add SIEM plumbing here; detection
-  engineering is a deliberate future scope.
+- `/generate`, after `vuln-injection`, to render `defensive-controls.yml`.
+- `/deploy`, in the CLAUDE.md order (`... → hardening → vuln-injection → EDR →
+  snapshot`). The playbook itself runs hardening → EDR → pf_controls → deception.
+- No detection pipeline exists by design — PREVENT/RESPOND only. Don't add SIEM.
 
-## The honesty model (read this before touching `neutralized_by`)
+## The honesty model (read before touching `neutralized_by`)
 
-A vuln's `neutralized_by` entry is only as good as the ansible-lockdown rule
-it claims to correspond to. Fase 6 audited every seed vuln against the
-pinned `vendor/ansible-lockdown/Windows-2019-CIS`/`Windows-2022-CIS` roles and
-found:
+A `neutralized_by` entry is only as good as the ansible-lockdown rule it maps to.
+Audited against pinned `Windows-2019-CIS`/`Windows-2022-CIS`:
 
-- **Verified, concrete mappings** (in
-  `catalog/defense/hardening/control-cis-rules.yml`): `smb_signing` → CIS
-  rules 2.3.8.1/2.3.8.2/2.3.9.2/2.3.9.3 (level 1, identical on both server
-  OSes — the clean demonstrable case, see `smb-signing-disabled` vuln),
-  `ldap_signing` → 2.3.5.3/2.3.5.4/2.3.11.8-or-9 (the client-side rule number
-  genuinely differs between 2019 and 2022), `disable_llmnr_nbtns_mdns` →
-  18.6.4.1/18.6.4.2, `lsa_protection` → 18.9.26.2 (RunAsPPL) — **but that rule
-  is tagged `ngws-*`, not `level1`/`level2`, so it is NOT applied by a default
-  cis-l1/cis-l2 baseline at all**. An earlier draft of `unconstrained-
-  delegation.yml` claimed `hardening.baseline: [cis-l2, stig]` neutralized it
-  — that was checked against the actual role and found false, and removed
-  (see the vuln file's own comment).
-- **Unverified/conceptual labels**: `adcs_template_hardening`,
+- **Verified mappings** (`catalog/defense/hardening/control-cis-rules.yml`):
+  `smb_signing` → 2.3.8.1/2.3.8.2/2.3.9.2/2.3.9.3 (L1, identical both OSes);
+  `ldap_signing` → 2.3.5.3/2.3.5.4/2.3.11.8-or-9 (client-side number differs
+  2019 vs 2022); `disable_llmnr_nbtns_mdns` → 18.6.4.1/18.6.4.2; `lsa_protection`
+  → 18.9.26.2 (RunAsPPL) — **but that rule is tagged `ngws-*`, NOT
+  `level1`/`level2`, so a default cis-l1/l2 baseline never applies it.** (An
+  earlier `unconstrained-delegation.yml` claim of `[cis-l2, stig]` was checked,
+  found false, removed.)
+- **Unverified/conceptual labels** (`adcs_template_hardening`,
   `gpp_cpassword_removed`, `preauth_required_audit`,
   `service_account_password_policy`, `acl_hygiene_audit`,
-  `ad_object_description_audit` — no matching CIS rule exists in the
-  benchmark for these (verified by grep across the pinned roles' task files;
-  see each vuln's own comment). The reconciliation still treats them as
-  baseline conflicts for `warn`/`exclude-control` purposes (lab-spec doesn't
-  need the rule number to know a *conceptual* conflict exists), but
-  `resolve_hardening_skip_rules` in `scripts/forge.py` cannot derive a
-  concrete `skip_rule` for them — it says so explicitly in the manifest's
-  `hardening_plan.notes` and in `forge.py generate`'s console output, rather
-  than silently doing nothing or guessing a rule number.
-- **STIG is entirely unmapped**: STIG roles gate on per-STIG-ID vars
-  (`wn22_ac_000020`), not the CIS roles' `winXXcis_rule_N_N_N` scheme, and use
-  `cat1`/`cat2`/`cat3` severity tags instead of `level1`/`level2`. No STIG
-  skip_rule mapping has been verified — `hardening.baseline: stig` always
-  produces an honest note instead of a skip_rule.
+  `ad_object_description_audit`): no matching CIS rule exists (verified by grep).
+  Reconciliation still treats them as baseline conflicts for warn/exclude, but
+  `resolve_hardening_skip_rules` can't derive a concrete `skip_rule` — it says so
+  in `hardening_plan.notes` and console output, never guesses.
+- **STIG is entirely unmapped**: STIG roles gate on per-ID vars (`wn22_ac_000020`)
+  with `cat1/2/3` tags, not `winXXcis_rule_N_N_N`/`level1`. `baseline: stig`
+  always produces an honest note, no skip_rule.
 
-**When adding a vuln or a control, verify the claim against the actual pinned
-role** (`grep` the rule text in `vendor/ansible-lockdown/Windows-*-CIS/tasks/`)
-before writing a `neutralized_by` entry — don't assume a plausible-sounding
-control name maps to something real.
+**When adding a vuln/control, verify the claim against the actual role** (`grep`
+the rule text in `vendor/ansible-lockdown/Windows-*-CIS/tasks/`) before writing a
+`neutralized_by` — don't assume a plausible name maps to something real.
 
-## How CIS level selection actually works (and why it matters here)
+## CIS level selection
 
-`vendor/ansible-lockdown/Windows-2022-CIS/README.md` states level selection
-"is managed using tags" (`level1-domaincontroller`, `level2-memberserver`,
-etc.) — **selected via `--tags`/`--skip-tags` at `ansible-playbook` invocation
-time**, not a bulk profile variable. DC vs. member-server applicability is
-handled separately, automatically, by the role's own `prelim.yml` runtime
-fact-detection (`ansible_windows_domain_role` → `prelim_winXXcis_is_domain_controller`)
-— so the *level* tags (`level1`/`level2`) are what this project's baseline
-selection actually needs to pass, uniformly across all hosts in a play,
-regardless of whether each host is a DC or a member server.
-
-Consequence: **the tags on the generated playbook's `include_role` are
-necessary but not sufficient** — a real `/deploy` must also invoke
-`ansible-playbook` with a matching `--tags` (e.g. `--tags
-level1-domaincontroller,level1-memberserver` for `cis-l1`).
-`forge.py generate`'s console output and `lab-manifest.json.hardening_plan`
-both carry this information; a future `/deploy` orchestrator should pass it
-through. Windows-10/11-CIS roles use a different, bare tag scheme
-(`level1`/`level2`, no `-domaincontroller`/`-memberserver` suffix) — this is a
-real structural difference between role generations, not an oversight (see
-`catalog/defense/hardening/cis-l1.yml`'s `tags_by_role.workstation`).
+ansible-lockdown selects levels via **`--tags`/`--skip-tags` at `ansible-playbook`
+invocation time** (`level1-domaincontroller`, `level2-memberserver`, …), not a
+profile var. DC-vs-member applicability is handled automatically by the role's
+`prelim.yml` fact-detection, so only the *level* tags need passing, uniformly.
+**Consequence: the `include_role` tags in the playbook are necessary but not
+sufficient** — a real `/deploy` must also pass `--tags`
+(e.g. `level1-domaincontroller,level1-memberserver` for cis-l1).
+`hardening_plan` carries this; a `/deploy` orchestrator should pass it through.
+Windows-10/11-CIS use a bare `level1`/`level2` scheme (no `-domaincontroller`
+suffix) — a real generation difference, see `cis-l1.yml`'s `tags_by_role.workstation`.
 
 ## LAPS: authored, not GOAD's role
 
-`vendor/GOAD/ansible/roles/laps/*` is deeply coupled to GOAD's own data model
-(`lab.hosts[dict_key].domain`, `lab.domains[domain].laps_path`, custom
-`win_gpo_*`/`win_ad_dacl` library modules) and was not reused — forcing it
-onto PurpleForge's different inventory model would cost more than it saves.
-`pf_controls` instead enables native **Windows LAPS** (built into Windows
-Server 2019+/Windows 10 22H2+, no external module): one-time
-`Update-LapsADSchema` on the primary root DC, then a registry policy
-(`HKLM:\Software\Microsoft\Policies\LAPS`) on every target host.
+GOAD's `laps` role is coupled to GOAD's data model + custom modules — not reused.
+`pf_controls` enables native **Windows LAPS** (Server 2019+/Win 10 22H2+, no
+external module): one-time `Update-LapsADSchema` on the primary root DC, then a
+registry policy (`HKLM:\Software\Microsoft\Policies\LAPS`) on every target.
 
-## EDR: only `defender-av` is real
+## EDR: only `defender-av`
 
-`catalog/defense/edr/defender-av.yml` is the only entry with
-`backend_required: false` — Microsoft Defender Antivirus is built into every
-Windows image, no console to stand up. `pf_defender_av` implements ASR rules
-(mode-driven: `prevent`→block, `detect`/default→audit, overridable via
-`settings.asr_rules`), tamper protection, network protection, and real-time
-protection. It is the only product the schema's `defense.edr[].product` enum
-accepts. Any other agent-based EDR (Elastic Defend, Wazuh, MDE, Velociraptor,
-LimaCharlie…) needs a management backend this project does not build; `plan_edr`
-in `scripts/forge.py` still guards against a stray product id by marking it
-`status: not-implemented` with an explicit reason. **Don't silently skip an EDR
-selection** — if you add a product, implement it host-only and add it to the
-schema enum, or mark it `backend_required: true`.
+`catalog/defense/edr/defender-av.yml` is the only entry with `backend_required:
+false` (built into every Windows image, no console). `pf_defender_av` does ASR
+rules (mode-driven: `prevent`→block, `detect`/default→audit, overridable via
+`settings.asr_rules`), tamper/network/real-time protection. It's the only value
+`defense.edr[].product` accepts. Any other EDR needs a backend this project
+doesn't build; `plan_edr` marks a stray product `status: not-implemented` with a
+reason. **Don't silently skip an EDR selection** — implement it host-only, or
+mark `backend_required: true`.
 
-## Testing this skill (four real bugs were caught here, not by inspection)
+## Testing (structural — four real bugs, only caught by running the tools)
 
-No live DC in CI. Validate structurally, but validate for real — these four
-were only caught by actually running the tools:
-
-1. **`ansible.cfg`'s `roles_path` didn't include `vendor/ansible-lockdown`.**
-   `--syntax-check` doesn't resolve `include_role` (it's dynamic), so this
-   passed syntax-check while being unable to find `Windows-2019-CIS` at
-   runtime. Caught by statically `import_role`-ing every role
-   (ansible-lockdown + all three `pf_*`) from a throwaway playbook — only
-   `import_role` resolves at parse time and fails loudly if the role isn't
-   found:
+1. **`ansible.cfg` `roles_path` missing `vendor/ansible-lockdown`** — `--syntax-
+   check` doesn't resolve dynamic `include_role`, so it passed while unable to
+   find `Windows-2019-CIS`. Catch by `import_role`-ing every role from a throwaway
+   playbook (`import_role` resolves at parse time):
    ```bash
    ANSIBLE_CONFIG=generated/<lab>/ansible/ansible.cfg ansible-playbook --syntax-check /tmp/check.yml
-   # /tmp/check.yml: one import_role task per role name, tags: ['never']
    ```
-2. **A string containing a literal backslash (`KINGDOM\da-treasury`, from
-   `hardening.controls.protected_users_group`) rendered into a double-quoted
-   YAML scalar broke the parse** (`\d` isn't a legal YAML escape). Caught by
-   actually `yaml.safe_load`-ing the generated file, not just eyeballing it.
-   Fixed by routing every free-form string through `scripts/forge.py:yaml_scalar`
-   (`json.dumps`-based quoting) instead of raw `"{{ v }}"` interpolation.
-3. **Empty Python lists rendered as nothing after a YAML `key:`** parse as
-   `None`, not `[]` — `pf_controls_protected_users_group | length` then
-   raises at Ansible runtime (not caught by `--syntax-check`, which doesn't
-   evaluate `when:`). Fixed with an explicit `{% if %}...{% else %} []{% endif %}`
-   around every list-valued var in `defensive-controls.yml.j2` and
-   `hosts.yml.j2`. Caught by generating the `defense.profile: none` case
-   (empty hardening/EDR/protected-users) and `yaml.safe_load`-ing it, not just
-   the vuln-rich medieval example.
-4. **`pf_defender_av`'s tamper-protection registry write
-   (`HKLM:\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection`)
-   always fails with "Requested registry access is not allowed" on a real,
-   standalone (non-Intune-managed) VM.** Microsoft ACL-locked this specific
-   key to the Defender platform itself starting Windows 10 1903, precisely so
-   local admins/malware can't disable tamper protection via script — there is
-   no supported non-Intune API to set it (`Set-MpPreference` has no
-   tamper-protection parameter either, by the same design). This can't be
-   fixed by trying harder; it's a real platform limitation. Changed the task
-   to `register` + `failed_when: false` with a follow-up debug task
-   reporting whether it actually applied, instead of hard-failing the whole
-   `site.yml` run over a control that was never enforceable on this kind of
-   VM — same honesty model as the EDR-backend and unverified-`neutralized_by`
-   cases above, not a silent skip.
+2. **Literal backslash (`KINGDOM\da-treasury` from `protected_users_group`) in a
+   double-quoted YAML scalar breaks the parse.** Fixed by routing every free-form
+   string through `forge.py:yaml_scalar` (json.dumps quoting).
+3. **Empty Python lists render as nothing → parse as `None`, not `[]`** →
+   `... | length` raises at runtime. Fixed with `{% if %}...{% else %} []{% endif
+   %}` around every list-valued var. Catch by generating `defense.profile: none`
+   and `yaml.safe_load`-ing it.
+4. **`pf_defender_av` tamper-protection registry write always fails** ("Requested
+   registry access is not allowed") on a non-Intune VM — Microsoft ACL-locked
+   that key since Win10 1903; no supported non-Intune API. Not fixable; changed to
+   `register` + `failed_when: false` + a debug report, same honesty model. Every
+   other Defender control is unaffected.
 
 ```bash
 python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml

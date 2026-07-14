@@ -1,181 +1,103 @@
 # Non-AD vulnerabilities — roadmap & pending work
 
-PurpleForge started as an Active-Directory-only lab harness. This document tracks
-the extension to **OS-level** and **application** vulnerabilities so any later
-session can pick it up without re-deriving the design.
+Tracks extending PurpleForge from AD-only to **OS-level** and **application**
+vulns. Status: ✅ done · 🟡 partial · ⬜ pending.
 
-Status legend: ✅ done · 🟡 partial · ⬜ pending.
+## Tier A — OS-level local privilege escalation (Windows) ✅
 
----
-
-## Tier A — OS-level local privilege escalation (Windows)
-
-**✅ Landed (branch `agentic-system`, 2026-07-09).**
-
-Five catalog vulns + Ansible inject task-files, each planting a LocalSystem/SYSTEM
-privesc primitive on a workstation with an Authenticated-Users-writable gap:
+Landed (branch `agentic-system`, 2026-07-09). Five catalog vulns + inject
+task-files, each planting a SYSTEM privesc primitive on a workstation with an
+Authenticated-Users-writable gap:
 
 | id | ATT&CK | primitive |
 |----|--------|-----------|
 | `unquoted-service-path` | T1574.009 | LocalSystem service, unquoted space-bearing `ImagePath`, writable prefix `C:\PFApps` |
-| `weak-service-permissions` | T1574.011 | LocalSystem service whose DACL grants `SERVICE_ALL_ACCESS` to Authenticated Users |
-| `dll-hijacking` | T1574.001 | LocalSystem service whose own binary directory is writable (DLL search-order #1) |
-| `scheduled-task-privesc` | T1053.005 | Scheduled task as SYSTEM running an Authenticated-Users-writable script |
+| `weak-service-permissions` | T1574.011 | service DACL grants `SERVICE_ALL_ACCESS` to Authenticated Users |
+| `dll-hijacking` | T1574.001 | service whose own binary directory is writable |
+| `scheduled-task-privesc` | T1053.005 | SYSTEM task running an Authenticated-Users-writable script |
 | `always-install-elevated` | T1548.002 | `AlwaysInstallElevated=1` in HKLM + HKCU |
 
-**Targeting mechanism (the structural change).** New catalog field
-`attack.target_role` (`workstation` | `member-server` | `domain-controller`).
-Resolution precedence in `scripts/forge.py:plan_vuln_injection`:
+**Targeting mechanism:** new catalog field `attack.target_role` (`workstation` |
+`member-server` | `domain-controller`). Precedence in `plan_vuln_injection`:
 `requires_services` → `target_role` → default root DC. `semantic_checks` errors if
-the spec has no machine of the declared role. AD vulns are unchanged (no
-`target_role` ⇒ still land on the root DC).
+no machine of the declared role exists. AD vulns unchanged (no `target_role` ⇒ root
+DC). Files: `catalog/vulnerabilities/<5 ids>.yml`, `templates/ansible/vulns/<5
+ids>.yml`, `scripts/forge.py`.
 
-Files:
-- `catalog/vulnerabilities/{unquoted-service-path,weak-service-permissions,dll-hijacking,scheduled-task-privesc,always-install-elevated}.yml`
-- `templates/ansible/vulns/<same ids>.yml`
-- `scripts/forge.py` — `plan_vuln_injection` (target_role branch), `semantic_checks`
-  (target_role validation), `VULN_CREDENTIAL_NOTES` (report rows).
+**✅ WinRM local validation (2026-07-10):** `WINRM_APPLIED_CHECKS` auto-confirms
+`applied` for all 5 (plus writable-gpo/adminsdholder-acl) via `nxc winrm <ip> -X`
+one-liners printing `PF_CHECK:True/False`. `exploitable` stays `REQUIRES-HUMAN` by
+design (state-changing). See `winrm-live-validation` memory.
 
-Verified end-to-end: `lab-spec` OK, `guardrail` PASS (invariant #2), all five plays
-target the workstation (not the DC), task-files copied to `generated/`, negative
-test (no workstation ⇒ clear semantic error).
+**✅ Deploy smoke test (2026-07-10):** `winrm-validate-lab` (DC + 1 workstation),
+deployed → validated (7/7 applied=YES) → destroyed cost-zero. Kept as a
+regression-test spec.
 
-### ✅ WinRM local validation — DONE (2026-07-10)
+**✅ Hardening reconciliation (2026-07-13), Tier A closed:**
+`disable_always_install_elevated` and `safe_dll_search_mode` map to VERIFIED
+ansible-lockdown rules in `control-cis-rules.yml` (all 5 relevant OSes):
+- `always-install-elevated`: Computer (18.10.81.2 server / 18.10.80.2 Win10/11) +
+  User (19.7.44.1 / 19.7.42.1), CIS L1.
+- `dll-hijacking`: SafeDllSearchMode=1 (18.5.8 / 18.5.9), CIS L1. **Caveat (in the
+  catalog entry):** SafeDllSearchMode only moves %CWD% later in the search order,
+  NOT step 1 (the loading module's dir, where this vuln plants its DLL) — the
+  control is real but does NOT neutralize THIS primitive; the real fix is the ACL
+  change in `mitigate.summary`.
 
-`WINRM_APPLIED_CHECKS` in `scripts/forge.py` (`run_live_validation`) now
-auto-confirms `applied` for all 5 OS vulns plus writable-gpo/adminsdholder-acl,
-via `nxc winrm <ip> -X "<PowerShell>"` one-liners that each print a
-`PF_CHECK:True/False` marker. `exploitable` stays `REQUIRES-HUMAN` by design
-(actually exploiting is a state-changing manual step, same as
-`LDAP_APPLIED_FILTERS`). Full writeup + the two real bugs this surfaced (a
-deploy-blocking wrong Ansible collection on `scheduled-task-privesc`, and a
-check-script regex that didn't account for `sc.exe sdshow`'s symbolic SDDL
-rendering) is in the `winrm-live-validation` memory entry.
-
-### ✅ Deploy smoke test — DONE (2026-07-10)
-
-Stood up `winrm-validate-lab` (`specs/winrm-validate-lab.yml`, DC + 1
-workstation) with all 5 OS vulns + writable-gpo/adminsdholder-acl. Deployed,
-validated (7/7 auto-confirmed applied=YES after fixing the two bugs above),
-destroyed to cost-zero. First-ever live run of the 5 Tier A vulns. Kept as a
-committed regression-test spec for re-running this smoke test later.
-
-### ✅ Real hardening reconciliation — DONE (2026-07-13), Tier A fully closed
-
-`disable_always_install_elevated` and `safe_dll_search_mode` now map to
-VERIFIED ansible-lockdown rules in `control-cis-rules.yml` (checked directly
-against the pinned `vendor/ansible-lockdown` submodule, all 5 relevant OSes —
-server 2019/2022/2025 and Win10/11, since these vulns' `target_role:
-workstation` makes the Win10/11 rows the ones that actually matter):
-- `always-install-elevated`: Computer Config (18.10.81.2 server /
-  18.10.80.2 Win10/11) + User Config (19.7.44.1 server / 19.7.42.1 Win10/11),
-  CIS Level 1 on every OS checked.
-- `dll-hijacking`: SafeDllSearchMode=1 (18.5.8 server / 18.5.9 Win10/11), CIS
-  Level 1. **Caveat documented in the catalog entry**: SafeDllSearchMode only
-  moves %CWD% later in the DLL search order — it does NOT change step 1
-  ("directory of the loading module"), which is where this vuln plants its
-  DLL. The control is real and worth tracking (closes the more common %CWD%
-  hijack variant) but does NOT actually neutralize THIS vuln's specific
-  primitive; the real fix is the ACL change in `mitigate.summary`.
-
-**Found and fixed a deeper, pre-existing architectural bug while wiring
-this**: `resolve_hardening_skip_rules` only ever consulted
-`control-cis-rules.yml` for `kind: "control"` conflicts (real
-`FIXED_HARDENING_TOGGLES` like `smb_signing`) — it unconditionally skipped
-the lookup for `kind: "baseline"` conflicts (free-label controls paired with
-a `hardening.baseline` list, the pattern EVERY OS-privesc vuln plus
-`adcs_template_hardening`/`service_path_quoting` etc. actually use). That
-meant control-cis-rules.yml could never resolve a concrete skip_rule for a
-free-label control, no matter how well-verified — my two new entries would
-have silently gone nowhere without this fix too. Now the lookup keys off
-`c.get("control")` regardless of `kind`. See `tier-a-cis-mapping` memory
-entry for the full writeup + verification (confirmed unmapped free-labels
-like `service_path_quoting` still correctly report "no entry exists" — no
-false positives from the broader fix).
-
-Service-ACL / unquoted-path / scheduled-task controls still have no direct
-CIS rule; they remain free-label (documented in each vuln's NOTE comment) —
-this is a correct, permanent state, not a gap.
-
----
+Fixed a pre-existing bug while wiring this: `resolve_hardening_skip_rules` only
+consulted `control-cis-rules.yml` for `kind: "control"` conflicts, skipping
+`kind: "baseline"` (the free-label + `hardening.baseline` pattern EVERY OS-privesc
+vuln uses) — so a free-label control could never resolve a concrete skip_rule. Now
+it keys off `c.get("control")` regardless of `kind`. See `tier-a-cis-mapping`
+memory. Service-ACL / unquoted-path / scheduled-task have no direct CIS rule —
+permanently free-label (documented per vuln), a correct state, not a gap.
 
 ## Tier B — Application vulnerabilities on Windows
 
-### ✅ MSSQL: xp_cmdshell + weak sa — DONE (2026-07-13)
+**✅ MSSQL: xp_cmdshell + weak sa (2026-07-13)** — first Tier B vuln, smoke-tested
+live:
+- **Service-provisioning phase** (`service-provisioning.yml.j2`, wired into
+  `site.yml` between `ad-topology` and `ad-population`;
+  `plan_service_provisioning`/`render_service_provisioning`) installs a machine's
+  declared `services` SECURELY before any vuln. Only `mssql` is wired
+  (`iis`/`sccm` declared-but-unconsumed).
+- **`mssql-install.yml`** wraps GOAD's `mssql` role, trimmed to a secure base (sa
+  disabled, Windows-auth only, xp_cmdshell off; `ADDCURRENTUSERASSQLADMIN=True`).
+- **`mssql-weak-sa`** (T1505.001) enables sa (weak password) + Mixed Mode +
+  xp_cmdshell on top; `requires_services: [mssql]` routes it to the member-server.
+- **Validation:** `nxc mssql <ip> -u sa -p <pass> --local-auth -x whoami` proves
+  applied AND exploitable in one shot.
 
-First Tier B vuln landed and smoke-tested live end-to-end. New pieces:
+Three bugs fixed on the first live deploy:
+1. `{{ domain }}` is DC-only in the inventory; `domain_username` is already
+   NETBIOS-qualified → used `{{ domain_username }}` directly.
+2. SSEI installer failed silently at download — `SchUseStrongCrypto` unset in both
+   .NET registry hives; set it before running the installer.
+3. SQL listened on 1433 but unreachable off-box: the member-server NIC stayed
+   `NetworkCategory: Public` after domain-join (Azure NLA quirk), so a
+   `Profile: "Domain"` rule never applied. Fixed by opening on `Domain, Private,
+   Public` — isolation is enforced at the NSG (deny-by-default), not the guest
+   firewall, so this doesn't weaken anything.
 
-- **service-provisioning phase** (`templates/ansible/playbooks/service-provisioning.yml.j2`,
-  wired into `site.yml` between `ad-topology` and `ad-population` —
-  `scripts/forge.py`'s `plan_service_provisioning`/`render_service_provisioning`):
-  installs a machine's declared `services` SECURELY, before any vuln lands.
-  Only `mssql` is wired; `iis`/`sccm` remain declared-but-unconsumed.
-- **`templates/ansible/services/mssql-install.yml`**: wraps
-  `vendor/GOAD/ansible/roles/mssql`'s install mechanics (unattended config +
-  installer download/run), trimmed to a SECURE base install — sa disabled,
-  Windows-auth only, xp_cmdshell off. `ADDCURRENTUSERASSQLADMIN=True` makes
-  the domain admin a sysadmin login, reused by vuln inject tasks via
-  `SqlCmd -E`.
-- **`catalog/vulnerabilities/mssql-weak-sa.yml`** + `templates/ansible/vulns/mssql-weak-sa.yml`
-  (T1505.001): enables sa (weak password) + Mixed Mode auth + xp_cmdshell on
-  top of the secure baseline — `requires_services: [mssql]` routes it to the
-  right member-server, the existing targeting mechanism.
-- **Live validation**: `nxc mssql <ip> -u sa -p <pass> --local-auth -x whoami`
-  proves both applied AND exploitable in one shot (same pattern as
-  `ROAST_FLAGS`) — wired into `run_live_validation`/`_live_command`.
+Smoke-tested on `mssql-weak-sa-lab` (kept as regression spec): 1/1 applied=YES
+exploitable=YES, destroyed cost-zero.
 
-**Three real bugs found and fixed during the first-ever live deploy:**
-1. `{{ domain }}` is DC-only in the inventory (member-servers only carry
-   `member_domain`), and `domain_username` is already NETBIOS-qualified
-   (`CORP\Administrator`) — my `SQLYSADMIN` var was doubly wrong. Fixed to
-   just `{{ domain_username }}`.
-2. The SSEI bootstrap installer failed silently at
-   "Downloading install package..." — confirmed live that `SchUseStrongCrypto`
-   was unset in both .NET Framework registry hives, a well-documented cause
-   for exactly this symptom on fresh Windows images. Fixed by setting it
-   before running the installer.
-3. **The real connectivity bug**: SQL Server installed and listened on 1433
-   fine, but was unreachable from off-box. Confirmed live: the member-server's
-   NIC stayed `NetworkCategory: Public` well after domain-join (a known Azure
-   NLA-misclassification quirk), so the firewall rule's `Profile: "Domain"`
-   never applied to real traffic (`win_wait_for`'s own port check passed
-   because it's a loopback check, masking this). Fixed by opening the rule on
-   `Domain, Private, Public` — isolation is enforced at the NSG layer
-   (deny-by-default, management-subnet-only), not the guest firewall, so this
-   doesn't weaken anything.
+**⬜ Still pending in Tier B:**
+- IIS: a deliberately vulnerable web app (no provisioning phase yet — only mssql).
+- `mssql-weak-sa`'s `neutralized_by` is a free-label placeholder (SQL Server
+  hardening isn't a Windows-OS CIS/STIG surface ansible-lockdown covers).
+- No linked-server / cross-database privesc chain (single-hop sa/xp_cmdshell only).
 
-Smoke-tested on `mssql-weak-sa-lab` (`specs/mssql-weak-sa-lab.yml`, kept as a
-regression-test spec): deployed, validated (1/1 applied=YES exploitable=YES),
-destroyed to cost-zero.
+## Tier C — Application vulnerabilities on Linux ⬜
 
-### ⬜ Still pending in Tier B
-
-- IIS: a deliberately vulnerable web app (deployment artifact required) — no
-  provisioning phase exists for it yet (only `mssql` is wired).
-- `neutralized_by` for mssql-weak-sa is a free-label placeholder (no matching
-  ansible-lockdown CIS rule — SQL Server hardening isn't a Windows-OS CIS/STIG
-  surface ansible-lockdown covers).
-- No linked-server / cross-database privesc chain yet — this first vuln is
-  the single-hop sa/xp_cmdshell primitive only.
-
----
-
-## Tier C — Application vulnerabilities on Linux
-
-**⬜ Pending, largest.** Requires:
-- Linux entries in the machine `os` enum (`specs/schema/lab-spec.schema.json`) —
-  today Windows-only.
-- Infra/Ansible outside GOAD's reuse (GOAD is Windows/AD).
-- A Linux hardening baseline (ansible-lockdown has CIS-Linux roles — reusable).
-- A distinct validation path (SSH, not WinRM).
-Effectively a new lab class; do Tier A validation + Tier B first.
-
----
+Largest, pending. Needs: Linux entries in the machine `os` enum (Windows-only
+today); infra/Ansible outside GOAD's reuse; a Linux hardening baseline
+(ansible-lockdown has CIS-Linux roles); a distinct validation path (SSH, not
+WinRM). Effectively a new lab class — do Tier A + B first.
 
 ## Design invariants that still apply
 
-- Every non-AD vuln MUST still ship `detect` + `mitigate` + `neutralized_by` +
-  valid `mitre_attack` (invariant #2). The `guardrail` gate enforces this.
-- OS/app vulns land on an already-hardened box (deploy order unchanged): hardening
-  baseline → vuln injection → EDR → clean snapshot.
-- Injection stays deterministic and idempotent (invariant #5).
+- Every non-AD vuln still ships `detect` + `mitigate` + `neutralized_by` + valid
+  `mitre_attack` (invariant #2; `guardrail` enforces).
+- OS/app vulns land on an already-hardened box (deploy order unchanged).
+- Injection stays deterministic + idempotent (invariant #5).

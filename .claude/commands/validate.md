@@ -5,17 +5,16 @@ argument-hint: <lab-name or specs/<lab>.yml>
 
 Orchestrate VALIDATE from the MAIN thread for: $ARGUMENTS
 
-Validation is now a single deterministic command — run it yourself with Bash; you
-do NOT need the `purple-validator` subagent for the normal case.
+A single deterministic command — run it yourself with Bash.
 
-1. Confirm the lab is live and reachable (WireGuard tunnel up — `deploy.sh` brings
-   it up; if it's down, re-run `forge.py deploy`).
-2. `python3 scripts/forge.py validate specs/<lab>.yml --run` — it drives the live
-   checks over the tunnel (nxc/netexec): auto-confirms the roasting vulns and, for
-   the interactive ones (ACL/cert/SYSVOL abuse), writes the exact command to run
-   and marks them `REQUIRES-HUMAN`. It writes `generated/<lab>/validation-report.md`.
-3. For any `REQUIRES-HUMAN` row, either run the emitted command yourself over the
-   tunnel and re-check, or hand the human the command list from the report.
+1. Confirm the lab is live (WireGuard tunnel up; if down, re-run `forge.py
+   deploy`).
+2. `python3 scripts/forge.py validate specs/<lab>.yml --run` — drives live
+   checks over the tunnel (nxc/netexec): auto-confirms roasting vulns; for
+   interactive ones (ACL/cert/SYSVOL) it writes the exact command and marks them
+   `REQUIRES-HUMAN`. Writes `generated/<lab>/validation-report.md`.
+3. For each `REQUIRES-HUMAN` row, run the emitted command over the tunnel and
+   re-check, or hand the human the command list.
 
-Report the applied/exploitable summary (N/total, plus how many need a manual
-command) and the path of the report. This is NOT a detection/coverage matrix.
+Report the applied/exploitable summary (N/total + how many need a manual
+command) and the report path. This is NOT a detection/coverage matrix.
