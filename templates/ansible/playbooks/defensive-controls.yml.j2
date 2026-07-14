@@ -35,6 +35,14 @@
     min_ansible_version: "2.12.6"
     win10cis_min_ansible_version: "2.12.6"
     win11cis_min_ansible_version: "2.12.6"
+    # ansible-lockdown gates ~12 "system-affecting" rules per role behind
+    # win_skip_for_test — rules that sever remote management when you're driving
+    # the host over WinRM with a local admin account (e.g. 2.2.16 "Deny network
+    # logon to Local accounts", firewall/RDP rules). That IS PurpleForge's model
+    # for the whole site.yml, so applying them would break the deploy (and every
+    # re-run). Skip them: you can't harden away the channel you manage over. The
+    # var is generic (not win{XX}cis_-prefixed), so this covers every CIS/STIG role.
+    win_skip_for_test: true
   tasks:
     - name: "Apply {{ g.role_name }} ({{ g.tags | join(', ') }})"
       ansible.builtin.include_role:
