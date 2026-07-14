@@ -20,7 +20,7 @@ over the WireGuard tunnel, only after the clean snapshot.
 
 ## Part 1 — validate (skill's three phases)
 
-1. **Checklist**: `forge.py validate specs/<lab>.yml` writes
+1. **Checklist**: `forge validate specs/<lab>.yml` writes
    `validation-plan.{json,md}` (per vuln: applied signature + exploitability
    check) plus `validation-results.template.json` to fill.
 2. **Live confirmation** with a signing-aware client — the hardening baseline
@@ -31,7 +31,7 @@ over the WireGuard tunnel, only after the clean snapshot.
    - **Exploitable**: run the primitive (`--asreproast`, `--kerberoasting out
      --kdcHost <dc-ip>`, `-M gpp_password`, read a description, abuse an ACL).
    - Record `applied`/`exploitable` as **YES / NO / PARTIAL** + evidence.
-3. **Confirm**: `forge.py validate specs/<lab>.yml --results <filled>.json`
+3. **Confirm**: `forge validate specs/<lab>.yml --results <filled>.json`
    writes `validation-report.md`.
 
 Fire attacks only AFTER the clean snapshot. Be honest per vuln (NO = didn't land
@@ -52,7 +52,7 @@ say, don't re-derive. Must contain:
 ### Credentials section (REQUIRED — do not strip)
 
 `lab-report.md` lives in gitignored `generated/<lab>/` — it IS the credentials
-artifact. `forge.py generate` renders the full **Population users table
+artifact. `forge generate` renders the full **Population users table
 (name+password+OU)** and **Credentials** section (domain admin, WinRM account,
 local VM admin, every injection account). **Preserve those tables in full.** Lead
 with the banner ("Contains generated secrets — gitignored, never commit,

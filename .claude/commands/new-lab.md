@@ -11,9 +11,9 @@ You own ordering and gates; run the deterministic gates yourself with Bash.
    profile, cloud/region.
 2. Dispatch **`lab-designer`** to write the whole `specs/<lab>.yml`. Hand any
    gate failure back to it.
-3. Compile: `python3 scripts/forge.py lab-spec specs/<lab>.yml` → produces
+3. Compile: `forge lab-spec specs/<lab>.yml` → produces
    `lab-manifest.json`. On failure, return the exact error to `lab-designer`.
-4. Guardrail: `python3 scripts/forge.py guardrail specs/<lab>.yml`. Non-zero =
+4. Guardrail: `forge guardrail specs/<lab>.yml`. Non-zero =
    FAIL: STOP, report the named invariant(s), don't deploy. Also make the
    invariant #6 (authorized use) judgement it prints.
 5. **HUMAN GATE**: present spec summary + cost + reconciliation outcome; ask for

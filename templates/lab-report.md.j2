@@ -4,7 +4,7 @@
 > VM admin, and vulnerability-injection account passwords). This file lives
 > in `generated/{{ lab.name }}/` (gitignored) — never commit it, never share
 > it outside this lab's authorized operators. Regenerate anytime with
-> `python3 scripts/forge.py generate <spec>` — nothing here is hand-edited.
+> `python3 -m forge generate <spec>` — nothing here is hand-edited.
 
 ## Overview
 
@@ -247,7 +247,7 @@ Warnings (hardening applied as-is; the corresponding vuln may end up neutralized
 
 Everything below runs without AI. The exact, battle-tested command sequence lives
 in the generated **`deploy.sh`** / **`teardown.sh`** in this directory (idempotent
-and safe to re-run); `forge.py deploy`/`teardown` are thin wrappers that add the
+and safe to re-run); `forge deploy`/`teardown` are thin wrappers that add the
 pre-deploy guardrail gate. The full symptom→cause reference is `AZURE-DEPLOY-RUNBOOK.md`.
 
 **Prerequisites** (once per machine): `terraform`, `az` CLI (run `az login`, or export
@@ -260,17 +260,17 @@ SPEC={{ source_spec }}
 
 # 1. Deploy (state backend + auto-pick a cheap unrestricted SKU + terraform apply +
 #    WireGuard tunnel + Ansible site.yml, in the mandated hardening→vulns order):
-python3 scripts/forge.py deploy "$SPEC"          # or: ./generated/{{ lab.name }}/deploy.sh
+python3 -m forge deploy "$SPEC"          # or: ./generated/{{ lab.name }}/deploy.sh
 
 # 2. Validate the injected vulns are applied + exploitable (one command, no by-hand JSON):
-python3 scripts/forge.py validate "$SPEC" --run
+python3 -m forge validate "$SPEC" --run
 
 # 3. (optional) verify the live domain matches this report:
-python3 scripts/forge.py ad-inventory "$SPEC"
+python3 -m forge ad-inventory "$SPEC"
 
 # 4. Tear down to COST ZERO when finished (starts deallocated VMs, destroys,
 #    sweeps stray snapshots, verifies the resource group is gone, local cleanup):
-python3 scripts/forge.py teardown "$SPEC"        # or: ./generated/{{ lab.name }}/teardown.sh
+python3 -m forge teardown "$SPEC"        # or: ./generated/{{ lab.name }}/teardown.sh
 ```
 
 `deploy.sh` auto-selects the cheapest SKU your subscription actually offers in

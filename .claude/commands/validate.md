@@ -1,5 +1,5 @@
 ---
-description: Validate a live lab's vulnerabilities (config applied + exploitable) — forge.py validate --run
+description: Validate a live lab's vulnerabilities (config applied + exploitable) — forge validate --run
 argument-hint: <lab-name or specs/<lab>.yml>
 ---
 
@@ -7,9 +7,9 @@ Orchestrate VALIDATE from the MAIN thread for: $ARGUMENTS
 
 A single deterministic command — run it yourself with Bash.
 
-1. Confirm the lab is live (WireGuard tunnel up; if down, re-run `forge.py
+1. Confirm the lab is live (WireGuard tunnel up; if down, re-run `forge
    deploy`).
-2. `python3 scripts/forge.py validate specs/<lab>.yml --run` — drives live
+2. `forge validate specs/<lab>.yml --run` — drives live
    checks over the tunnel (nxc/netexec): auto-confirms roasting vulns; for
    interactive ones (ACL/cert/SYSVOL) it writes the exact command and marks them
    `REQUIRES-HUMAN`. Writes `generated/<lab>/validation-report.md`.

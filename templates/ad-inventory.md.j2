@@ -13,7 +13,7 @@
 > pulling NT hashes for anything genuinely only recoverable live via DCSync
 > — e.g. an operator's own manual changes to the lab after deploy.
 > Regenerate anytime the domain changes with
-> `python3 scripts/forge.py ad-inventory <spec>`.
+> `python3 -m forge ad-inventory <spec>`.
 
 Queried {{ generated_at }} against `{{ domain }}` via `{{ dc_ip }}`.
 {% if not nxc_available %}

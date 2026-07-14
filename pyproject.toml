@@ -32,9 +32,10 @@ dev = [
 forge = "forge:main"
 
 [tool.setuptools]
-# scripts/forge.py and scripts/population.py are exposed as top-level modules
-# (forge, population) — matches forge.py's `from population import ...`.
-py-modules = ["forge", "population"]
+# `forge` is a package (scripts/forge/), `population` a top-level module
+# (scripts/population.py) — matches the package's `from population import ...`.
+packages = ["forge"]
+py-modules = ["population"]
 
 [tool.setuptools.package-dir]
 "" = "scripts"

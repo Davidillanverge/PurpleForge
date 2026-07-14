@@ -88,13 +88,13 @@ Use `lab.provider: proxmox`. Start from `specs/<lab>.yml`
 (one DC, no vulns) for the first live deploy.
 
 ```bash
-python3 scripts/forge.py lab-spec specs/<lab>.yml
+forge lab-spec specs/<lab>.yml
 ```
 
 ## 4. Generate + fill the host binding
 
 ```bash
-python3 scripts/forge.py generate specs/<lab>.yml
+forge generate specs/<lab>.yml
 cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
    generated/<lab>/terraform/proxmox/host.auto.tfvars.json
 ```
@@ -125,7 +125,7 @@ path) — see the symptom table for what to check.
 ## 6. Verify + teardown
 
 ```bash
-python3 scripts/forge.py validate specs/<lab>.yml --run
+forge validate specs/<lab>.yml --run
 ./generated/<lab>/teardown.sh
 ```
 

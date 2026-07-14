@@ -5,7 +5,7 @@ description: >
   themed population, and offensive design (vuln selection + attack chain). Turns
   a natural-language request into a complete, converged specs/<lab>.yml. Writes
   ONLY the spec (never generated/). The deterministic IP plan, cost and
-  reconciliation come from `forge.py lab-spec`, not from this agent.
+  reconciliation come from `forge lab-spec`, not from this agent.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 ---
@@ -16,7 +16,7 @@ You write the entire `specs/<lab>.yml` for one lab. The `.claude/skills/` skills
 (`ad-topology`, `ad-theming`, `network-topology`, `infra-azure`,
 `vuln-injection`) are your knowledge body — wrap them, don't reinvent IaC. All
 deterministic logic (IP plan, cost, reconciliation, population) lives in
-`scripts/forge.py`/`population.py`; never eyeball it in YAML (CLAUDE.md forbids).
+`scripts/forge/`/`population.py`; never eyeball it in YAML (CLAUDE.md forbids).
 
 ## What you own — the three parts of the spec
 
@@ -32,7 +32,7 @@ deterministic logic (IP plan, cost, reconciliation, population) lives in
   `services` (adcs/mssql/…), count. A vuln with `requires_services` needs a
   machine offering it — reconcile it yourself.
 - Isolation is non-negotiable (invariant #1): no public IP, no RDP/WinRM from
-  0.0.0.0/0. forge.py designs subnets; never request anything breaking
+  0.0.0.0/0. forge designs subnets; never request anything breaking
   bastion-only access.
 
 **2. Population + theme** (`lab.theme`, `population.{users,density,seed}`)
@@ -56,7 +56,7 @@ deterministic logic (IP plan, cost, reconciliation, population) lives in
 
 ## Finish
 
-Run `python3 scripts/forge.py lab-spec specs/<lab>.yml --check-only`; fix
+Run `forge lab-spec specs/<lab>.yml --check-only`; fix
 anything flagged (schema, name/IP collisions, trusts, vuln prerequisites) before
 handing back. Report: topology + any sizing/quota caveat, org shape + seed,
 selected vulns + ordered chain + objective. Don't run terraform. Don't write

@@ -10,7 +10,7 @@ It wraps mature upstream projects pinned as submodules in `vendor/`: **GOAD v3**
 (IaC + AD engine), **Vulnerable-AD** (vuln primitives), **ansible-lockdown**
 (CIS/STIG roles). See `CLAUDE.md` for invariants + deploy order,
 `.claude/agents/README.md` for the agent system; deterministic logic is in
-`scripts/forge.py`.
+`scripts/forge/`.
 
 ## Philosophy
 
@@ -46,7 +46,7 @@ templates/
   ansible/           # ad-topology/-population/vuln-injection/defensive-controls + inventory
 vendor/              # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown
 generated/           # gitignored — per-lab output: lab-manifest.json, terraform/, ansible/
-scripts/forge.py     # deterministic core: validation, reconciliation, IP plan, cost, render
+scripts/forge/     # deterministic core: validation, reconciliation, IP plan, cost, render
 ```
 
 ## Getting started
@@ -59,9 +59,10 @@ pip install -e .            # runtime; puts `forge` on PATH
 pip install -e ".[dev]"
 ```
 
-`forge lab-spec …` works anywhere after the editable install (used interchangeably
-with `python3 scripts/forge.py …` below). `terraform` (>= 1.5) is only needed for
-`generate … --plan`; without it, `generate` renders everything and skips the plan.
+`forge lab-spec …` (the `forge` console script the editable install puts on PATH)
+works anywhere; without installing, `python3 -m forge …` from the repo root is the
+same entry point. `terraform` (>= 1.5) is only needed for `generate … --plan`;
+without it, `generate` renders everything and skips the plan.
 
 ### Developing on the harness
 
@@ -90,13 +91,13 @@ A lab is one YAML spec in `specs/`. Write it by hand from an example, or let
 /new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
 ```
 
-Everything after the spec exists is a plain `forge.py` command (no AI):
+Everything after the spec exists is a plain `forge` command (no AI):
 
 ```bash
-python3 scripts/forge.py generate specs/<lab>.yml          # render TF + Ansible + deploy.sh/teardown.sh
-python3 scripts/forge.py deploy   specs/<lab>.yml          # build the lab
-python3 scripts/forge.py validate specs/<lab>.yml --run    # check vulns are live + exploitable
-python3 scripts/forge.py teardown specs/<lab>.yml          # destroy, back to zero cost
+forge generate specs/<lab>.yml          # render TF + Ansible + deploy.sh/teardown.sh
+forge deploy   specs/<lab>.yml          # build the lab
+forge validate specs/<lab>.yml --run    # check vulns are live + exploitable
+forge teardown specs/<lab>.yml          # destroy, back to zero cost
 ```
 
 `generate` writes a self-contained `generated/<lab>/` (Terraform, Ansible,
@@ -158,7 +159,7 @@ per `on_conflict`:
 ```bash
 # a spec that selects gpp-cpassword under hardening.baseline: cis-l1 genuinely
 # conflicts — lab-spec reports the exclusion it derives to keep the gap open:
-python3 scripts/forge.py lab-spec specs/<lab>.yml
+forge lab-spec specs/<lab>.yml
 ```
 
 ## Theming and population
@@ -223,12 +224,12 @@ never committed. The only thing not knowable ahead of deploy is the honey
 accounts' passwords (randomized at deploy time) — query them after deploy via
 `ad-inventory`.
 
-### Post-deploy inventory (`forge.py ad-inventory`)
+### Post-deploy inventory (`forge ad-inventory`)
 
 Verification, not discovery — once the lab is reachable (tunnel up):
 
 ```bash
-python3 scripts/forge.py ad-inventory specs/<lab>.yml   # writes generated/<lab>/ad-inventory.md
+forge ad-inventory specs/<lab>.yml   # writes generated/<lab>/ad-inventory.md
 ```
 
 Queries the live domain (LDAP via `ldap3`; `nxc`/netexec for an NTDS hash dump via
@@ -255,12 +256,12 @@ not the individual playbooks.**
 One command builds infra + tunnel + AD + hardening + vulns, safe to re-run:
 
 ```bash
-python3 scripts/forge.py deploy specs/<lab>.yml   # == ./generated/<lab>/deploy.sh
+forge deploy specs/<lab>.yml   # == ./generated/<lab>/deploy.sh
 ```
 
 When it finishes, `lab-report.md` has every credential + the attack path. You
 reach the lab **only** through the WireGuard tunnel `deploy.sh` brings up. Tear
-down with `./generated/<lab>/teardown.sh` (or `forge.py teardown`): zero cost.
+down with `./generated/<lab>/teardown.sh` (or `forge teardown`): zero cost.
 
 ### Prerequisites (both providers)
 
@@ -342,7 +343,7 @@ Swaps only the base image; hardening stays as generated. Full details:
 
 ### After deploy
 
-- **Check:** `python3 scripts/forge.py validate specs/<lab>.yml --run` (writes
+- **Check:** `forge validate specs/<lab>.yml --run` (writes
   `validation-report.md`).
 - **Tear down:** `./generated/<lab>/teardown.sh` — destroys everything, verifies
   nothing billable remains.

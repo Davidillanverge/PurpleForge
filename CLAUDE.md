@@ -9,8 +9,12 @@ vez de reinventar despliegue/hardening de Windows.
 
 - `README.md` — uso.
 - `.claude/agents/README.md` — sistema de agentes.
-- `scripts/forge.py` — lógica determinista (compilar, reconciliar, plan de
-  IPs, coste, guardrail, destroy). **Nunca la reimplementes en prompts.**
+- `scripts/forge/` — lógica determinista (compilar, reconciliar, plan de
+  IPs, coste, guardrail, destroy), un paquete Python: `core` (constantes/
+  utilidades), `catalog` (loaders), `planning` (validación/resolución/planes),
+  `render` (planes→artefactos), `lifecycle` (deploy/teardown/destroy),
+  `validate` (validación en vivo + ad-inventory) y `__init__` (CLI). **Nunca la
+  reimplementes en prompts.**
 
 ## Reglas invariantes
 
@@ -44,12 +48,12 @@ inyección de vulns (gaps) → EDR → SNAPSHOT del estado limpio
 Hardening ANTES de inyectar vulns (los gaps ya reconciliados en el spec);
 snapshot limpio ANTES de que `/validate` dispare cualquier ataque.
 
-Determinista y sin IA: `forge.py generate` emite `deploy.sh`/`teardown.sh` en
-`generated/<lab>/`, y `forge.py deploy` los ejecuta tras la puerta `guardrail`.
+Determinista y sin IA: `forge generate` emite `deploy.sh`/`teardown.sh` en
+`generated/<lab>/`, y `forge deploy` los ejecuta tras la puerta `guardrail`.
 `site.yml` fija el orden hardening→vulns. `deploy.sh` encadena: `ensure_secrets`
 (mintea admin/ansible) → backend de estado → auto-sizing (SKU más barato,
 override `PF_VM_SIZE`) → `terraform apply` → túnel WireGuard → `site.yml`.
-Validación: `forge.py validate --run`. Desmontaje: `forge.py teardown`.
+Validación: `forge validate --run`. Desmontaje: `forge teardown`.
 
 > Nota: el snapshot de estado limpio aún no está implementado (necesita un
 > recurso de snapshot azurerm o equivalente Ansible). El orden es el mandato;
@@ -58,7 +62,7 @@ Validación: `forge.py validate --run`. Desmontaje: `forge.py teardown`.
 ## Convenciones del repositorio
 
 - **`specs/`** es la única fuente de verdad editada a mano. `generated/<lab>/`
-  es el resultado del harness: derivado, gitignored, regenerable con `forge.py
+  es el resultado del harness: derivado, gitignored, regenerable con `forge
   generate`. Compartir un lab = compartir su `specs/<lab>.yml` (el determinismo
   garantiza artefactos idénticos, invariante #5).
 - **`vendor/`** son submodules con versión fijada. No se editan; se envuelven
