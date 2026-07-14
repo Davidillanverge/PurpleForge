@@ -542,6 +542,23 @@ def generate_password(length: int = 20, rng: random.Random | None = None) -> str
             return pw
 
 
+def load_existing_infra_secrets(out_dir: Path, provider: str) -> tuple[str | None, str | None]:
+    """Reuse the per-deployer infra secrets (admin/ansible passwords) minted by a
+    previous `generate` of this lab, so regenerating an already-deployed lab does
+    NOT re-randomize them. A fresh pair would make Terraform replace every VM
+    (admin_password forces replacement — it destroyed a live DC once) and break
+    WinRM auth against the running hosts. The first `generate` on an empty out_dir
+    still mints an unguessable CSPRNG pair; reuse only when both are present.
+    Delete secrets.auto.tfvars.json to intentionally rotate."""
+    secrets_file = out_dir / "terraform" / provider / "secrets.auto.tfvars.json"
+    try:
+        data = json.loads(secrets_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    admin, ansible = data.get("admin_password"), data.get("ansible_password")
+    return (admin, ansible) if admin and ansible else (None, None)
+
+
 def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
     """Assigns a deterministic name (dc01, mbr01, ws01 — domain-slug-prefixed
     when the spec has more than one domain) to every machine instance in
@@ -2227,8 +2244,15 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     network_plan = manifest["network_plan"]
     machines = flatten_machines(spec, network_plan)
-    admin_password = generate_password()
-    ansible_password = generate_password()
+    # Reuse infra secrets from a prior generate so regenerating a deployed lab
+    # doesn't re-randomize admin_password (which forces Terraform to replace
+    # every VM). First generate mints a fresh unguessable pair.
+    admin_password, ansible_password = load_existing_infra_secrets(out_dir, provider)
+    if admin_password and ansible_password:
+        print("  reusing infra secrets (admin/ansible) from a previous generate")
+    else:
+        admin_password = generate_password()
+        ansible_password = generate_password()
 
     if provider == "proxmox":
         render_proxmox_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])

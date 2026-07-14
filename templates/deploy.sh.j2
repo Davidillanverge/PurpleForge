@@ -156,8 +156,11 @@ bootstrap_state() {
     echo "  creating storage account $SA"
     az storage account create -n "$SA" -g "$TFSTATE_RG" -l "$REGION" --sku Standard_LRS -o none \
       || die "storage account create failed"
-    # patch backend.hcl in place so re-runs (and terraform init) reuse it
-    sed -i "s|storage_account_name = .*|storage_account_name = \"$SA\"|" "$TF_DIR/backend.hcl"
+    # patch backend.hcl so re-runs (and terraform init) reuse it. Rewrite the
+    # whole file with printf rather than `sed -i` — BSD/macOS sed needs a backup
+    # suffix arg for -i and misparses the script otherwise (portable this way).
+    printf 'resource_group_name  = "%s"\nstorage_account_name = "%s"\ncontainer_name       = "tfstate"\nkey                  = "%s.tfstate"\n' \
+      "$TFSTATE_RG" "$SA" "$LAB" > "$TF_DIR/backend.hcl"
   else
     echo "  reusing storage account $SA"
   fi
