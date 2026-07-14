@@ -104,14 +104,14 @@ works if you only want the runtime deps without installing the package.)
 
 ### Developing on the harness
 
-The deterministic core is covered by a test suite and enforced by CI
-(`.github/workflows/ci.yml`). Run the same gate locally:
+The harness is covered by a test suite — the deterministic core (manifests,
+plan, guardrail, catalog) and the **generated Terraform/Ansible artifacts**
+themselves. Run it locally:
 
 ```bash
-ruff check . && ruff format --check .   # lint + format
-mypy                                    # type-check scripts/
-pytest                                  # unit + golden-file + guardrail tests
-pre-commit install                      # optional: run all of the above on commit
+pytest                                  # unit + golden-file + guardrail + artifact tests
+ruff check . && ruff format --check .   # optional: lint + format
+mypy                                    # optional: type-check scripts/
 ```
 
 Golden manifests live in `tests/golden/`. If you change the deterministic core
