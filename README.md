@@ -89,11 +89,35 @@ git clone --recurse-submodules <this-repo>
 git submodule update --init --recursive
 
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r scripts/requirements.txt
+pip install -e .          # runtime only; puts `forge` on your PATH
+# ...or, for development (linters, type-checker, tests):
+pip install -e ".[dev]"
 ```
 
-`terraform` (>= 1.5) is only needed for `scripts/forge.py generate ... --plan`; without
-it, `generate` still renders every file, it just skips the plan step.
+Installing the package (editable) exposes a `forge` command, so `forge lab-spec …`
+works anywhere — the examples below use it interchangeably with
+`python3 scripts/forge.py …`. (`pip install -r scripts/requirements.txt` still
+works if you only want the runtime deps without installing the package.)
+
+`terraform` (>= 1.5) is only needed for `forge generate … --plan`; without it,
+`generate` still renders every file, it just skips the plan step.
+
+### Developing on the harness
+
+The deterministic core is covered by a test suite and enforced by CI
+(`.github/workflows/ci.yml`). Run the same gate locally:
+
+```bash
+ruff check . && ruff format --check .   # lint + format
+mypy                                    # type-check scripts/
+pytest                                  # unit + golden-file + guardrail tests
+pre-commit install                      # optional: run all of the above on commit
+```
+
+Golden manifests live in `tests/golden/`. If you change the deterministic core
+on purpose (IP plan, cost model, reconciliation), regenerate them with
+`python3 tests/generate_golden.py` and **review the `git diff`** — it is the
+audit surface for what changed in every lab's manifest.
 
 ## Create a lab
 

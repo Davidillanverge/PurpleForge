@@ -1,0 +1,123 @@
+{
+  "cost_estimate": {
+    "budget_alert_usd": 50,
+    "estimated_daily_usd": 2.4,
+    "estimated_monthly_usd": 48.0,
+    "hourly_usd": 0.24,
+    "warning": null
+  },
+  "defense_resolved": {
+    "deception": {
+      "honey_accounts": 0
+    },
+    "edr": [
+      {
+        "mode": "enabled",
+        "product": "defender-av",
+        "settings": {
+          "asr_rules": "audit",
+          "network_protection": true,
+          "tamper_protection": true
+        },
+        "targets": "all"
+      }
+    ],
+    "hardening": {
+      "apply_to": "all",
+      "baseline": "baseline-controls",
+      "controls": {
+        "credential_guard": false,
+        "disable_llmnr_nbtns_mdns": false,
+        "laps": true,
+        "ldap_signing": "disable",
+        "lsa_protection": false,
+        "ntlmv2_only": false,
+        "protected_users_group": [],
+        "smb_signing": "disable"
+      },
+      "intentional_gaps_auto": true
+    }
+  },
+  "forest": [
+    {
+      "domain": "test.local",
+      "domain_controllers": 1,
+      "functional_level": "2016",
+      "netbios": "TEST"
+    }
+  ],
+  "lab": {
+    "auto_shutdown": "20:00 Europe/Madrid",
+    "budget_alert_usd": 50,
+    "isolation": "vpn-only",
+    "name": "vuln-catalog-test",
+    "provider": "azure",
+    "region": "eastus",
+    "theme": "corporate"
+  },
+  "machines": [
+    {
+      "count": 1,
+      "domain": "test.local",
+      "os": "windows-server-2022",
+      "role": "domain-controller"
+    },
+    {
+      "count": 1,
+      "domain": "test.local",
+      "os": "windows-server-2022",
+      "role": "member-server"
+    }
+  ],
+  "network_plan": {
+    "domains": {
+      "test.local": {
+        "hosts": [
+          {
+            "image_id": null,
+            "ip": "10.32.1.10",
+            "os": "windows-server-2022",
+            "role": "domain-controller",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.32.1.50",
+            "os": "windows-server-2022",
+            "role": "member-server",
+            "services": [],
+            "vm_size": null
+          }
+        ],
+        "subnet": "10.32.1.0/24"
+      }
+    },
+    "jumpbox_ip": "10.32.0.10",
+    "management_subnet": "10.32.0.0/24",
+    "supernet": "10.32.0.0/16"
+  },
+  "notes": [
+    "Windows evaluation images expire 180 days after install (os: windows-server-2022). Plan a redeploy or apply a retail license before that date."
+  ],
+  "population": {
+    "density": "sparse",
+    "seed": 1,
+    "users": 10
+  },
+  "reconciliation": {
+    "conflicts_detected": [],
+    "excluded_controls": [],
+    "intentional_gaps_auto": true,
+    "on_conflict": "exclude-control",
+    "warnings": []
+  },
+  "source_spec": "vuln-catalog-test-azure.yml",
+  "vulnerabilities": [
+    "laps-read-acl",
+    "shadow-credentials",
+    "dnsadmins-privesc",
+    "rbcd-abuse",
+    "backup-operators-membership"
+  ]
+}

@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "purpleforge"
+version = "0.1.0"
+description = "Spec-driven harness that compiles a lab-spec.yml into Terraform + Ansible for isolated, Purple-Team-instrumented Active Directory labs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "PyYAML>=6.0",
+    "jsonschema>=4.20",
+    "Jinja2>=3.1",
+    "ldap3>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    "types-jsonschema>=4.20",
+]
+
+# `forge` on the PATH after `pip install -e .` — no more `python3 scripts/forge.py`.
+# REPO_ROOT resolves from __file__, so an EDITABLE install is required (the
+# harness reads catalog/, specs/, templates/ from the repo tree).
+[project.scripts]
+forge = "forge:main"
+
+[tool.setuptools]
+# scripts/forge.py and scripts/population.py are exposed as top-level modules
+# (forge, population) — matches forge.py's `from population import ...`.
+py-modules = ["forge", "population"]
+
+[tool.setuptools.package-dir]
+"" = "scripts"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["vendor", "generated"]
+
+[tool.ruff.lint]
+# E501 (line-too-long) is intentionally off: the formatter owns wrapping, and
+# the catalog/help strings are deliberately long. Everything else is real signal.
+select = ["F", "I", "W", "UP", "B", "C4", "E4", "E7", "E9"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["scripts"]
+ignore_missing_imports = true
+# Pragmatic baseline for a large existing module: check what's annotated, don't
+# force annotations on every helper yet (that tightens as forge.py is split up).
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["vendor", "generated"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+pythonpath = ["scripts"]

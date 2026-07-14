@@ -1,0 +1,205 @@
+{
+  "cost_estimate": {
+    "budget_alert_usd": 100,
+    "estimated_daily_usd": 4.6,
+    "estimated_monthly_usd": 92.0,
+    "hourly_usd": 0.46,
+    "warning": null
+  },
+  "defense_resolved": {
+    "deception": {
+      "honey_accounts": 2
+    },
+    "edr": [
+      {
+        "mode": "enabled",
+        "product": "defender-av",
+        "settings": {
+          "asr_rules": "block",
+          "network_protection": true,
+          "tamper_protection": true
+        },
+        "targets": "all"
+      }
+    ],
+    "hardening": {
+      "apply_to": "all",
+      "baseline": "cis-l2",
+      "controls": {
+        "credential_guard": true,
+        "disable_llmnr_nbtns_mdns": true,
+        "laps": true,
+        "ldap_signing": "enforce",
+        "lsa_protection": false,
+        "ntlmv2_only": true,
+        "protected_users_group": [
+          "RAVENCORP\\da-finance"
+        ],
+        "smb_signing": "enforce"
+      },
+      "intentional_gaps_auto": true
+    }
+  },
+  "forest": [
+    {
+      "domain": "ravencorp.local",
+      "domain_controllers": 1,
+      "functional_level": "2016",
+      "netbios": "RAVENCORP"
+    }
+  ],
+  "lab": {
+    "auto_shutdown": "19:00 Europe/Madrid",
+    "budget_alert_usd": 100,
+    "isolation": "vpn-only",
+    "name": "raven-corp",
+    "provider": "aws",
+    "region": "eu-west-1",
+    "theme": "corporate"
+  },
+  "machines": [
+    {
+      "count": 1,
+      "domain": "ravencorp.local",
+      "os": "windows-server-2022",
+      "role": "domain-controller"
+    },
+    {
+      "count": 1,
+      "domain": "ravencorp.local",
+      "os": "windows-server-2022",
+      "role": "member-server",
+      "services": [
+        "iis",
+        "mssql"
+      ]
+    },
+    {
+      "count": 3,
+      "domain": "ravencorp.local",
+      "os": "windows-11-23h2",
+      "role": "workstation"
+    }
+  ],
+  "network_plan": {
+    "domains": {
+      "ravencorp.local": {
+        "hosts": [
+          {
+            "image_id": null,
+            "ip": "10.49.1.10",
+            "os": "windows-server-2022",
+            "role": "domain-controller",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.49.1.50",
+            "os": "windows-server-2022",
+            "role": "member-server",
+            "services": [
+              "iis",
+              "mssql"
+            ],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.49.1.100",
+            "os": "windows-11-23h2",
+            "role": "workstation",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.49.1.101",
+            "os": "windows-11-23h2",
+            "role": "workstation",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.49.1.102",
+            "os": "windows-11-23h2",
+            "role": "workstation",
+            "services": [],
+            "vm_size": null
+          }
+        ],
+        "subnet": "10.49.1.0/24"
+      }
+    },
+    "jumpbox_ip": "10.49.0.10",
+    "management_subnet": "10.49.0.0/24",
+    "supernet": "10.49.0.0/16"
+  },
+  "notes": [
+    "Windows evaluation images expire 180 days after install (os: windows-11-23h2, windows-server-2022). Plan a redeploy or apply a retail license before that date."
+  ],
+  "population": {
+    "density": "messy",
+    "seed": 4242,
+    "users": 150
+  },
+  "reconciliation": {
+    "conflicts_detected": [
+      {
+        "baseline": "cis-l2",
+        "control": "preauth_required_audit",
+        "detail": "baseline 'cis-l2' bundles rule(s) that neutralize 'asreproast' (control: preauth_required_audit)",
+        "kind": "baseline",
+        "vuln": "asreproast"
+      },
+      {
+        "control": "lsa_protection",
+        "detail": "control 'lsa_protection' neutralizes 'unconstrained-delegation'",
+        "kind": "control",
+        "vuln": "unconstrained-delegation"
+      },
+      {
+        "baseline": "cis-l2",
+        "control": "ad_object_description_audit",
+        "detail": "baseline 'cis-l2' bundles rule(s) that neutralize 'passwords-in-description' (control: ad_object_description_audit)",
+        "kind": "baseline",
+        "vuln": "passwords-in-description"
+      }
+    ],
+    "excluded_controls": [
+      {
+        "action": "abstract exclusion recorded; concrete ansible-lockdown skip_rule vars are resolved later by the defensive-controls skill",
+        "baseline": "cis-l2",
+        "control": "preauth_required_audit",
+        "detail": "baseline 'cis-l2' bundles rule(s) that neutralize 'asreproast' (control: preauth_required_audit)",
+        "kind": "baseline",
+        "vuln": "asreproast"
+      },
+      {
+        "action": "hardening.controls.lsa_protection forced to False",
+        "control": "lsa_protection",
+        "detail": "control 'lsa_protection' neutralizes 'unconstrained-delegation'",
+        "kind": "control",
+        "vuln": "unconstrained-delegation"
+      },
+      {
+        "action": "abstract exclusion recorded; concrete ansible-lockdown skip_rule vars are resolved later by the defensive-controls skill",
+        "baseline": "cis-l2",
+        "control": "ad_object_description_audit",
+        "detail": "baseline 'cis-l2' bundles rule(s) that neutralize 'passwords-in-description' (control: ad_object_description_audit)",
+        "kind": "baseline",
+        "vuln": "passwords-in-description"
+      }
+    ],
+    "intentional_gaps_auto": true,
+    "on_conflict": "exclude-control",
+    "warnings": []
+  },
+  "source_spec": "corp-espionage-aws.yml",
+  "vulnerabilities": [
+    "asreproast",
+    "unconstrained-delegation",
+    "passwords-in-description"
+  ]
+}

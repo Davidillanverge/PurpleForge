@@ -1,0 +1,129 @@
+{
+  "cost_estimate": {
+    "budget_alert_usd": 60,
+    "estimated_daily_usd": 2.9,
+    "estimated_monthly_usd": 58.0,
+    "hourly_usd": 0.29,
+    "warning": null
+  },
+  "defense_resolved": {
+    "deception": {
+      "honey_accounts": 0
+    },
+    "edr": [
+      {
+        "mode": "enabled",
+        "product": "defender-av",
+        "settings": {
+          "asr_rules": "audit",
+          "network_protection": true,
+          "tamper_protection": true
+        },
+        "targets": "all"
+      }
+    ],
+    "hardening": {
+      "apply_to": "all",
+      "baseline": "baseline-controls",
+      "controls": {
+        "credential_guard": false,
+        "disable_llmnr_nbtns_mdns": false,
+        "laps": true,
+        "ldap_signing": "disable",
+        "lsa_protection": true,
+        "ntlmv2_only": false,
+        "protected_users_group": [],
+        "smb_signing": "disable"
+      },
+      "intentional_gaps_auto": true
+    }
+  },
+  "forest": [
+    {
+      "domain": "springfield.local",
+      "domain_controllers": 1,
+      "functional_level": "2016",
+      "netbios": "SPRINGFIELD"
+    }
+  ],
+  "lab": {
+    "auto_shutdown": "20:00 Europe/Madrid",
+    "budget_alert_usd": 60,
+    "isolation": "vpn-only",
+    "name": "springfield-lab",
+    "provider": "azure",
+    "region": "westeurope",
+    "theme": "the-simpsons"
+  },
+  "machines": [
+    {
+      "count": 1,
+      "domain": "springfield.local",
+      "os": "windows-server-2022",
+      "role": "domain-controller"
+    },
+    {
+      "count": 2,
+      "domain": "springfield.local",
+      "os": "windows-11-23h2",
+      "role": "workstation"
+    }
+  ],
+  "network_plan": {
+    "domains": {
+      "springfield.local": {
+        "hosts": [
+          {
+            "image_id": null,
+            "ip": "10.42.1.10",
+            "os": "windows-server-2022",
+            "role": "domain-controller",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.42.1.100",
+            "os": "windows-11-23h2",
+            "role": "workstation",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.42.1.101",
+            "os": "windows-11-23h2",
+            "role": "workstation",
+            "services": [],
+            "vm_size": null
+          }
+        ],
+        "subnet": "10.42.1.0/24"
+      }
+    },
+    "jumpbox_ip": "10.42.0.10",
+    "management_subnet": "10.42.0.0/24",
+    "supernet": "10.42.0.0/16"
+  },
+  "notes": [
+    "Windows evaluation images expire 180 days after install (os: windows-11-23h2, windows-server-2022). Plan a redeploy or apply a retail license before that date."
+  ],
+  "population": {
+    "density": "realistic",
+    "seed": 742,
+    "users": 50
+  },
+  "reconciliation": {
+    "conflicts_detected": [],
+    "excluded_controls": [],
+    "intentional_gaps_auto": true,
+    "on_conflict": "exclude-control",
+    "warnings": []
+  },
+  "source_spec": "simpsons-lab-azure.yml",
+  "vulnerabilities": [
+    "asreproast",
+    "kerberoasting",
+    "constrained-delegation"
+  ]
+}
