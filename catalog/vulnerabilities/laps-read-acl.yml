@@ -17,10 +17,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/laps-read-acl.yml
   params: { reader_group: "Domain Users" }
-detect:
-  data_source: "Security 4662 (Directory Service Access) filtrado por el GUID del atributo msLAPS-Password; auditoría periódica de BloodHound (arista ReadLAPSPassword)"
-  signal: "4662 con acceso de lectura al atributo confidencial msLAPS-Password por una cuenta fuera del grupo de administración delegada de LAPS"
-  siem_rule: templates/detection/{siem}/laps_read_acl
 # HONESTO: esta vulnerabilidad depende de que el esquema de Windows LAPS ya
 # exista (hardening.controls.laps: true lo extiende una vez, vía pf_controls
 # -- ver defensive-controls/SKILL.md). Es decir, hardening.controls.laps NO

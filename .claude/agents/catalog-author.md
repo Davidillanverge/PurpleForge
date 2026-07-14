@@ -6,8 +6,8 @@ description: >
   (catalog/defense/hardening/*), EDR profiles (catalog/defense/edr/*), defense
   profiles, and themes (catalog/themes/*). Researches ATT&CK technique IDs and
   the upstream Vulnerable-AD / ansible-lockdown primitive that backs each entry.
-  Enforces invariant #2: every vulnerability ships detect + mitigate +
-  neutralized_by + a valid mitre_attack. Runs OUTSIDE any lab lifecycle — it
+  Enforces invariant #2: every vulnerability ships mitigate + neutralized_by +
+  a valid mitre_attack. Runs OUTSIDE any lab lifecycle — it
   produces reusable catalog content, not a deployment.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch
 model: sonnet
@@ -29,9 +29,10 @@ entry (e.g. `catalog/vulnerabilities/adcs-esc1.yml`, `kerberoasting.yml`) and th
   Ansible playbook under `templates/ansible/vulns/`. Named, deterministic,
   idempotent. Do not author a primitive that targets third-party systems
   (invariant #6); labs are isolated and authorized-use only.
-- `detect` (data_source + signal + siem_rule), `mitigate` (summary), and
-  `neutralized_by` (the hardening controls/baselines that would break it). These
-  three are MANDATORY — a vuln without its blue counterpart is not Purple.
+- `mitigate` (summary) and `neutralized_by` (the hardening controls/baselines
+  that would break it). Both are MANDATORY — a vuln without its blue counterpart
+  is not Purple. (No `detect`/SIEM block: detection engineering is out of scope;
+  the blue side here is prevention + hardening reconciliation.)
 - `validate` (bloodhound_edge and/or atomic) and, where relevant, a `chain`
   block with `target_shape`.
 

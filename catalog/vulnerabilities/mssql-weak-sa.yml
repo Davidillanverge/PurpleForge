@@ -16,10 +16,6 @@ inject:
   playbook: templates/ansible/vulns/mssql-weak-sa.yml
   reuses: "vendor/GOAD/ansible/roles/mssql (instalador de SQL Server 2019 Express + config.ini) para el aprovisionamiento base seguro en service-provisioning.yml; la inyección en sí (habilitar sa/mixed-mode/xp_cmdshell) es autoría de PurpleForge, vía SqlCmd -E reutilizando la cuenta de administrador de dominio ya sysadmin por ADDCURRENTUSERASSQLADMIN"
   params: { sa_password: "{{ vuln_mssql_sa_password }}" }
-detect:
-  data_source: "SQL Server Audit (Successful/Failed Login), Extended Events; Sysmon 1 (ProcessCreate) para el proceso hijo de sqlservr.exe"
-  signal: "Login exitoso del principal 'sa' seguido de un proceso hijo de sqlservr.exe (cmd.exe/powershell.exe) — indicativo de abuso de xp_cmdshell"
-  siem_rule: templates/detection/{siem}/mssql_weak_sa
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was found for it during
 # the audit that produced catalog/defense/hardening/control-cis-rules.yml

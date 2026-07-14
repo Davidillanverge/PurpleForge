@@ -14,10 +14,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/weak-service-permissions.yml
   params: { service_name: "PFWeakPermSvc", grant_sddl_ace: "(A;;0xF01FF;;;AU)" }
-detect:
-  data_source: "Security 4697/7045 (instalación de servicio) y 7040 (cambio de tipo de arranque); Sysmon 13 (RegistryValueSet en Services\\*\\ImagePath); auditoría de cambios de servicio"
-  signal: "Reconfiguración del binPath/ImagePath de un servicio por un principal no administrativo, o DACL de servicio que otorga escritura a Authenticated Users"
-  siem_rule: templates/detection/{siem}/weak_service_permissions
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
 # catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED

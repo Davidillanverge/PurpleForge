@@ -74,11 +74,8 @@ defense:
       targets: all
   deception:
     honey_accounts: 2
-    canarytokens: []
 
 on_conflict: exclude-control
-
-detection_rules: auto
 
 validation:
   bloodhound: true

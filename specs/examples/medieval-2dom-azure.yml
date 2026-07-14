@@ -56,23 +56,14 @@ vulnerabilities:               # the deliberate gaps
 
 defense:
   profile: realistic
-  # 'profile' fixes defaults for siem/edr/hardening/deception below; the rest
+  # 'profile' fixes defaults for edr/hardening/deception below; the rest
   # are fine-grained overrides layered on top of the profile.
-
-  siem:
-    platform: elastic
-    ship_sysmon: true
-    ship_wef: true
-    network_monitoring: [zeek]
 
   edr:
     - product: defender-av
       mode: enabled
       settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
       targets: all
-    - product: elastic-defend
-      mode: prevent
-      targets: [domain-controller, member-server]
 
   hardening:
     baseline: cis-l1
@@ -89,11 +80,8 @@ defense:
 
   deception:
     honey_accounts: 3
-    canarytokens: [docx, aws-keys]
 
 on_conflict: exclude-control
-
-detection_rules: auto
 
 validation:
   bloodhound: true

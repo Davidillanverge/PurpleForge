@@ -4,8 +4,8 @@
 # (catalog/themes/<theme>.yml), each with an attractive SPN so it shows up in
 # a Kerberoasting sweep — the intent is that touching these accounts at all is
 # a high-confidence signal, not a control PurpleForge validates today (no
-# detection-lab means nothing consumes that signal yet, but the bait exists
-# so a future SIEM integration has something to alert on).
+# no SIEM ships with this harness, so nothing consumes that signal yet — the
+# bait simply exists in the directory as a tripwire artifact).
 - name: "pf_deception | create honey account {{ item }}"
   win_domain_user:
     name: "{{ item }}"

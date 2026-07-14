@@ -4,11 +4,6 @@
 profile: none
 description: "Sin stack defensivo. Ninguna herramienta de detección ni prevención."
 defaults:
-  siem:
-    platform: none
-    ship_sysmon: false
-    ship_wef: false
-    network_monitoring: []
   edr: []
   hardening:
     baseline: none
@@ -25,4 +20,3 @@ defaults:
     intentional_gaps_auto: false
   deception:
     honey_accounts: 0
-    canarytokens: []

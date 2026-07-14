@@ -6,9 +6,9 @@ description: >
   artifact is present in the live domain) and is EXPLOITABLE (the primitive
   works), over the WireGuard bastion with signing-aware tooling (nxc/netexec),
   after the clean snapshot. Then consolidate manifest + results into
-  generated/<lab>/lab-report.md. NOT a detection/coverage matrix — that's
-  detection-lab. Absorbs the old report-writer (one context does validate +
-  report instead of two cold starts).
+  generated/<lab>/lab-report.md. NOT a detection/coverage matrix — detection
+  coverage is out of scope for this harness. Absorbs the old report-writer (one
+  context does validate + report instead of two cold starts).
 tools: Bash, Read, Write, Grep, Glob, Artifact
 model: sonnet
 ---
@@ -42,8 +42,8 @@ Follow the skill's three phases:
 
 Rules: fire attacks only AFTER the clean snapshot exists. Be honest per vuln —
 NO = didn't land or a control neutralized it; PARTIAL = present but not fully
-exploitable. Don't classify detection state (PREVENIDO/DETECTADO/NO VISTO) — that's
-detection-lab, and this lab may not ship a detection pipeline.
+exploitable. Don't classify detection state (PREVENIDO/DETECTADO/NO VISTO) —
+detection coverage is out of scope, and this harness ships no detection pipeline.
 
 ## Part 2 — write generated/<lab>/lab-report.md
 

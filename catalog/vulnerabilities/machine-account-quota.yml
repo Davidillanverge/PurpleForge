@@ -18,10 +18,6 @@ inject:
   playbook: templates/ansible/vulns/machine-account-quota.yml
   reuses: "Set-ADObject sobre el objeto de dominio para fijar ms-DS-MachineAccountQuota=10 de forma explícita e idempotente (asegura el gap aunque un baseline lo hubiese endurecido)"
   params: { quota: 10 }
-detect:
-  data_source: "Security 4741 (cuenta de equipo creada) donde el 'Subject' es una cuenta de usuario normal (no un administrador ni una cuenta de aprovisionamiento); atributo mS-DS-CreatorSID del equipo apuntando a un usuario"
-  signal: "Creación de cuentas de equipo por usuarios estándar, especialmente en ráfaga o seguida de la escritura de msDS-AllowedToActOnBehalfOfOtherIdentity o msDS-KeyCredentialLink"
-  siem_rule: templates/detection/{siem}/machine_account_quota
 neutralized_by:
   - hardening.controls.machine_account_quota_zero   # control REAL y verificable: fijar ms-DS-MachineAccountQuota = 0
   - hardening.baseline: [cis-l2, stig]

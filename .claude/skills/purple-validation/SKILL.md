@@ -5,7 +5,7 @@ description: >
   confirm the config was APPLIED correctly (the AD artifact the injection should
   have created is present) and that it is actually EXPLOITABLE (the attack
   primitive works). This is NOT a detection/coverage matrix — whether a SIEM/EDR
-  would catch the technique is detection-lab's concern, not vulnerability
+  would catch the technique is out of scope for this harness, not vulnerability
   validation. Runs against the live lab over the WireGuard tunnel, after the clean
   snapshot. Consumed by the purple-validator agent; produces validation-report.md.
 ---
@@ -30,8 +30,8 @@ For each injected vuln, confirm exactly two things:
    should (a roastable hash, a readable cpassword, a usable ACL).
 
 It is **not** about PREVENIDO/DETECTADO/NO VISTO — a vuln's whole point is to be
-reachable. Detection coverage (would a SIEM alert?) belongs to `detection-lab`,
-which is a separate stack.
+reachable. Detection coverage (would a SIEM alert?) is out of scope for this
+harness, which ships no detection pipeline.
 
 ## Flow
 

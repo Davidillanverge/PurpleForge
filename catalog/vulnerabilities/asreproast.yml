@@ -15,10 +15,6 @@ inject:
   primitive: "vendor/Vulnerable-AD/vulnad.ps1#VulnAD-ASREPRoasting"
   playbook: templates/ansible/vulns/asreproast.yml
   params: { count: 2 }
-detect:
-  data_source: "Security 4768 (AS-REQ); Sysmon"
-  signal: "4768 con Pre-Authentication Type = 0 (sin PA_DATA) para una cuenta de usuario"
-  siem_rule: templates/detection/{siem}/asreproast
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was found for it during
 # Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only

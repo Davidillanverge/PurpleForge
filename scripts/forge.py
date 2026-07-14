@@ -1450,7 +1450,7 @@ def plan_edr(resolved_defense: dict, machines: list[dict]) -> list[dict]:
         elif catalog_entry.get("backend_required"):
             plans.append({
                 "product": product, "mode": entry["mode"], "targets": target_hosts, "status": "not-implemented",
-                "reason": f"'{product}' needs a management backend this project does not build (no detection-lab) — recorded, not silently skipped.",
+                "reason": f"'{product}' needs a management backend this project does not build (PREVENT/RESPOND only) — recorded, not silently skipped.",
             })
         elif product == "defender-av":
             plans.append({"product": product, "mode": entry["mode"], "targets": target_hosts, "status": "implemented", "settings": entry.get("settings", {})})
@@ -1463,12 +1463,12 @@ def plan_deception(resolved_defense: dict, theme: dict, groups: dict[str, list[d
     deception = resolved_defense.get("deception", {})
     count = deception.get("honey_accounts", 0)
     if count <= 0:
-        return {"honey_accounts": [], "run_on": None, "canarytokens": deception.get("canarytokens", [])}
+        return {"honey_accounts": [], "run_on": None}
     root_dcs = groups.get("domain_controllers", [])
     run_on = root_dcs[0]["name"] if root_dcs else None
     pattern = theme.get("honey_account_naming", "honey.user.{n}")
     accounts = [pattern.format(n=i + 1) for i in range(count)]
-    return {"honey_accounts": accounts, "run_on": run_on, "canarytokens": deception.get("canarytokens", [])}
+    return {"honey_accounts": accounts, "run_on": run_on}
 
 
 def yaml_scalar(value) -> str:
@@ -2358,7 +2358,7 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
 # Vulnerability validation confirms two things per injected vuln: that the config
 # was APPLIED (the AD artifact proving the injection landed) and that it is
 # EXPLOITABLE (the primitive actually works). It deliberately does NOT predict
-# detection coverage (PREVENIDO/DETECTADO/NO VISTO) — that is detection-lab's job.
+# detection coverage (PREVENIDO/DETECTADO/NO VISTO) — out of scope for this harness.
 # A vuln's whole purpose is to be reachable, so its own validation is about
 # presence + exploitability, not whether a SIEM would catch it.
 VALID_RESULT = ("YES", "NO", "PARTIAL", "REQUIRES-HUMAN", "PENDING")
@@ -2754,7 +2754,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     EXPLOITABLE. Writes validation-plan.{json,md} (the per-vuln checklist) plus a
     validation-results.template.json. With --results <file>, merges the live
     YES/NO/PARTIAL results into the confirmed validation-report.md. Validation is
-    about applied+exploitable — NOT detection coverage (that's detection-lab)."""
+    about applied+exploitable — NOT detection coverage (out of scope)."""
     spec_path = Path(args.spec).resolve()
     if not spec_path.exists():
         print(f"error: spec file not found: {spec_path}", file=sys.stderr)
@@ -2895,14 +2895,14 @@ def cmd_guardrail(args: argparse.Namespace) -> int:
     if not np.get("management_subnet") or not np.get("jumpbox_ip"):
         failures.append("#1 isolation: network_plan is missing the management subnet / WireGuard jumpbox")
 
-    # inv #2 — purple coupling: every injected vuln carries detect + mitigate +
+    # inv #2 — purple coupling: every injected vuln carries mitigate +
     # neutralized_by in the catalog (its blue counterpart).
     for vid in manifest.get("vulnerabilities", []):
         entry = catalog.get(vid)
         if entry is None:
             failures.append(f"#2 purple: vuln {vid!r} is not in catalog/vulnerabilities/")
             continue
-        missing = [k for k in ("detect", "mitigate", "neutralized_by") if not entry.get(k)]
+        missing = [k for k in ("mitigate", "neutralized_by") if not entry.get(k)]
         if missing:
             failures.append(f"#2 purple: vuln {vid!r} is missing {', '.join(missing)}")
 

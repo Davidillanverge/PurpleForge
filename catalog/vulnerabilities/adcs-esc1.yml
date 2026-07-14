@@ -13,10 +13,6 @@ inject:
   playbook: templates/ansible/vulns/adcs-esc1.yml
   reuses: "vendor/GOAD/ansible/roles/vulns/adcs_templates (módulo ADCSTemplate, New-ADCSTemplate -JSON)"
   params: { template_name: "KingdomUser", enrollee_supplies_subject: true, grant_enroll_to: "Domain Users" }
-detect:
-  data_source: "AD CS / Security 4886, 4887; Sysmon"
-  signal: "Emisión de certificado con SAN que no coincide con la identidad del solicitante"
-  siem_rule: templates/detection/{siem}/adcs_esc1
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was found for it during
 # Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only

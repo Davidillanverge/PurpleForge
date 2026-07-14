@@ -15,10 +15,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/unquoted-service-path.yml
   params: { service_name: "PFUnquotedSvc", writable_prefix: "C:\\PFApps", binary_path: "C:\\PFApps\\Purple Agent\\agent.exe" }
-detect:
-  data_source: "Security 4697/7045 (instalación de servicio); Sysmon 1 (ProcessCreate); auditoría de creación de ficheros en el prefijo escribible"
-  signal: "Servicio con ImagePath sin comillas que contiene espacios + proceso hijo de services.exe lanzado desde un directorio escribible por usuarios no privilegiados"
-  siem_rule: templates/detection/{siem}/unquoted_service_path
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
 # catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED

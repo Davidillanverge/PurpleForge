@@ -17,10 +17,6 @@ inject:
   playbook: templates/ansible/vulns/readable-gmsa.yml
   reuses: "Add-KdsRootKey (-EffectiveTime pasado, para labs) + New-ADServiceAccount -PrincipalsAllowedToRetrieveManagedPassword; delegación de la lectura de la contraseña gestionada a un principal nombrado"
   params: { gmsa: "{{ vuln_gmsa_name }}", readable_by: "{{ vuln_gmsa_reader_account }}" }
-detect:
-  data_source: "Security 4662 con acceso al atributo msDS-ManagedPassword sobre el objeto msDS-GroupManagedServiceAccount; correlación con 4768/4769 (TGT/TGS) para la cuenta gMSA desde un host no habitual"
-  signal: "Lectura del atributo msDS-ManagedPassword de un gMSA por una cuenta que no es el host miembro esperado, seguida de autenticación como el gMSA"
-  siem_rule: templates/detection/{siem}/readable_gmsa
 # NOTE (mismo criterio que dcsync-acl.yml): no hay regla CIS/STIG concreta que
 # audite la membresía msDS-GroupMSAMembership, así que la etiqueta de abajo es
 # conceptual (reconciliación a nivel de baseline, sin skip_rule numerado).

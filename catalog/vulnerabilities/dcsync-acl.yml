@@ -15,10 +15,6 @@ inject:
   playbook: templates/ansible/vulns/dcsync-acl.yml
   reuses: "vendor/GOAD/ansible/roles/vulns/acls (Set-ACL ExtendedRight), extendido con el GUID DS-Replication-Get-Changes-All"
   params: { for: "{{ target_user }}", to: "DC={{ domain_dn }}", right: ExtendedRight, extended_right_guid: "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" }
-detect:
-  data_source: "Security 4662 (operación sobre objeto AD); metadatos de replicación del DC"
-  signal: "4662 cuyo Properties/AccessMask incluye el GUID de DS-Replication-Get-Changes-All, emitido por una cuenta que no es un DC ni una cuenta de servicio de replicación conocida"
-  siem_rule: templates/detection/{siem}/dcsync_acl
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was found for it during
 # Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only

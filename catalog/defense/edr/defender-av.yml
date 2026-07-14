@@ -3,11 +3,11 @@ id: defender-av
 name: "Microsoft Defender Antivirus"
 description: >
   Built into every Windows Server/10/11 image — no external console/backend
-  required, so this is the one EDR entry PurpleForge actually implements
-  end-to-end (pf_defender_av role). All other catalog/defense/edr/*.yml
-  entries need a management backend (Elastic Security, Wazuh manager, M365,
-  a LimaCharlie org, etc.) that this project deliberately does not build —
-  see detection-lab's absence from the roadmap.
+  required, so this is the one EDR entry PurpleForge implements end-to-end
+  (pf_defender_av role) and the only value the schema's defense.edr[].product
+  enum accepts. Any agent-based EDR (Elastic Security, Wazuh manager, M365,
+  a LimaCharlie org, etc.) needs a management backend this project deliberately
+  does not build — PREVENT/RESPOND only, no SIEM/telemetry stack.
 backend_required: false
 implementation:
   engine: pf_defender_av

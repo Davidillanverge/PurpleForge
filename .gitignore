@@ -1,34 +1,8 @@
-# PurpleForge — generated lab artifacts. The DEPLOYABLE ones are versioned on
-# purpose, so a lab can be shared and deployed WITHOUT re-running
-# `forge.py generate` (see scripts/forge.py write_lab_secrets + the deploy.sh
-# "ensure secrets" mint step). Only per-deploy strong secrets, the remote-state
-# binding, local overlays, and secret-bearing reports stay out of git.
-
-# strong secrets minted per deploy — NEVER commit
-generated/**/secrets.auto.tfvars.json
-generated/**/inventory/group_vars/all/secrets.yml
-generated/**/lab-report.md
-# (lab-manifest.json is also ignored globally below — it embeds population secrets)
-
-# deploy-time local state / overlays / keys (recreated by deploy.sh + terraform)
-generated/**/backend.hcl
-generated/**/.terraform/
-generated/**/*.tfstate
-generated/**/*.tfstate.*
-generated/**/sizes.auto.tfvars.json
-generated/**/region.auto.tfvars.json
-# deploy-time image/template overrides (PF_OS / PF_IMAGE_* / PF_TEMPLATE_ID)
-generated/**/images.auto.tfvars.json
-generated/**/template.auto.tfvars.json
-# Proxmox: per-deployer host binding (node/bridges/datastore/template ids).
-# The committed host.auto.tfvars.example.json stays tracked as the reference.
-generated/**/host.auto.tfvars.json
-# Proxmox deploy-time auto_shutdown helper + its 600 env file (holds the API
-# token so cron can read it) — minted by deploy.sh, removed by teardown.sh.
-generated/**/pf-autoshutdown.sh
-generated/**/.pf-proxmox-env
-generated/**/ssh_keys/
-generated/**/*.conf
+# PurpleForge — generated lab artifacts are the RESULT of running the harness,
+# not part of it: everything under generated/<lab>/ is derived and fully
+# reproducible from specs/<lab>.yml via `forge.py generate`. It is never
+# versioned — regenerate it, don't commit it.
+generated/
 
 # Terraform
 **/.terraform/

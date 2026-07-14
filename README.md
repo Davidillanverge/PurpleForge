@@ -3,15 +3,13 @@
 A specification-driven harness that turns a declarative `lab-spec.yml` into
 complete automation (Terraform + Ansible + PowerShell) for deploying
 **Purple-Team-instrumented Active Directory labs** on **Azure or on-prem Proxmox VE** (AWS on the roadmap) —
-including a configurable **defensive stack** (SIEM, EDR, hardening) deployed
-alongside the intentional vulnerabilities.
+including a configurable **defensive stack** (CIS/STIG hardening, Defender AV,
+deception) deployed alongside the intentional vulnerabilities.
 
 PurpleForge does not reinvent Windows/AD deployment or endpoint hardening. It
 wraps and reuses mature upstream projects, pinned as git submodules in
-`vendor/`: **GOAD v3** (IaC + AD engine), **Splunk Attack Range** (design
-reference for instrumentation), **Vulnerable-AD** (vulnerability
-primitives), and **ansible-lockdown**
-(CIS/STIG hardening roles).
+`vendor/`: **GOAD v3** (IaC + AD engine), **Vulnerable-AD** (vulnerability
+primitives), and **ansible-lockdown** (CIS/STIG hardening roles).
 
 See `.claude/agents/README.md` for the agent system and `CLAUDE.md` for the
 invariants and deploy order. The deterministic logic lives in `scripts/forge.py`.
@@ -50,7 +48,7 @@ purpleforge/
 ├── .claude/
 │   ├── commands/                # /new-lab /generate /deploy /validate /destroy (added as their skills land)
 │   └── skills/                  # lab-spec, network-topology, infra-aws/azure, ad-topology,
-│                                 # ad-theming, vuln-injection, detection-lab, defensive-controls, purple-validation
+│                                 # ad-theming, vuln-injection, defensive-controls, purple-validation
 ├── specs/
 │   ├── schema/lab-spec.schema.json
 │   └── examples/                # medieval-2dom-azure.yml, corp-espionage-aws.yml, single-dc-azure.yml
@@ -59,7 +57,7 @@ purpleforge/
 │   ├── themes/                  # medieval-kingdom, corporate, space-station: vocabulary + extra_groups
 │   ├── machine-profiles/        # (later phase) default OS/sizing per role, currently hardcoded in infra-azure
 │   └── defense/
-│       ├── profiles/            # none, telemetry-only, realistic, hardened
+│       ├── profiles/            # none, realistic, hardened
 │       ├── edr/                 # per-product: backend_required + implementation notes (only defender-av: false)
 │       └── hardening/           # cis-l1/cis-l2/stig/baseline-controls (role_by_os + tags_by_role) +
 │                                 # control-cis-rules.yml (VERIFIED control -> concrete CIS rule mappings)
@@ -119,8 +117,10 @@ python3 scripts/forge.py teardown specs/<lab>.yml          # destroy everything,
 
 `generate` writes a **self-contained** `generated/<lab>/` — Terraform, Ansible,
 `lab-report.md` (with every credential and the attack path), and a `deploy.sh` /
-`teardown.sh`. A generated lab can be committed and shared, and anyone can deploy
-it **without re-running `generate`**. Choose where it runs with `provider: azure`
+`teardown.sh`. `generated/` is the **result of running the harness**, not part of
+it: it is gitignored and never committed. To share a lab, share its
+`specs/<lab>.yml` — determinism guarantees anyone regenerates byte-identical
+artifacts with `forge.py generate`. Choose where it runs with `provider: azure`
 or `provider: proxmox` in the spec; see [Deploy a lab](#deploy-a-lab).
 
 > **Status:** the full Azure lifecycle (generate → deploy → validate → teardown)
@@ -163,31 +163,35 @@ stack is deployed alongside it:
 
 ```yaml
 defense:
-  profile: realistic                 # none | telemetry-only | realistic | hardened
-  siem:    { platform: elastic, ship_sysmon: true, ship_wef: true, network_monitoring: [zeek] }
+  profile: realistic                 # none | realistic | hardened
   edr:
     - { product: defender-av, mode: enabled, settings: { asr_rules: audit }, targets: all }
-    - { product: elastic-defend, mode: prevent, targets: [domain-controller, member-server] }
   hardening:
     baseline: cis-l1                 # none | cis-l1 | cis-l2 | stig | baseline-controls
     apply_to: all
     controls: { laps: true, lsa_protection: true, smb_signing: enforce, ldap_signing: enforce, ... }
     intentional_gaps_auto: true      # derive hardening exclusions from each vuln's neutralized_by
-  deception: { honey_accounts: 3, canarytokens: [docx, aws-keys] }
+  deception: { honey_accounts: 3 }
 
 on_conflict: exclude-control         # warn | exclude-control | fail
 ```
 
 `profile` fixes sensible defaults (`catalog/defense/profiles/<profile>.yml`);
-everything under `siem`/`edr`/`hardening`/`deception` is a fine-grained
-override layered on top.
+everything under `edr`/`hardening`/`deception` is a fine-grained override
+layered on top.
 
 | Profile | Deploys | For |
 |---|---|---|
 | `none` | nothing | purely offensive practice |
-| `telemetry-only` | Sysmon + WEF + SIEM, no prevention | pure detection engineering |
-| `realistic` | Defender AV (ASR audit) + CIS L1 (with intentional gaps) + SIEM + 1 EDR | the most representative mid-size-company scenario |
-| `hardened` | CIS L2/STIG + EDR in prevent + ASR enforce + LAPS + Credential Guard | evasion/detection stress-testing |
+| `realistic` | Defender AV (ASR audit) + CIS L1 (with intentional gaps) + honey accounts | the most representative mid-size-company scenario |
+| `hardened` | CIS L2/STIG + ASR enforce + LAPS + Credential Guard | evasion/hardening stress-testing |
+
+> **Scope:** the harness ships **PREVENT/RESPOND only** — CIS/STIG hardening,
+> Microsoft Defender AV, and deception (honey accounts). It does **not** stand up
+> a SIEM or ship Sysmon/WEF telemetry; detection engineering (Sigma rules, a SIEM
+> back end) is deliberately out of scope for now. Microsoft Defender AV is the
+> only supported EDR — every other product needs a management back end this
+> project does not build.
 
 ## Hardening ⟷ vulnerability reconciliation
 
@@ -258,19 +262,16 @@ id: adcs-esc1
 severity: critical
 attack:   { mitre_attack: [T1649], requires_services: [adcs], intended_path: "..." }
 inject:   { type: ansible, playbook: templates/ansible/vulns/adcs_esc1.yml, params: {...} }
-detect:   { data_source: "...", signal: "...", siem_rule: templates/detection/{siem}/adcs_esc1 }
 neutralized_by: [hardening.controls.adcs_template_hardening, {hardening.baseline: [cis-l2]}]
 mitigate: { summary: "..." }
 validate: { bloodhound_edge: ADCSESC1, atomic: T1649 }
 ```
 
-15 entries ship today: `kerberoasting`, `asreproast`, `adcs-esc1`,
-`unconstrained-delegation`, `constrained-delegation`, `gpp-cpassword`,
-`dcsync-acl`, `passwords-in-description`, `smb-signing-disabled`,
-`ntlm-downgrade`, `laps-read-acl`, `shadow-credentials`,
-`dnsadmins-privesc`, `rbcd-abuse`, `backup-operators-membership` — see
-`vuln-injection/SKILL.md`'s "Adding a vuln" section for the checklist to add
-another.
+26 entries ship today across the AD, ADCS, delegation, ACL and OS/service-privesc
+classes (`kerberoasting`, `adcs-esc1`/`esc4-template-acl`, `unconstrained-`/
+`constrained-delegation`, `rbcd-abuse`, `dcsync-acl`, `shadow-credentials`,
+`unquoted-service-path`, `mssql-weak-sa`, …) — see `catalog/vulnerabilities/`
+for the full set and `vuln-injection/SKILL.md`'s "Adding a vuln" checklist.
 
 ## Vulnerability injection
 
@@ -306,8 +307,9 @@ reconciliation — this is where "exclude the concrete rule" becomes an actual
 `winXXcis_rule_N_N_N: false`, not just a manifest note), EDR (Microsoft
 Defender Antivirus only — every other product needs a management backend
 this project deliberately does not build), and deception (theme-named honey
-accounts). **`detection-lab` does not exist in this project** — no
-Sysmon/WEF/SIEM is stood up; this is PREVENT/RESPOND only.
+accounts). **No SIEM or telemetry pipeline ships with this project** — no
+Sysmon/WEF/SIEM is stood up; this is PREVENT/RESPOND only, and detection
+engineering (Sigma rules + a SIEM back end) is a deliberate future scope.
 
 Only two of the seed vulns have a **verified** ansible-lockdown rule mapping
 (`smb-signing-disabled` ↔ CIS 2.3.8.x/2.3.9.x, and `unconstrained-delegation`
@@ -321,8 +323,7 @@ and `defensive-controls` reports that honestly instead of guessing:
 ```
 $ python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
   wrote ansible/playbooks/defensive-controls.yml (baseline: cis-l1, 3 OS group(s))
-      note: vuln 'gpp-cpassword': baseline-level exclusion (control label 'gpp_cpassword_removed') has no verified ansible-lockdown rule mapping in control-cis-rules.yml — no skip_rule applied.
-      note: edr 'elastic-defend' — 'elastic-defend' needs a management backend this project does not build (no detection-lab) — recorded, not silently skipped.
+      note: control 'gpp_cpassword_removed' excluded, but no control-cis-rules.yml entry exists for it — no skip_rule derived.
 ```
 
 See `.claude/skills/defensive-controls/SKILL.md` for the full honesty model,

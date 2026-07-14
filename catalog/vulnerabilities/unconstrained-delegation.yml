@@ -15,10 +15,6 @@ inject:
   primitive: "custom — sin equivalente directo en Vulnerable-AD/GOAD; sigue el patrón VulnAD-* (Set-ADAccountControl vía módulo ActiveDirectory)"
   playbook: templates/ansible/vulns/unconstrained-delegation.yml
   params: { computer: "{{ target_host }}", flag: TRUSTED_FOR_DELEGATION }
-detect:
-  data_source: "Security 4624/4768/4769 correlados; Sysmon EventID 10 (acceso a lsass.exe)"
-  signal: "TGT de una cuenta privilegiada presente en la caché Kerberos de un host no-DC inmediatamente tras una autenticación coaccionada"
-  siem_rule: templates/detection/{siem}/unconstrained_delegation
 neutralized_by:
   # Verified: hardening.controls.lsa_protection = RunAsPPL, applied directly by
   # the pf_controls role (not via an ansible-lockdown baseline) — dificulta el

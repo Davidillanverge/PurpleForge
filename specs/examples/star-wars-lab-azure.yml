@@ -58,8 +58,6 @@ defense:
 
 on_conflict: exclude-control
 
-detection_rules: none
-
 validation:
   bloodhound: false
   pingcastle: false

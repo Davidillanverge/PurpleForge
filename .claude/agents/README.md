@@ -87,5 +87,7 @@ Ver `mcp/README.md`.
 
 ## Aún sin construir
 
-`detection-lab` (SIEM+telemetría) e `infra-aws` (hoy solo Azure). La validación
-NO es una matriz de detección — eso sería `detection-lab`.
+Ingeniería de detección (SIEM + telemetría Sysmon/WEF + reglas Sigma) e
+`infra-aws` (hoy solo Azure y Proxmox). El harness cubre PREVENT/RESPOND; la
+validación NO es una matriz de detección — la cobertura de detección queda
+fuera de alcance por ahora.

@@ -45,19 +45,10 @@ vulnerabilities:               # the deliberate gaps
 defense:
   profile: hardened
 
-  siem:
-    platform: wazuh
-    ship_sysmon: true
-    ship_wef: true
-    network_monitoring: [suricata]
-
   edr:
     - product: defender-av
       mode: enabled
       settings: { asr_rules: block, tamper_protection: true, network_protection: true }
-      targets: all
-    - product: wazuh-agent
-      mode: prevent
       targets: all
 
   hardening:
@@ -75,11 +66,8 @@ defense:
 
   deception:
     honey_accounts: 2
-    canarytokens: [aws-keys]
 
 on_conflict: exclude-control
-
-detection_rules: auto
 
 validation:
   bloodhound: true

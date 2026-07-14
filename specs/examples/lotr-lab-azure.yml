@@ -55,15 +55,12 @@ defense:
       targets: all
   deception:
     honey_accounts: 0
-    canarytokens: []
 
 # NOTE: neither asreproast's nor kerberoasting's neutralized_by references
 # laps or baseline-controls — this hardening set genuinely does not conflict
 # with either requested vuln (verified via `forge.py lab-spec --check-only`,
 # not assumed). Both stay exploitable with zero exclusions needed.
 on_conflict: exclude-control
-
-detection_rules: none
 
 validation:
   bloodhound: false

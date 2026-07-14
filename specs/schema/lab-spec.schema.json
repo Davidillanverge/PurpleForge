@@ -33,12 +33,6 @@
       "enum": ["warn", "exclude-control", "fail"],
       "default": "warn"
     },
-    "detection_rules": {
-      "type": "string",
-      "description": "Whether to auto-install the base SIEM rule shipped with each injected vulnerability.",
-      "enum": ["auto", "manual", "none"],
-      "default": "auto"
-    },
     "validation": { "$ref": "#/$defs/validation" }
   },
 
@@ -224,25 +218,8 @@
       "properties": {
         "profile": {
           "type": "string",
-          "description": "Fixes defaults for siem/edr/hardening/deception; entries below are fine-grained overrides on top of the profile.",
-          "enum": ["none", "telemetry-only", "realistic", "hardened"]
-        },
-        "siem": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "platform": {
-              "type": "string",
-              "enum": ["splunk", "elastic", "wazuh", "sentinel", "none"]
-            },
-            "ship_sysmon": { "type": "boolean" },
-            "ship_wef": { "type": "boolean" },
-            "network_monitoring": {
-              "type": "array",
-              "items": { "type": "string", "enum": ["zeek", "suricata", "none"] },
-              "uniqueItems": true
-            }
-          }
+          "description": "Fixes defaults for edr/hardening/deception; entries below are fine-grained overrides on top of the profile.",
+          "enum": ["none", "realistic", "hardened"]
         },
         "edr": {
           "type": "array",
@@ -253,7 +230,7 @@
             "properties": {
               "product": {
                 "type": "string",
-                "enum": ["defender-av", "mde", "elastic-defend", "wazuh-agent", "velociraptor", "limacharlie"]
+                "enum": ["defender-av"]
               },
               "mode": {
                 "type": "string",
@@ -306,11 +283,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "honey_accounts": { "type": "integer", "minimum": 0 },
-            "canarytokens": {
-              "type": "array",
-              "items": { "type": "string" }
-            }
+            "honey_accounts": { "type": "integer", "minimum": 0 }
           }
         }
       }

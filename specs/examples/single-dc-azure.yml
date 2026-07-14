@@ -35,8 +35,6 @@ defense:
 
 on_conflict: warn
 
-detection_rules: none
-
 validation:
   bloodhound: false
   pingcastle: false

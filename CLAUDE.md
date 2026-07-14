@@ -16,9 +16,11 @@ reconcile, IP plan, cost, guardrail, destroy).
    host WireGuard/bastión en la subred de gestión. Los NSG/SG son
    deny-by-default.
 2. **Purple = ataque ∧ defensa.** Toda vulnerabilidad del catálogo DEBE declarar
-   `detect` + `mitigate` + `neutralized_by`. El laboratorio se despliega siempre
-   junto con el stack defensivo (`defense:`) definido en el spec — nunca solo la
-   parte ofensiva.
+   `mitigate` + `neutralized_by`. El laboratorio se despliega siempre junto con
+   el stack defensivo (`defense:`) definido en el spec — nunca solo la parte
+   ofensiva. (El harness cubre PREVENT/RESPOND: hardening + Defender AV +
+   deception. No despliega SIEM ni telemetría — la ingeniería de detección es
+   trabajo a más largo plazo, fuera del alcance actual.)
 3. **Reconciliación hardening ⟷ vulnerabilidades.** Antes de generar artefactos,
    el hardening seleccionado se cruza con las vulnerabilidades seleccionadas
    (vía `neutralized_by`) y los conflictos se resuelven según `on_conflict`
@@ -59,14 +61,12 @@ cero es `forge.py teardown`.
 
 ## Convenciones del repositorio
 
-- `specs/` es la única fuente de verdad editada a mano; todo lo que cuelga de
-  `generated/<lab>/` es derivado y reproducible (regenerable desde el spec) y
-  no se edita a mano. Los **artefactos desplegables** de `generated/<lab>/`
-  (`deploy.sh`/`teardown.sh`, `terraform/`, `ansible/`, `backend.hcl` con
-  placeholder, `population-secrets.yml`, `secrets-manifest.json`) SÍ pueden
-  versionarse a propósito: así un lab se comparte y se despliega sin volver a
-  ejecutar `forge.py generate`. Solo quedan fuera de git los secretos de infra,
-  el estado y los overlays por-despliegue (ver `.gitignore`).
+- `specs/` es la única fuente de verdad editada a mano. Todo lo que cuelga de
+  `generated/<lab>/` es el **resultado de usar el harness**, no parte de él:
+  derivado, reproducible y regenerable desde el spec con `forge.py generate`.
+  `generated/` está gitignored por completo — nunca se versiona; se regenera.
+  Compartir un lab = compartir su `specs/<lab>.yml` (el determinismo garantiza
+  que cualquiera reproduzca artefactos idénticos, ver regla invariante #5).
 - `vendor/` son git submodules con versión/tag fijado. No se edita contenido de
   `vendor/` directamente; se envuelve desde `templates/` y las skills.
 - Añadir una vulnerabilidad = añadir un `.yml` en `catalog/vulnerabilities/`
@@ -79,9 +79,10 @@ cero es `forge.py teardown`.
   con `PF_REGION`/`PF_VM_SIZE`/`PF_TFSTATE_RG` sin editar el spec. El mismo lab
   despliega en cualquier cuenta.
 - **Secretos por ciclo de vida** (`ansible/inventory/group_vars/all/`): las
-  contraseñas de los usuarios de población se fijan UNA vez al crear el lab y se
-  versionan con él (`population-secrets.yml`) — el deploy nunca las regenera. Las
-  llaves de infra (admin de dominio + ansible WinRM) van gitignored
-  (`secrets.yml`, `secrets.auto.tfvars.json`), son por-desplegador, y `deploy.sh`
-  (`ensure_secrets`) las acuña si faltan al desplegar un share. `lab-manifest.json`
-  y `lab-report.md` (con credenciales) nunca se commitean.
+  contraseñas de los usuarios de población son deterministas a partir de
+  `population.seed` (`population-secrets.yml`), así que `generate` las reproduce
+  idénticas en cada regeneración — el deploy nunca las regenera. Las llaves de
+  infra (admin de dominio + ansible WinRM) son por-desplegador y `deploy.sh`
+  (`ensure_secrets`) las acuña al desplegar. Como `generated/` entero está
+  gitignored, ningún secreto (`secrets.yml`, `secrets.auto.tfvars.json`,
+  `lab-manifest.json`, `lab-report.md`) llega jamás a git.

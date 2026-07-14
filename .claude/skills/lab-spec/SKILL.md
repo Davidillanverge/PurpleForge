@@ -8,8 +8,8 @@ description: >
   exclude-control | fail). Emits generated/<lab>/lab-manifest.json. This is
   always the FIRST skill invoked for any lab — every other skill
   (network-topology, infra-aws/azure, ad-topology, ad-theming, vuln-injection,
-  detection-lab, defensive-controls, purple-validation) consumes the manifest
-  this skill produces rather than re-reading the raw spec.
+  defensive-controls, purple-validation) consumes the manifest this skill
+  produces rather than re-reading the raw spec.
 ---
 
 # lab-spec

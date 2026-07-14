@@ -16,10 +16,6 @@ inject:
   playbook: templates/ansible/vulns/ntlm-downgrade.yml
   reuses: "vendor/GOAD/ansible/roles/vulns/ntlmdowngrade (mismo registro LMCompatibilityLevel, mismo valor débil)"
   params: { lm_compatibility_level: 2 }
-detect:
-  data_source: "Security 4624 (logon NTLM) con PackageName NTLM y LmPackageName distinto de NTLM v2; Sysmon"
-  signal: "4624/4776 mostrando NTLMv1 o LM en LmPackageName para una autenticación entrante"
-  siem_rule: templates/detection/{siem}/ntlm_downgrade
 neutralized_by:
   # Verified: hardening.controls.ntlmv2_only = LMCompatibilityLevel 5, CIS
   # rule 2.3.11.7 (level1, identical on Windows-2019-CIS/Windows-2022-CIS) —

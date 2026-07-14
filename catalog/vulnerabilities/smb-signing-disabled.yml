@@ -14,10 +14,6 @@ inject:
   playbook: templates/ansible/vulns/smb-signing-disabled.yml
   primitive: "custom — win_regedit sobre RequireSecuritySignature (patrón de vendor/GOAD/ansible/roles/vulns/smbv1)"
   params: { require_security_signature: 0, enable_security_signature: 0 }
-detect:
-  data_source: "Security 4624 (logon tipo 3 NTLM); Sysmon 3 (conexión de red); NDR de red"
-  signal: "Autenticación NTLM entrante relayada: mismo origen autenticándose a múltiples destinos SMB en ventana corta sin firma"
-  siem_rule: templates/detection/{siem}/smb_signing_disabled
 neutralized_by:
   # Real, host-CIS-backed control: enforcing SMB signing (CIS 2.3.8.x/2.3.9.x,
   # level 1) directly closes this. This is the concrete, demonstrable

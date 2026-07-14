@@ -16,10 +16,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/dll-hijacking.yml
   params: { service_name: "PFHijackSvc", writable_bindir: "C:\\PFApps\\PFMonitor" }
-detect:
-  data_source: "Sysmon 7 (ImageLoad) de DLL sin firmar desde un directorio escribible por usuarios; Sysmon 11 (FileCreate) de *.dll en el directorio del binario del servicio"
-  signal: "Carga de una DLL desde un directorio escribible por no administradores en un proceso que corre como SYSTEM, o creación de una DLL en el directorio del binario de un servicio"
-  siem_rule: templates/detection/{siem}/dll_hijacking
 # safe_dll_search_mode now maps to a VERIFIED ansible-lockdown rule
 # (18.5.8 server / 18.5.9 Win10/11 CIS, HKLM SafeDllSearchMode=1) in
 # catalog/defense/hardening/control-cis-rules.yml — defensive-controls derives

@@ -16,10 +16,6 @@ inject:
   playbook: templates/ansible/vulns/writable-gpo.yml
   reuses: "New-GPO + New-GPLink + Set-GPPermission (GroupPolicy module) — creación determinista de una GPO enlazada y delegación de edición a un principal nombrado"
   params: { gpo: "{{ vuln_gpo_name }}", grant_to: "{{ vuln_gpo_account }}", permission: GpoEditDeleteModifySecurity }
-detect:
-  data_source: "Security 5136/5137 (Directory Service Changes) sobre el objeto groupPolicyContainer; Security 4662 sobre la GPO; escritura en gPCFileSysPath (SYSVOL); Sysmon 1 al ejecutarse la Immediate Task"
-  signal: "Modificación del DACL o del contenido (gPCMachineExtensionNames / ScheduledTasks.xml) de una GPO por una cuenta que no es de administración de directivas conocida"
-  siem_rule: templates/detection/{siem}/writable_gpo
 # NOTE (mismo criterio que dcsync-acl.yml): no existe una regla CIS/STIG de
 # ansible-lockdown concreta que audite/cierre delegaciones de edición sobre GPOs
 # individuales, así que hardening.controls.gpo_delegation_audit es una etiqueta

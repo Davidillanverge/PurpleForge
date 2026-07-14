@@ -88,7 +88,7 @@ removed, reverting to the generate-time image.
 | `PF_IMAGE_VERSION=<ver>` | pin the marketplace image version (default `latest`) |
 
 ```bash
-# same committed lab, on Windows Server 2022:
+# same generated lab, on Windows Server 2022:
 PF_OS=windows-server-2022 ./generated/<lab>/deploy.sh
 # on a custom golden image (EDR pre-installed):
 PF_IMAGE_ID=/subscriptions/.../galleries/g/images/win2022-edr/versions/1.0.0 ./generated/<lab>/deploy.sh

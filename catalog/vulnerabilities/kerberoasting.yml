@@ -15,10 +15,6 @@ inject:
   primitive: "vendor/Vulnerable-AD/vulnad.ps1#VulnAD-Kerberoasting"
   playbook: templates/ansible/vulns/kerberoasting.yml
   params: { count: 2 }
-detect:
-  data_source: "Security 4769 (solicitud de TGS); Sysmon"
-  signal: "4769 con tipo de cifrado RC4 (0x17) solicitado para una cuenta de usuario con SPN"
-  siem_rule: templates/detection/{siem}/kerberoasting
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was found for it during
 # Fase 6's audit (see catalog/defense/hardening/control-cis-rules.yml, which only

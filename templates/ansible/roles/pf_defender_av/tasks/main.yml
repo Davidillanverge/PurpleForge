@@ -3,7 +3,7 @@
 # catalog/defense/edr/defender-av.yml): Microsoft Defender Antivirus is built
 # into every Windows Server 2019+/10/11 image, no external console/backend
 # needed. Every other defense.edr[].product needs a backend this project does
-# not build (no detection-lab) and is reported as not-implemented instead
+# not build (PREVENT/RESPOND only) and is reported as not-implemented instead
 # (scripts/forge.py:plan_edr) rather than silently no-op'd.
 #
 # This is a plain Ansible role (resolved via ansible.cfg's roles_path, never

@@ -17,10 +17,6 @@ inject:
   playbook: templates/ansible/vulns/esc4-template-acl.yml
   reuses: "Set-Acl con una ActiveDirectoryAccessRule GenericAll para un principal nombrado sobre el objeto pKICertificateTemplate de una plantilla YA publicada en la CA (por defecto 'User'), en la Configuration NC — mismo patrón que dcsync-acl, aplicado a la plantilla en vez de al dominio. Sin ficheros ni módulos que stagear."
   params: { template: "{{ vuln_esc4_template }}", grant_to: "{{ vuln_esc4_account }}", right: GenericAll }
-detect:
-  data_source: "Security 4662 sobre el objeto pKICertificateTemplate (CN=<tpl>,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,...); AD CS 4899/4898 (plantilla actualizada); 4886/4887 (solicitud/emisión) con SAN que no coincide con el solicitante"
-  signal: "Modificación del DACL o de los flags (msPKI-Certificate-Name-Flag / pKIExtendedKeyUsage) de una plantilla por una cuenta no administrativa, seguida de una emisión con SAN suplantado"
-  siem_rule: templates/detection/{siem}/esc4_template_acl
 neutralized_by:
   - hardening.controls.adcs_template_acl_hardening   # etiqueta libre: restringir ACLs de escritura sobre plantillas
   - hardening.baseline: [cis-l2]

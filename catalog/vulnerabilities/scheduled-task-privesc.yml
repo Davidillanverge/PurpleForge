@@ -15,10 +15,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/scheduled-task-privesc.yml
   params: { task_name: "PurpleForge Maintenance", script_path: "C:\\PFScripts\\maintenance.ps1" }
-detect:
-  data_source: "Security 4698 (creación de tarea programada) y 4702; Microsoft-Windows-TaskScheduler/Operational; Sysmon 11 (FileCreate/modify de maintenance.ps1)"
-  signal: "Modificación de un script invocado por una tarea que corre como SYSTEM por un principal no administrativo, o tarea nueva que ejecuta desde una ruta escribible por usuarios"
-  siem_rule: templates/detection/{siem}/scheduled_task_privesc
 # NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
 # placeholder — no matching ansible-lockdown CIS rule was auto-mapped for it (see
 # catalog/defense/hardening/control-cis-rules.yml, which only lists VERIFIED

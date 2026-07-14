@@ -6,8 +6,8 @@ description: >
   from the reconciliation), the fixed hardening.controls.* toggles (LAPS, LSA
   protection, SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Credential Guard,
   Protected Users — pf_controls, PurpleForge-authored), EDR (defender-av
-  only — every other product needs a backend this project does not build,
-  no detection-lab), and deception (honey accounts). This is where the
+  only — every other product needs a backend this project does not build),
+  and deception (honey accounts). This is where the
   hardening<->vuln reconciliation becomes a real ansible-lockdown skip_rule,
   not just a manifest entry.
 ---
@@ -22,8 +22,9 @@ description: >
   vuln-injection → EDR/telemetry → snapshot`. In practice the generated
   playbook applies hardening → EDR → pf_controls → deception, in that order
   within itself (see the playbook's own play order).
-- No detection-lab (SIEM/Sysmon/WEF) exists in this project by design — this
-  skill is PREVENT/RESPOND only, not VER. Don't add SIEM plumbing here.
+- No detection pipeline (SIEM/Sysmon/WEF) exists in this project by design —
+  this skill is PREVENT/RESPOND only. Don't add SIEM plumbing here; detection
+  engineering is a deliberate future scope.
 
 ## The honesty model (read this before touching `neutralized_by`)
 
@@ -108,12 +109,13 @@ Server 2019+/Windows 10 22H2+, no external module): one-time
 Windows image, no console to stand up. `pf_defender_av` implements ASR rules
 (mode-driven: `prevent`→block, `detect`/default→audit, overridable via
 `settings.asr_rules`), tamper protection, network protection, and real-time
-protection. Every other product (`elastic-defend`, `wazuh-agent`, `mde`,
-`velociraptor`, `limacharlie`) needs a management backend this project does
-not build — `plan_edr` in `scripts/forge.py` marks them
-`status: not-implemented` with an explicit reason, and `forge.py generate`
-prints that reason. **Don't silently skip an EDR selection** — if you add a
-product, either implement it host-only or mark it `backend_required: true`.
+protection. It is the only product the schema's `defense.edr[].product` enum
+accepts. Any other agent-based EDR (Elastic Defend, Wazuh, MDE, Velociraptor,
+LimaCharlie…) needs a management backend this project does not build; `plan_edr`
+in `scripts/forge.py` still guards against a stray product id by marking it
+`status: not-implemented` with an explicit reason. **Don't silently skip an EDR
+selection** — if you add a product, implement it host-only and add it to the
+schema enum, or mark it `backend_required: true`.
 
 ## Testing this skill (four real bugs were caught here, not by inspection)
 

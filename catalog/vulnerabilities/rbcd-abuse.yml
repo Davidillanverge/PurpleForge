@@ -16,10 +16,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/rbcd-abuse.yml
   params: { target_computer_role: member-server }
-detect:
-  data_source: "Security 4742 (cuenta de equipo modificada) sobre el equipo objetivo sobre el atributo msDS-AllowedToActOnBehalfOfOtherIdentity; Security 4769 con Transited Services no vacío (S4U2Proxy)"
-  signal: "4742 con msDS-AllowedToActOnBehalfOfOtherIdentity establecido hacia un SID que no corresponde a una relación de delegación documentada"
-  siem_rule: templates/detection/{siem}/rbcd_abuse
 # HONESTO: no se reclama neutralización por baseline CIS/STIG -no se ha
 # verificado ninguna regla de los roles ansible-lockdown fijados que
 # restrinja RBCD ni delegación a nivel de objeto AD (son ajustes de

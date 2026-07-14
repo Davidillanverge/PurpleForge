@@ -18,10 +18,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/backup-operators-membership.yml
   params: { group: "Backup Operators" }
-detect:
-  data_source: "Security 4732 (miembro añadido a Backup Operators); Security 4673/4674 (uso de privilegio sensible: SeBackupPrivilege/SeRestorePrivilege) en un DC; creación de procesos diskshadow.exe/vssadmin.exe/ntdsutil.exe por una cuenta fuera del equipo de backup autorizado"
-  signal: "4673 con privilegio SeBackupPrivilege usado por una cuenta que no es la cuenta de servicio de backup documentada, en un controlador de dominio"
-  siem_rule: templates/detection/{siem}/backup_operators_membership
 # HONESTO: ninguna regla CIS/STIG fijada vacía o restringe la pertenencia a
 # un grupo integrado -es dato del entorno, no un ajuste de registro/GPO-, y
 # hardening.controls.protected_users_group NO neutraliza esto: Protected

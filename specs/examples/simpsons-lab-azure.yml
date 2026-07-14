@@ -53,7 +53,6 @@ defense:
       targets: all
   deception:
     honey_accounts: 0
-    canarytokens: []
 
 # NOTE: none of asreproast/kerberoasting/constrained-delegation's
 # neutralized_by references laps, lsa_protection, or baseline-controls — this
@@ -61,8 +60,6 @@ defense:
 # vulns (verified via `forge.py lab-spec --check-only`, not assumed). All
 # three stay exploitable with zero exclusions needed.
 on_conflict: exclude-control
-
-detection_rules: none
 
 validation:
   bloodhound: false

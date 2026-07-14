@@ -18,10 +18,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/dnsadmins-privesc.yml
   params: { group: DnsAdmins }
-detect:
-  data_source: "Security 4732 (miembro añadido a un grupo con ámbito de seguridad local/global) filtrado a DnsAdmins; Sysmon Event ID 7 (carga de imagen) del proceso dns.exe cargando una DLL fuera de System32"
-  signal: "4732 con grupo=DnsAdmins añadiendo una cuenta que no es parte de la administración delegada de DNS Tier 1"
-  siem_rule: templates/detection/{siem}/dnsadmins_privesc
 # HONESTO: ninguna regla CIS/STIG fijada vacía o restringe la pertenencia a
 # un grupo integrado -es dato del entorno, no un ajuste de registro/GPO-.
 # Microsoft mitigó la carga de DLL arbitraria por defecto en actualizaciones

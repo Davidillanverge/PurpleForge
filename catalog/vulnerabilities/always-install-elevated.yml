@@ -14,10 +14,6 @@ inject:
   type: ansible
   playbook: templates/ansible/vulns/always-install-elevated.yml
   params: {}
-detect:
-  data_source: "Sysmon 13 (RegistryValueSet en ...\\Installer\\AlwaysInstallElevated); Security 4657 (modificación de valor de registro); MsiInstaller 11707/1040 con contexto SYSTEM"
-  signal: "AlwaysInstallElevated=1 presente en HKLM y HKCU, o instalación de un MSI que arranca un proceso hijo como SYSTEM iniciada por un usuario no privilegiado"
-  siem_rule: templates/detection/{siem}/always_install_elevated
 # disable_always_install_elevated maps to a VERIFIED ansible-lockdown rule pair
 # in catalog/defense/hardening/control-cis-rules.yml (18.10.81.2/18.10.80.2
 # Computer Config + 19.7.44.1/19.7.42.1 User Config, server vs Win10/11 CIS
