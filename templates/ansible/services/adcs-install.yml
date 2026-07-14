@@ -1,0 +1,20 @@
+---
+# Service-provisioning task-file: adcs. Stands up an Enterprise Root CA by reusing
+# vendor/GOAD/ansible/roles/adcs (win_feature AD-Certificate + ADCS-Cert-Authority,
+# then Install-AdcsCertificationAuthority as an EnterpriseRootCA). Runs on the
+# member-server that declares `services: [adcs]`, after domain-join and BEFORE any
+# vuln lands — adcs-esc1 (vuln-injection) then publishes its ESC1 template to this
+# CA. This is the SECURE baseline: a plain Enterprise Root CA with NO vulnerable
+# template. Web enrollment (ESC8) stays OFF — adcs-esc1 is an enrollment-rights
+# gap on a template, not an HTTP-enrollment one.
+- name: "adcs-install | install + configure an Enterprise Root CA (GOAD adcs role)"
+  ansible.builtin.include_role:
+    name: adcs
+  vars:
+    # Installing an EnterpriseRootCA needs Enterprise Admin; the GOAD role passes
+    # domain_username (already NETBIOS\Administrator on this member-server) to
+    # Install-AdcsCertificationAuthority -Credential. The CA common name is derived
+    # from the FQDN's first label (split on '.', not a backslash — avoids Jinja/YAML
+    # escaping), e.g. member_domain "corp.local" -> "CORP-CA".
+    ca_common_name: "{{ member_domain.split('.')[0] | upper }}-CA"
+    ca_web_enrollment: false

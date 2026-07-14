@@ -1273,13 +1273,17 @@ def render_vuln_injection(spec: dict, planned: list[dict], out_dir: Path) -> Non
 
 
 def plan_service_provisioning(machines: list[dict]) -> dict[str, list[str]]:
-    """machines[].services -> {service: [host names]} for services this
-    generator actually provisions. Only `mssql` is wired today; `iis`/`sccm`
-    remain declared-but-unconsumed (Tier B backlog, NON-AD-VULNS-ROADMAP.md).
-    `adcs` is deliberately excluded — it stays handled inline by adcs-esc1's
-    own vuln-injection task (no separate CA-install step exists for it yet)."""
-    hosts = [m["name"] for m in machines if "mssql" in m.get("services", [])]
-    return {"mssql": hosts} if hosts else {}
+    """machines[].services -> {service: [host names]} for services this generator
+    actually provisions: `mssql` (secure base install) and `adcs` (an Enterprise
+    Root CA, reusing GOAD's adcs role — this is what makes adcs-esc1 usable: the
+    vuln publishes its ESC1 template to this CA). `iis`/`sccm` remain
+    declared-but-unconsumed (Tier B backlog, NON-AD-VULNS-ROADMAP.md)."""
+    plan = {}
+    for svc in ("mssql", "adcs"):
+        hosts = [m["name"] for m in machines if svc in m.get("services", [])]
+        if hosts:
+            plan[svc] = hosts
+    return plan
 
 
 def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) -> None:
@@ -1287,7 +1291,7 @@ def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: s
     plus its supporting task-file + config template. Installs SECURELY by
     design (see templates/ansible/services/mssql-install.yml) — the vuln that
     requires_services this host lands later, in vuln-injection."""
-    if not service_hosts.get("mssql"):
+    if not service_hosts:
         return
     dst = out_dir / "ansible" / "playbooks"
     dst.mkdir(parents=True, exist_ok=True)
@@ -1296,12 +1300,20 @@ def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: s
         keep_trailing_newline=True,
     )
     (dst / "service-provisioning.yml").write_text(
-        template.render(lab_name=lab_name, mssql_hosts=service_hosts["mssql"]), encoding="utf-8"
+        template.render(
+            lab_name=lab_name,
+            mssql_hosts=service_hosts.get("mssql", []),
+            adcs_hosts=service_hosts.get("adcs", []),
+        ),
+        encoding="utf-8",
     )
 
     services_dst = out_dir / "ansible" / "services"
     services_dst.mkdir(parents=True, exist_ok=True)
-    shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "mssql-install.yml", services_dst / "mssql-install.yml")
+    if service_hosts.get("mssql"):
+        shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "mssql-install.yml", services_dst / "mssql-install.yml")
+    if service_hosts.get("adcs"):
+        shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "adcs-install.yml", services_dst / "adcs-install.yml")
 
     files_dst = dst / "files" / "mssql"
     files_dst.mkdir(parents=True, exist_ok=True)
@@ -1473,17 +1485,31 @@ def resolve_hardening_skip_rules(
     return skip_rules, notes
 
 
-# Rules that are broken IN the pinned ansible-lockdown role (not a PurpleForge or
-# collection issue) and abort the whole hardening play if not skipped. Keyed by os,
-# values are the role's own per-rule skip vars. Curated against the pinned vendor/
-# submodule — revisit when it is bumped.
-#   18.9.19.4/.5 ("Configure security policy processing"): CLIENT-OS roles only
-#   (Windows-10/11-CIS) ship a win_regedit path missing the drive colon
-#   ("HKLM\..." not "HKLM:\..."), which win_regedit rejects ("not a valid
-#   powershell path"). The server roles have the correct "HKLM:\..." path.
+# Rules PurpleForge must skip on the pinned ansible-lockdown role version — none is
+# a PurpleForge or collection bug. Keyed by os. Curated by static scan + live
+# deploys against the pinned vendor/ submodule; revisit when it is bumped.
+#   CLIENT (Win10/11) upstream typos that abort the whole play:
+#     18.9.19.4/.5 — win_regedit path missing the drive colon ("HKLM\..." not
+#       "HKLM:\..."), rejected as "not a valid powershell path".
+#     18.9.25.5/.6 (LAPS length/age) — reversed comparison operator in the rule's
+#       `when:` ("=> 15" / "=< 30" instead of ">=" / "<="), a Jinja syntax error.
+#   SERVER member-server WinRM-severing rule upstream forgot to gate behind
+#   win_skip_for_test (its sibling 2.2.16 IS gated, 2.2.22 is not, in all 3 roles):
+#     2.2.22 — "Deny network logon to Local account and member of Administrators"
+#       cuts off the local `ansible` WinRM account mid-run. DC-only 2.2.21 (Guests)
+#       is harmless and stays on.
 BROKEN_UPSTREAM_CIS_RULES: dict[str, list[str]] = {
-    "windows-10-22h2": ["win10cis_rule_18_9_19_4", "win10cis_rule_18_9_19_5"],
-    "windows-11-23h2": ["win11cis_rule_18_9_19_4", "win11cis_rule_18_9_19_5"],
+    "windows-server-2019": ["win19cis_rule_2_2_22"],
+    "windows-server-2022": ["win22cis_rule_2_2_22"],
+    "windows-server-2025": ["win25cis_rule_2_2_22"],
+    "windows-10-22h2": [
+        "win10cis_rule_18_9_19_4", "win10cis_rule_18_9_19_5",
+        "win10cis_rule_18_9_25_5", "win10cis_rule_18_9_25_6",
+    ],
+    "windows-11-23h2": [
+        "win11cis_rule_18_9_19_4", "win11cis_rule_18_9_19_5",
+        "win11cis_rule_18_9_25_5", "win11cis_rule_18_9_25_6",
+    ],
 }
 
 
@@ -2294,7 +2320,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     render_defensive_controls(
         hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir
     )
-    render_site_playbook(bool(planned_vulns), bool(service_hosts.get("mssql")), out_dir)
+    render_site_playbook(bool(planned_vulns), bool(service_hosts), out_dir)
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
     render_deploy_scripts(spec, manifest, machines, network_plan, out_dir)

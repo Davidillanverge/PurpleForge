@@ -23,3 +23,11 @@
     - name: "mssql-install | provision"
       ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/mssql-install.yml"
 {% endfor %}
+{% for m in adcs_hosts %}
+- name: "PurpleForge | service-provisioning | adcs -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  tasks:
+    - name: "adcs-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/adcs-install.yml"
+{% endfor %}

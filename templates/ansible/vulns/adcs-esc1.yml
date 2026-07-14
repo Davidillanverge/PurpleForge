@@ -26,10 +26,16 @@
     src: "{{ vuln_files_dir }}/adcs/ESC1.json"
     dest: "C:\\setup\\ESC1.json"
 
+- name: "adcs-esc1 | ensure the ActiveDirectory PS module is present (ADCSTemplate #requires it; member servers lack it by default)"
+  ansible.windows.win_feature:
+    name: RSAT-AD-PowerShell
+    state: present
+
 - name: "adcs-esc1 | publish the ESC1 vulnerable template (Domain Users may enroll)"
   ansible.windows.win_shell: |
+    Import-Module ADCSTemplate -Force -ErrorAction Stop
     if (-not(Get-ADCSTemplate -DisplayName "ESC1")) {
-      New-ADCSTemplate -DisplayName "ESC1" -JSON (Get-Content C:\setup\ESC1.json -Raw) -Identity "{{ domain_username.split('\\')[0] }}\Domain Users" -Publish
+      New-ADCSTemplate -DisplayName "ESC1" -JSON (Get-Content C:\setup\ESC1.json -Raw) -Identity "{{ member_domain.split('.')[0] | upper }}\Domain Users" -Publish
     }
   vars:
     ansible_become: yes
