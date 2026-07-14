@@ -4,6 +4,13 @@
 # versioned — regenerate it, don't commit it.
 generated/
 
+# A top-level specs/<lab>.yml is usage output too — what you get from using the
+# harness (write by hand or via /new-lab), reproducible and disposable. Only the
+# schema (specs/schema/) and the two committed smoke-test specs are versioned.
+specs/*.yml
+!specs/winrm-validate-lab.yml
+!specs/mssql-weak-sa-lab.yml
+
 # Terraform
 **/.terraform/
 **/.terraform.lock.hcl
