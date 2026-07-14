@@ -1473,6 +1473,20 @@ def resolve_hardening_skip_rules(
     return skip_rules, notes
 
 
+# Rules that are broken IN the pinned ansible-lockdown role (not a PurpleForge or
+# collection issue) and abort the whole hardening play if not skipped. Keyed by os,
+# values are the role's own per-rule skip vars. Curated against the pinned vendor/
+# submodule — revisit when it is bumped.
+#   18.9.19.4/.5 ("Configure security policy processing"): CLIENT-OS roles only
+#   (Windows-10/11-CIS) ship a win_regedit path missing the drive colon
+#   ("HKLM\..." not "HKLM:\..."), which win_regedit rejects ("not a valid
+#   powershell path"). The server roles have the correct "HKLM:\..." path.
+BROKEN_UPSTREAM_CIS_RULES: dict[str, list[str]] = {
+    "windows-10-22h2": ["win10cis_rule_18_9_19_4", "win10cis_rule_18_9_19_5"],
+    "windows-11-23h2": ["win11cis_rule_18_9_19_4", "win11cis_rule_18_9_19_5"],
+}
+
+
 def plan_hardening(machines: list[dict], resolved_defense: dict, reconciliation: dict) -> dict:
     hardening = resolved_defense.get("hardening", {})
     baseline_id = hardening.get("baseline", "none")
@@ -1505,7 +1519,7 @@ def plan_hardening(machines: list[dict], resolved_defense: dict, reconciliation:
                 "role_name": role_name,
                 "hosts": hosts,
                 "tags": tags,
-                "skip_rule_vars": skip_rules_by_os.get(os_, []),
+                "skip_rule_vars": skip_rules_by_os.get(os_, []) + BROKEN_UPSTREAM_CIS_RULES.get(os_, []),
             }
         )
 
