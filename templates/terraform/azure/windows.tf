@@ -145,9 +145,9 @@ resource "azurerm_windows_virtual_machine" "windows" {
   resource_group_name = azurerm_resource_group.rg.name
   # Per-machine spec override (machines[].vm_size) wins; otherwise the per-role
   # default map (itself overridable wholesale by var.vm_size_overrides).
-  size                = coalesce(each.value.vm_size, local.size_map[each.value.role])
-  admin_username      = var.admin_username
-  admin_password      = var.admin_password
+  size           = coalesce(each.value.vm_size, local.size_map[each.value.role])
+  admin_username = var.admin_username
+  admin_password = var.admin_password
   network_interface_ids = [
     azurerm_network_interface.windows[each.key].id,
   ]

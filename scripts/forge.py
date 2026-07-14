@@ -16,6 +16,7 @@ Usage:
     scripts/forge.py validate specs/examples/single-dc-azure.yml --run
     scripts/forge.py teardown specs/examples/single-dc-azure.yml
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,6 @@ from pathlib import Path
 import jinja2
 import jsonschema
 import yaml
-
 from population import generate_population_plan
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -203,8 +203,7 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
         target_role = catalog[vuln_id].get("attack", {}).get("target_role")
         if target_role and not required and not any(m["role"] == target_role for m in spec["machines"]):
             errors.append(
-                f"vulnerabilities: '{vuln_id}' targets role '{target_role}' "
-                f"but the spec has no machine with that role"
+                f"vulnerabilities: '{vuln_id}' targets role '{target_role}' but the spec has no machine with that role"
             )
 
     return errors
@@ -256,7 +255,7 @@ IANA_TO_WINDOWS_TIMEZONE = {
 
 
 def parse_auto_shutdown(value: str) -> tuple[str, str]:
-    """"20:00 Europe/Madrid" -> ("2000", "Romance Standard Time") for
+    """ "20:00 Europe/Madrid" -> ("2000", "Romance Standard Time") for
     azurerm_dev_test_global_vm_shutdown_schedule. Schema already enforces the
     "HH:MM Area/City" pattern; the IANA zone name is translated to the legacy
     Windows timezone ID the azurerm provider actually requires (see
@@ -283,7 +282,7 @@ def stable_octet(name: str) -> int:
 
 def assign_ips(spec: dict) -> dict:
     octet = stable_octet(spec["lab"]["name"])
-    plan = {
+    plan: dict = {
         "supernet": f"10.{octet}.0.0/16",
         "management_subnet": f"10.{octet}.0.0/24",
         "jumpbox_ip": f"10.{octet}.0.10",
@@ -302,14 +301,16 @@ def assign_ips(spec: dict) -> dict:
                 if host_octet > 249:
                     raise SpecError(f"domain '{d['domain']}': too many {m['role']} instances for a /24 IP plan")
                 counters[m["role"]] += 1
-                hosts.append({
-                    "role": m["role"],
-                    "os": m["os"],
-                    "ip": f"10.{octet}.{i}.{host_octet}",
-                    "services": m.get("services", []),
-                    "image_id": m.get("image_id"),
-                    "vm_size": m.get("vm_size"),
-                })
+                hosts.append(
+                    {
+                        "role": m["role"],
+                        "os": m["os"],
+                        "ip": f"10.{octet}.{i}.{host_octet}",
+                        "services": m.get("services", []),
+                        "image_id": m.get("image_id"),
+                        "vm_size": m.get("vm_size"),
+                    }
+                )
         plan["domains"][d["domain"]] = {"subnet": subnet_cidr, "hosts": hosts}
     return plan
 
@@ -348,7 +349,9 @@ def eval_expiry_notes(spec: dict) -> list[str]:
     return []
 
 
-def reconcile(resolved_defense: dict, vulnerabilities: list[str], catalog: dict[str, dict], on_conflict: str) -> tuple[dict, dict]:
+def reconcile(
+    resolved_defense: dict, vulnerabilities: list[str], catalog: dict[str, dict], on_conflict: str
+) -> tuple[dict, dict]:
     resolved = copy.deepcopy(resolved_defense)
     hardening = resolved.get("hardening", {})
     baseline = hardening.get("baseline", "none")
@@ -369,7 +372,8 @@ def reconcile(resolved_defense: dict, vulnerabilities: list[str], catalog: dict[
         implicit_labels = [
             e.split("hardening.controls.", 1)[1]
             for e in entries
-            if isinstance(e, str) and e.startswith("hardening.controls.")
+            if isinstance(e, str)
+            and e.startswith("hardening.controls.")
             and e.split("hardening.controls.", 1)[1] not in FIXED_HARDENING_TOGGLES
         ]
 
@@ -377,25 +381,33 @@ def reconcile(resolved_defense: dict, vulnerabilities: list[str], catalog: dict[
             if isinstance(entry, dict) and "hardening.baseline" in entry:
                 baseline_list = entry["hardening.baseline"]
                 if baseline != "none" and baseline in baseline_list:
-                    conflicts.append({
-                        "vuln": vuln_id,
-                        "kind": "baseline",
-                        "baseline": baseline,
-                        "control": implicit_labels[0] if implicit_labels else None,
-                        "detail": (
-                            f"baseline '{baseline}' bundles rule(s) that neutralize '{vuln_id}'"
-                            + (f" (control: {implicit_labels[0]})" if implicit_labels else "")
-                        ),
-                    })
+                    conflicts.append(
+                        {
+                            "vuln": vuln_id,
+                            "kind": "baseline",
+                            "baseline": baseline,
+                            "control": implicit_labels[0] if implicit_labels else None,
+                            "detail": (
+                                f"baseline '{baseline}' bundles rule(s) that neutralize '{vuln_id}'"
+                                + (f" (control: {implicit_labels[0]})" if implicit_labels else "")
+                            ),
+                        }
+                    )
             elif isinstance(entry, str) and entry.startswith("hardening.controls."):
                 control_name = entry.split("hardening.controls.", 1)[1]
-                if control_name in FIXED_HARDENING_TOGGLES and controls.get(control_name) not in (False, "disable", None):
-                    conflicts.append({
-                        "vuln": vuln_id,
-                        "kind": "control",
-                        "control": control_name,
-                        "detail": f"control '{control_name}' neutralizes '{vuln_id}'",
-                    })
+                if control_name in FIXED_HARDENING_TOGGLES and controls.get(control_name) not in (
+                    False,
+                    "disable",
+                    None,
+                ):
+                    conflicts.append(
+                        {
+                            "vuln": vuln_id,
+                            "kind": "control",
+                            "control": control_name,
+                            "detail": f"control '{control_name}' neutralizes '{vuln_id}'",
+                        }
+                    )
 
     report = {
         "on_conflict": on_conflict,
@@ -434,13 +446,15 @@ def reconcile(resolved_defense: dict, vulnerabilities: list[str], catalog: dict[
             controls[c["control"]] = off_value
             excluded.append({**c, "action": f"hardening.controls.{c['control']} forced to {off_value!r}"})
         else:
-            excluded.append({
-                **c,
-                "action": (
-                    "abstract exclusion recorded; concrete ansible-lockdown skip_rule vars are "
-                    "resolved later by the defensive-controls skill"
-                ),
-            })
+            excluded.append(
+                {
+                    **c,
+                    "action": (
+                        "abstract exclusion recorded; concrete ansible-lockdown skip_rule vars are "
+                        "resolved later by the defensive-controls skill"
+                    ),
+                }
+            )
     hardening["controls"] = controls
     resolved["hardening"] = hardening
     report["excluded_controls"] = excluded
@@ -546,16 +560,18 @@ def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
             counters[key] = counters.get(key, 0) + 1
             base = f"{ROLE_ABBREV[role]}{counters[key]:02d}"
             name = f"{slug}-{base}" if multi_domain else base
-            machines.append({
-                "name": name,
-                "domain": domain,
-                "role": role,
-                "os": host["os"],
-                "ip": host["ip"],
-                "services": host.get("services", []),
-                "image_id": host.get("image_id"),
-                "vm_size": host.get("vm_size"),
-            })
+            machines.append(
+                {
+                    "name": name,
+                    "domain": domain,
+                    "role": role,
+                    "os": host["os"],
+                    "ip": host["ip"],
+                    "services": host.get("services", []),
+                    "image_id": host.get("image_id"),
+                    "vm_size": host.get("vm_size"),
+                }
+            )
     return machines
 
 
@@ -638,52 +654,60 @@ def build_ansible_groups(spec: dict, machines: list[dict], admin_password: str) 
         if is_child(domain):
             parent = d["trust"]["target"]
             parent_dc = root_dc_name.get(parent, "")
-            common.update({
-                "parent_domain": parent,
-                "parent_domain_user": yaml_scalar(f"{forest_by_domain[parent]['netbios']}\\Administrator"),
-                "parent_domain_password": admin_password,
-                "source_dc": f"{parent_dc}.{parent}" if parent_dc else "",
-                "dns_domain": parent_dc or first["name"],
-            })
+            common.update(
+                {
+                    "parent_domain": parent,
+                    "parent_domain_user": yaml_scalar(f"{forest_by_domain[parent]['netbios']}\\Administrator"),
+                    "parent_domain_password": admin_password,
+                    "source_dc": f"{parent_dc}.{parent}" if parent_dc else "",
+                    "dns_domain": parent_dc or first["name"],
+                }
+            )
             groups["child_domain_controllers"].append(common)
         else:
             groups["domain_controllers"].append(common)
             trust = d.get("trust")
             if trust and trust["type"] != "parent-child":
-                groups["trust_anchors"].append({
-                    "name": first["name"],
-                    "ip": first["ip"],
-                    "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
-                    "domain_password": admin_password,
-                    "remote_forest": trust["target"],
-                    "remote_admin": yaml_scalar(f"{forest_by_domain[trust['target']]['netbios']}\\Administrator"),
-                    "remote_admin_password": admin_password,
-                })
+                groups["trust_anchors"].append(
+                    {
+                        "name": first["name"],
+                        "ip": first["ip"],
+                        "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
+                        "domain_password": admin_password,
+                        "remote_forest": trust["target"],
+                        "remote_admin": yaml_scalar(f"{forest_by_domain[trust['target']]['netbios']}\\Administrator"),
+                        "remote_admin_password": admin_password,
+                    }
+                )
 
         for extra in dcs[1:]:
-            groups["domain_controllers_additional"].append({
-                "name": extra["name"],
-                "ip": extra["ip"],
-                "domain": domain,
-                "domain_name": domain,
-                "netbios_name": d["netbios"],
-                "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
-                "domain_password": admin_password,
-                "dns_domain": root_dc_name[domain],
-            })
+            groups["domain_controllers_additional"].append(
+                {
+                    "name": extra["name"],
+                    "ip": extra["ip"],
+                    "domain": domain,
+                    "domain_name": domain,
+                    "netbios_name": d["netbios"],
+                    "domain_username": yaml_scalar(f"{d['netbios']}\\Administrator"),
+                    "domain_password": admin_password,
+                    "dns_domain": root_dc_name[domain],
+                }
+            )
 
     for m in machines:
         if m["role"] in ("member-server", "workstation"):
             group = "member_servers" if m["role"] == "member-server" else "workstations"
             member_netbios = forest_by_domain[m["domain"]]["netbios"]
-            groups[group].append({
-                "name": m["name"],
-                "ip": m["ip"],
-                "member_domain": m["domain"],
-                "domain_username": yaml_scalar(f"{member_netbios}\\Administrator"),
-                "domain_password": admin_password,
-                "dns_domain": root_dc_name.get(m["domain"], ""),
-            })
+            groups[group].append(
+                {
+                    "name": m["name"],
+                    "ip": m["ip"],
+                    "member_domain": m["domain"],
+                    "domain_username": yaml_scalar(f"{member_netbios}\\Administrator"),
+                    "domain_password": admin_password,
+                    "dns_domain": root_dc_name.get(m["domain"], ""),
+                }
+            )
 
     return groups
 
@@ -852,8 +876,14 @@ def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list
     plans = []
     for i, host in enumerate(dc_hosts):
         plan = generate_population_plan(
-            theme, spec["population"], host["domain"], spec["population"]["seed"] + i,
-            user_count, group_count, computer_count, generate_password,
+            theme,
+            spec["population"],
+            host["domain"],
+            spec["population"]["seed"] + i,
+            user_count,
+            group_count,
+            computer_count,
+            generate_password,
         )
         plan["run_on"] = host["name"]
         plan["domain_username"] = host["domain_username"]
@@ -871,8 +901,7 @@ def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list
     # (gitignored group_vars/all/secrets.yml). The returned plans keep passwords
     # for the (gitignored) manifest + attack-chain casting.
     render_plans = [
-        {**plan, "users": [{k: v for k, v in u.items() if k != "password"} for u in plan["users"]]}
-        for plan in plans
+        {**plan, "users": [{k: v for k, v in u.items() if k != "password"} for u in plan["users"]]} for plan in plans
     ]
     rendered = template.render(lab_name=spec["lab"]["name"], population_plans=render_plans)
     (dst / "ad-population.yml").write_text(rendered, encoding="utf-8")
@@ -1010,7 +1039,11 @@ def resolve_attack_chain(spec: dict, catalog: dict[str, dict], population_plans:
 # vuln sharing that account to reuse the exact same value, so every reset
 # along the chain is idempotent (same value every time) instead of a race.
 def build_vuln_vars(
-    vid: str, machines: list[dict], primary_dc: dict, cast_name: str | None = None, forced_password: str | None = None,
+    vid: str,
+    machines: list[dict],
+    primary_dc: dict,
+    cast_name: str | None = None,
+    forced_password: str | None = None,
     rng: random.Random | None = None,
 ) -> dict:
     """`rng`: seeded from population.seed by plan_vuln_injection so every
@@ -1019,9 +1052,15 @@ def build_vuln_vars(
     are absent (independent mode, or a target_shape:none vuln); ctf-mode
     chaining already reuses forced_password."""
     if vid == "kerberoasting":
-        return {"vuln_kerberoast_account": cast_name or "svc-sqlreport", "vuln_kerberoast_password": forced_password or VULN_WEAK_PASSWORD}
+        return {
+            "vuln_kerberoast_account": cast_name or "svc-sqlreport",
+            "vuln_kerberoast_password": forced_password or VULN_WEAK_PASSWORD,
+        }
     if vid == "asreproast":
-        return {"vuln_asrep_account": cast_name or "svc-legacyapp", "vuln_asrep_password": forced_password or VULN_WEAK_PASSWORD_ALT}
+        return {
+            "vuln_asrep_account": cast_name or "svc-legacyapp",
+            "vuln_asrep_password": forced_password or VULN_WEAK_PASSWORD_ALT,
+        }
     if vid == "laps-read-acl":
         return {"vuln_laps_reader_group": cast_name or "Domain Users"}
     if vid == "shadow-credentials":
@@ -1048,7 +1087,10 @@ def build_vuln_vars(
         password = forced_password or (VULN_WEAK_PASSWORD_ALT if cast_name else generate_password(rng=rng))
         return {"vuln_dcsync_account": cast_name or "svc-replication", "vuln_dcsync_password": password}
     if vid == "passwords-in-description":
-        return {"vuln_pwddesc_account": cast_name or "temp-contractor", "vuln_pwddesc_password": forced_password or generate_password(rng=rng)}
+        return {
+            "vuln_pwddesc_account": cast_name or "temp-contractor",
+            "vuln_pwddesc_password": forced_password or generate_password(rng=rng),
+        }
     if vid == "gpp-cpassword":
         return {"vuln_gpp_name": "Workstations - Local Admin Password"}
     if vid == "unconstrained-delegation":
@@ -1098,8 +1140,12 @@ def build_vuln_vars(
 
 
 def plan_vuln_injection(
-    spec: dict, catalog: dict[str, dict], machines: list[dict], groups: dict[str, list[dict]],
-    reconciliation: dict, attack_chain: dict | None = None,
+    spec: dict,
+    catalog: dict[str, dict],
+    machines: list[dict],
+    groups: dict[str, list[dict]],
+    reconciliation: dict,
+    attack_chain: dict | None = None,
 ) -> list[dict]:
     """Resolves, per selected vuln: which host the inject play targets, the
     deterministic per-vuln vars, and the neutralization status carried over from
@@ -1159,17 +1205,19 @@ def plan_vuln_injection(
         if cast_name and password_key and password_key in vvars and cast_name not in cast_password_cache:
             cast_password_cache[cast_name] = vvars[password_key]
 
-        planned.append({
-            "id": vid,
-            "name": v["name"],
-            "severity": v["severity"],
-            "mitre": ",".join(v["attack"]["mitre_attack"]),
-            "run_on": run_on,
-            "target_domain": target_domain,
-            "intended_path": " ".join(v["attack"]["intended_path"].split()),
-            "neutralization": status,
-            "vars": vvars,
-        })
+        planned.append(
+            {
+                "id": vid,
+                "name": v["name"],
+                "severity": v["severity"],
+                "mitre": ",".join(v["attack"]["mitre_attack"]),
+                "run_on": run_on,
+                "target_domain": target_domain,
+                "intended_path": " ".join(v["attack"]["intended_path"].split()),
+                "neutralization": status,
+                "vars": vvars,
+            }
+        )
     return planned
 
 
@@ -1261,9 +1309,7 @@ def render_site_playbook(has_vuln_injection: bool, has_service_provisioning: boo
     )
 
 
-def render_deploy_scripts(
-    spec: dict, manifest: dict, machines: list[dict], network_plan: dict, out_dir: Path
-) -> None:
+def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], network_plan: dict, out_dir: Path) -> None:
     """Emit generated/<lab>/{deploy.sh,teardown.sh} — the deterministic, no-AI
     deploy/teardown path. These are the single source of truth for the exact
     commands (the lab-report just points at them); `forge.py deploy`/`teardown`
@@ -1341,7 +1387,9 @@ def load_control_cis_rules() -> dict:
     return load_yaml(CONTROL_CIS_RULES_PATH).get("controls", {})
 
 
-def resolve_hardening_skip_rules(baseline_id: str, reconciliation: dict, oses_in_scope: set[str]) -> tuple[dict[str, list[str]], list[str]]:
+def resolve_hardening_skip_rules(
+    baseline_id: str, reconciliation: dict, oses_in_scope: set[str]
+) -> tuple[dict[str, list[str]], list[str]]:
     """Per-OS list of ansible-lockdown skip_rule vars to force false, derived
     ONLY from verified catalog/defense/hardening/control-cis-rules.yml entries
     — plus an honest note for every exclusion that could NOT be turned into a
@@ -1363,7 +1411,9 @@ def resolve_hardening_skip_rules(baseline_id: str, reconciliation: dict, oses_in
 
     if baseline_id in ("none", "baseline-controls"):
         for c in reconciliation.get("excluded_controls", []):
-            notes.append(f"vuln '{c['vuln']}': baseline '{baseline_id}' runs no ansible-lockdown role, so no skip_rule applies — the toggle exclusion alone (pf_controls not applying it) is what preserves this gap.")
+            notes.append(
+                f"vuln '{c['vuln']}': baseline '{baseline_id}' runs no ansible-lockdown role, so no skip_rule applies — the toggle exclusion alone (pf_controls not applying it) is what preserves this gap."
+            )
         return skip_rules, notes
 
     control_rules = load_control_cis_rules()
@@ -1385,7 +1435,9 @@ def resolve_hardening_skip_rules(baseline_id: str, reconciliation: dict, oses_in
             continue
         mapping = control_rules.get(control_name)
         if not mapping:
-            notes.append(f"control '{control_name}' excluded, but no control-cis-rules.yml entry exists for it — no skip_rule derived.")
+            notes.append(
+                f"control '{control_name}' excluded, but no control-cis-rules.yml entry exists for it — no skip_rule derived."
+            )
             continue
         for os_ in oses_in_scope:
             os_map = mapping.get(os_)
@@ -1429,11 +1481,25 @@ def plan_hardening(machines: list[dict], resolved_defense: dict, reconciliation:
             continue
         roles_present = {m["role"] for m in target_machines if m["os"] == os_}
         tags = sorted({t for r in roles_present for t in baseline["tags_by_role"].get(r, [])})
-        groups.append({"os": os_, "role_name": role_name, "hosts": hosts, "tags": tags, "skip_rule_vars": skip_rules_by_os.get(os_, [])})
+        groups.append(
+            {
+                "os": os_,
+                "role_name": role_name,
+                "hosts": hosts,
+                "tags": tags,
+                "skip_rule_vars": skip_rules_by_os.get(os_, []),
+            }
+        )
 
     if errors:
         raise SpecError("hardening plan errors:\n" + "\n".join(f"  - {e}" for e in errors))
-    return {"baseline": baseline_id, "engine": baseline["engine"], "apply_to": sorted(apply_to), "groups": groups, "notes": notes}
+    return {
+        "baseline": baseline_id,
+        "engine": baseline["engine"],
+        "apply_to": sorted(apply_to),
+        "groups": groups,
+        "notes": notes,
+    }
 
 
 def plan_edr(resolved_defense: dict, machines: list[dict]) -> list[dict]:
@@ -1446,16 +1512,45 @@ def plan_edr(resolved_defense: dict, machines: list[dict]) -> list[dict]:
         target_hosts = [m["name"] for m in machines if m["role"] in targets]
 
         if not catalog_entry:
-            plans.append({"product": product, "mode": entry["mode"], "targets": target_hosts, "status": "not-implemented", "reason": f"no catalog/defense/edr/{product}.yml entry found"})
+            plans.append(
+                {
+                    "product": product,
+                    "mode": entry["mode"],
+                    "targets": target_hosts,
+                    "status": "not-implemented",
+                    "reason": f"no catalog/defense/edr/{product}.yml entry found",
+                }
+            )
         elif catalog_entry.get("backend_required"):
-            plans.append({
-                "product": product, "mode": entry["mode"], "targets": target_hosts, "status": "not-implemented",
-                "reason": f"'{product}' needs a management backend this project does not build (PREVENT/RESPOND only) — recorded, not silently skipped.",
-            })
+            plans.append(
+                {
+                    "product": product,
+                    "mode": entry["mode"],
+                    "targets": target_hosts,
+                    "status": "not-implemented",
+                    "reason": f"'{product}' needs a management backend this project does not build (PREVENT/RESPOND only) — recorded, not silently skipped.",
+                }
+            )
         elif product == "defender-av":
-            plans.append({"product": product, "mode": entry["mode"], "targets": target_hosts, "status": "implemented", "settings": entry.get("settings", {})})
+            plans.append(
+                {
+                    "product": product,
+                    "mode": entry["mode"],
+                    "targets": target_hosts,
+                    "status": "implemented",
+                    "settings": entry.get("settings", {}),
+                }
+            )
         else:
-            plans.append({"product": product, "mode": entry["mode"], "targets": target_hosts, "status": "not-implemented", "reason": "no implementation wired for this product yet"})
+            plans.append(
+                {
+                    "product": product,
+                    "mode": entry["mode"],
+                    "targets": target_hosts,
+                    "status": "not-implemented",
+                    "reason": "no implementation wired for this product yet",
+                }
+            )
     return plans
 
 
@@ -1483,8 +1578,13 @@ def yaml_scalar(value) -> str:
 
 
 def render_defensive_controls(
-    hardening_plan: dict, edr_plan: list[dict], deception_plan: dict, machines: list[dict],
-    resolved_defense: dict, ansible_groups: dict[str, list[dict]], out_dir: Path
+    hardening_plan: dict,
+    edr_plan: list[dict],
+    deception_plan: dict,
+    machines: list[dict],
+    resolved_defense: dict,
+    ansible_groups: dict[str, list[dict]],
+    out_dir: Path,
 ) -> None:
     dst = out_dir / "ansible"
     (dst / "playbooks").mkdir(parents=True, exist_ok=True)
@@ -1507,12 +1607,14 @@ def render_defensive_controls(
     for e in edr_plan:
         if e["status"] != "implemented":
             continue
-        edr_implemented.append({
-            "product": e["product"],
-            "mode": e["mode"],
-            "targets": e["targets"],
-            "settings": [(k, yaml_scalar(v)) for k, v in e.get("settings", {}).items()],
-        })
+        edr_implemented.append(
+            {
+                "product": e["product"],
+                "mode": e["mode"],
+                "targets": e["targets"],
+                "settings": [(k, yaml_scalar(v)) for k, v in e.get("settings", {}).items()],
+            }
+        )
 
     controls_rendered = {
         "laps": yaml_scalar(controls.get("laps", False)),
@@ -1561,7 +1663,9 @@ def render_ansible(
 
     groups = build_ansible_groups(spec, machines, admin_password)
 
-    template = jinja2.Template((src / "inventory" / "hosts.yml.j2").read_text(encoding="utf-8"), keep_trailing_newline=True)
+    template = jinja2.Template(
+        (src / "inventory" / "hosts.yml.j2").read_text(encoding="utf-8"), keep_trailing_newline=True
+    )
     rendered = template.render(
         lab_name=spec["lab"]["name"],
         ansible_password=ansible_password,
@@ -1585,7 +1689,10 @@ def run_terraform_plan(tf_dir: Path) -> int:
     before returning, so a real deploy can never accidentally inherit it."""
     terraform_bin = shutil.which("terraform")
     if not terraform_bin:
-        print("warning: terraform not found on PATH; skipping plan (install terraform to exercise this step).", file=sys.stderr)
+        print(
+            "warning: terraform not found on PATH; skipping plan (install terraform to exercise this step).",
+            file=sys.stderr,
+        )
         return 0
 
     override_path = tf_dir / "override.tf"
@@ -1612,6 +1719,7 @@ def run_terraform_plan(tf_dir: Path) -> int:
 # Azure directly for that resource group after destroy, rather than trusting
 # Terraform's own state was complete or that nothing was created out-of-band.
 # ---------------------------------------------------------------------------
+
 
 def verify_azure_teardown(lab_name: str) -> bool:
     """Returns True unless we have positive evidence the resource group is
@@ -1651,7 +1759,9 @@ def verify_azure_teardown(lab_name: str) -> bool:
     url = f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{lab_name}?api-version=2021-04-01"
     result = subprocess.run([az_bin, "rest", "--method", "get", "--url", url], capture_output=True, text=True)
     if result.returncode == 0:
-        print(f"WARNING: resource group '{lab_name}' still exists after destroy — remaining resources:", file=sys.stderr)
+        print(
+            f"WARNING: resource group '{lab_name}' still exists after destroy — remaining resources:", file=sys.stderr
+        )
         subprocess.run([az_bin, "resource", "list", "--resource-group", lab_name, "-o", "table"])
         return False
 
@@ -1678,6 +1788,7 @@ def verify_azure_teardown(lab_name: str) -> bool:
 # either the script directly or this subcommand — both do the same thing.
 # ---------------------------------------------------------------------------
 
+
 def _run_self(subcommand: list[str]) -> int:
     """Invoke this same forge.py as a subprocess (reuse a full command, e.g. the
     guardrail gate, without refactoring it into a callable that fakes argparse)."""
@@ -1696,15 +1807,20 @@ def cmd_deploy(args: argparse.Namespace) -> int:
     deploy_sh = lab_dir / "deploy.sh"
 
     if not manifest_path.exists() or not deploy_sh.exists():
-        print(f"error: {lab_dir} has no lab-manifest.json / deploy.sh — run "
-              f"`forge.py generate {args.spec}` first.", file=sys.stderr)
+        print(
+            f"error: {lab_dir} has no lab-manifest.json / deploy.sh — run `forge.py generate {args.spec}` first.",
+            file=sys.stderr,
+        )
         return 2
 
     if not args.skip_guardrail:
         print("=== guardrail gate (invariants must PASS before any cloud spend) ===")
         if _run_self(["guardrail", str(spec_path), *(["--out-dir", str(lab_dir)] if args.out_dir else [])]) != 0:
-            print("FAIL: guardrail did not pass — refusing to deploy. Fix the spec, or "
-                  "re-run with --skip-guardrail (not recommended).", file=sys.stderr)
+            print(
+                "FAIL: guardrail did not pass — refusing to deploy. Fix the spec, or "
+                "re-run with --skip-guardrail (not recommended).",
+                file=sys.stderr,
+            )
             return 1
 
     print(f"\n=== DEPLOY {lab_name} — this creates BILLABLE Azure resources ===")
@@ -1722,8 +1838,11 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
     teardown_sh = lab_dir / "teardown.sh"
     if not teardown_sh.exists():
-        print(f"warning: {teardown_sh} not found — falling back to `forge.py destroy` "
-              f"(no VM-start / snapshot-sweep gotcha handling).", file=sys.stderr)
+        print(
+            f"warning: {teardown_sh} not found — falling back to `forge.py destroy` "
+            f"(no VM-start / snapshot-sweep gotcha handling).",
+            file=sys.stderr,
+        )
         return _run_self(["destroy", str(spec_path), "--yes", *(["--out-dir", str(lab_dir)] if args.out_dir else [])])
     print(f"=== TEARDOWN {lab_name} — destroy to cost-zero + verify ===")
     return subprocess.run(["bash", str(teardown_sh)]).returncode
@@ -1739,7 +1858,10 @@ def cmd_destroy(args: argparse.Namespace) -> int:
     lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
     tf_root = lab_dir / "terraform"
     if not tf_root.exists():
-        print(f"error: no terraform/ directory found under {lab_dir} (nothing generated, or already destroyed?)", file=sys.stderr)
+        print(
+            f"error: no terraform/ directory found under {lab_dir} (nothing generated, or already destroyed?)",
+            file=sys.stderr,
+        )
         return 2
     provider_dirs = sorted(d for d in tf_root.iterdir() if d.is_dir())
     if not provider_dirs:
@@ -1761,7 +1883,10 @@ def cmd_destroy(args: argparse.Namespace) -> int:
         if backend_hcl.exists():
             init_cmd.append(f"-backend-config={backend_hcl.name}")
         else:
-            print(f"  warning: no {backend_hcl.name} in {provider_dir}; assuming already initialized against the right backend.", file=sys.stderr)
+            print(
+                f"  warning: no {backend_hcl.name} in {provider_dir}; assuming already initialized against the right backend.",
+                file=sys.stderr,
+            )
         print(f"  $ {' '.join(init_cmd)}")
         if subprocess.run(init_cmd).returncode != 0:
             overall_ok = False
@@ -1825,7 +1950,7 @@ VULN_CREDENTIAL_VARS = {
     "adminsdholder-acl": ("vuln_adminsdholder_account", "vuln_adminsdholder_password"),
     "readable-gmsa": ("vuln_gmsa_reader_account", "vuln_gmsa_reader_password"),
     "esc4-template-acl": ("vuln_esc4_account", "vuln_esc4_password"),
-    "mssql-weak-sa": (None, "vuln_mssql_sa_password"),   # sa is a fixed SQL login, not a cast AD account
+    "mssql-weak-sa": (None, "vuln_mssql_sa_password"),  # sa is a fixed SQL login, not a cast AD account
 }
 
 VULN_CREDENTIAL_NOTES = {
@@ -1849,7 +1974,7 @@ def describe_vuln_credentials(vid: str, vvars: dict) -> str:
         account_key, password_key = entry
         password = vvars.get(password_key, "?")
         if account_key is None:
-            return f"`sa` / `{password}`"   # fixed SQL login, not a cast AD account
+            return f"`sa` / `{password}`"  # fixed SQL login, not a cast AD account
         account = vvars.get(account_key, "?")
         return f"`{account}` / `{password}`"
     return VULN_CREDENTIAL_NOTES.get(vid, "—")
@@ -1881,7 +2006,9 @@ def render_lab_report(
     # the DSRM/safe-mode password win_domain/win_domain_controller separately
     # accept), so there is only the one password to report here, not a
     # distinct per-domain secret from domain_passwords.
-    domain_admin_rows = [{"domain": d["domain"], "username": "Administrator", "password": admin_password} for d in spec["forest"]]
+    domain_admin_rows = [
+        {"domain": d["domain"], "username": "Administrator", "password": admin_password} for d in spec["forest"]
+    ]
 
     vuln_rows = [
         {
@@ -1971,7 +2098,9 @@ def resolve_defender_av_expected(mode: str, settings: dict) -> dict:
     return {
         "asr_action": settings.get("asr_rules") or ("block" if mode == "prevent" else "audit"),
         "tamper_enabled": settings["tamper_protection"] if "tamper_protection" in settings else (mode == "prevent"),
-        "network_protection_enabled": settings["network_protection"] if "network_protection" in settings else (mode != "detect"),
+        "network_protection_enabled": settings["network_protection"]
+        if "network_protection" in settings
+        else (mode != "detect"),
     }
 
 
@@ -2057,7 +2186,9 @@ def cmd_lab_spec(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = out_dir / "lab-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"  wrote {manifest_path.relative_to(REPO_ROOT) if manifest_path.is_relative_to(REPO_ROOT) else manifest_path}")
+    print(
+        f"  wrote {manifest_path.relative_to(REPO_ROOT) if manifest_path.is_relative_to(REPO_ROOT) else manifest_path}"
+    )
     return 0
 
 
@@ -2100,13 +2231,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     ansible_password = generate_password()
 
     if provider == "proxmox":
-        render_proxmox_terraform(
-            network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
-        )
+        render_proxmox_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
     else:
-        render_azure_terraform(
-            network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"]
-        )
+        render_azure_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
     theme = load_theme(spec["lab"]["theme"])
     ansible_groups = render_ansible(spec, machines, admin_password, ansible_password, out_dir)
     population_plans = render_ad_population(theme, spec, ansible_groups, out_dir)
@@ -2125,7 +2252,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     hardening_plan = plan_hardening(machines, resolved_defense, reconciliation)
     edr_plan = plan_edr(resolved_defense, machines)
     deception_plan = plan_deception(resolved_defense, theme, ansible_groups)
-    render_defensive_controls(hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir)
+    render_defensive_controls(
+        hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir
+    )
     render_site_playbook(bool(planned_vulns), bool(service_hosts.get("mssql")), out_dir)
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
@@ -2145,44 +2274,83 @@ def cmd_generate(args: argparse.Namespace) -> int:
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     render_lab_report(
-        spec, manifest, machines, network_plan, ansible_groups, theme,
-        admin_password, ansible_password, planned_vulns,
-        hardening_plan, edr_plan, deception_plan, out_dir,
+        spec,
+        manifest,
+        machines,
+        network_plan,
+        ansible_groups,
+        theme,
+        admin_password,
+        ansible_password,
+        planned_vulns,
+        hardening_plan,
+        edr_plan,
+        deception_plan,
+        out_dir,
     )
     render_verify_playbook(
-        machines, ansible_groups, theme, hardening_plan,
-        resolved_defense["hardening"].get("controls", {}), edr_plan, planned_vulns, population_plans, out_dir,
+        machines,
+        ansible_groups,
+        theme,
+        hardening_plan,
+        resolved_defense["hardening"].get("controls", {}),
+        edr_plan,
+        planned_vulns,
+        population_plans,
+        out_dir,
     )
 
-    print(f"OK: generated {spec_path.name} -> {out_dir.relative_to(REPO_ROOT) if out_dir.is_relative_to(REPO_ROOT) else out_dir}")
+    print(
+        f"OK: generated {spec_path.name} -> {out_dir.relative_to(REPO_ROOT) if out_dir.is_relative_to(REPO_ROOT) else out_dir}"
+    )
     print(f"  wrote {manifest_path.name} (gitignored — has secrets)")
     print("  wrote lab-report.md (contains generated secrets — gitignored, never commit)")
     print("  wrote ansible/playbooks/verify.yml (post-deploy check, run separately after site.yml — see README)")
-    print(f"  wrote terraform/{provider}/ (secret-free & shareable; strong secrets isolated in the gitignored secrets.auto.tfvars.json)")
-    print("  wrote ansible/ (hosts.yml + ad-population.yml secret-free; population passwords fixed at creation in the COMMITTED group_vars/all/population-secrets.yml; infra keys in the gitignored group_vars/all/secrets.yml)")
-    print("  wrote secrets-manifest.json (committed — lists the INFRA secrets deploy.sh mints if absent; population passwords are never minted at deploy)")
+    print(
+        f"  wrote terraform/{provider}/ (secret-free & shareable; strong secrets isolated in the gitignored secrets.auto.tfvars.json)"
+    )
+    print(
+        "  wrote ansible/ (hosts.yml + ad-population.yml secret-free; population passwords fixed at creation in the COMMITTED group_vars/all/population-secrets.yml; infra keys in the gitignored group_vars/all/secrets.yml)"
+    )
+    print(
+        "  wrote secrets-manifest.json (committed — lists the INFRA secrets deploy.sh mints if absent; population passwords are never minted at deploy)"
+    )
     total_users = sum(len(p["users"]) for p in population_plans)
     total_groups = sum(len(p["groups"]) for p in population_plans)
     total_computers = sum(len(p["computers"]) for p in population_plans)
-    print(f"  wrote ansible/playbooks/ad-population.yml (theme '{theme['id']}', {total_users} users / {total_groups} groups / {total_computers} computers, deterministic — no BadBlood)")
+    print(
+        f"  wrote ansible/playbooks/ad-population.yml (theme '{theme['id']}', {total_users} users / {total_groups} groups / {total_computers} computers, deterministic — no BadBlood)"
+    )
     if service_hosts.get("mssql"):
-        print(f"  wrote ansible/playbooks/service-provisioning.yml (mssql -> {', '.join(service_hosts['mssql'])}, secure baseline: sa disabled/Windows-auth only/xp_cmdshell off)")
+        print(
+            f"  wrote ansible/playbooks/service-provisioning.yml (mssql -> {', '.join(service_hosts['mssql'])}, secure baseline: sa disabled/Windows-auth only/xp_cmdshell off)"
+        )
     if attack_chain["mode"] == "ctf":
-        print(f"  attack_chain: ctf mode — {len(attack_chain['steps'])} vuln(s) cast onto real population objects, {len(attack_chain.get('chained', []))} chained")
+        print(
+            f"  attack_chain: ctf mode — {len(attack_chain['steps'])} vuln(s) cast onto real population objects, {len(attack_chain.get('chained', []))} chained"
+        )
     if planned_vulns:
         print(f"  wrote ansible/playbooks/vuln-injection.yml + ansible/vulns/ ({len(planned_vulns)} vuln(s))")
         for v in planned_vulns:
             print(f"      - {v['id']} -> {v['run_on']}  [{v['neutralization'].split(' (')[0]}]")
-    print(f"  wrote ansible/playbooks/defensive-controls.yml (baseline: {hardening_plan['baseline']}, {len(hardening_plan.get('groups', []))} OS group(s))")
+    print(
+        f"  wrote ansible/playbooks/defensive-controls.yml (baseline: {hardening_plan['baseline']}, {len(hardening_plan.get('groups', []))} OS group(s))"
+    )
     for n in hardening_plan.get("notes", []):
         print(f"      note: {n}")
     for e in edr_plan:
         if e["status"] != "implemented":
             print(f"      note: edr '{e['product']}' — {e['reason']}")
-    print("  wrote ansible/playbooks/site.yml (run this, not the individual playbooks — enforces hardening-before-vulns)")
-    print("  wrote deploy.sh + teardown.sh (deterministic no-AI deploy/teardown — run directly or via `forge.py deploy`/`teardown`)")
+    print(
+        "  wrote ansible/playbooks/site.yml (run this, not the individual playbooks — enforces hardening-before-vulns)"
+    )
+    print(
+        "  wrote deploy.sh + teardown.sh (deterministic no-AI deploy/teardown — run directly or via `forge.py deploy`/`teardown`)"
+    )
     if provider == "proxmox":
-        print(f"  NOTE: provider 'proxmox' — before deploy, fill terraform/proxmox/host.auto.tfvars.json (see host.auto.tfvars.example.json) and export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN. Windows templates now only need cloudbase-init (with UserDataPlugin enabled) baked in — WinRM + the `ansible` admin are bootstrapped at first boot via cloudbase-init user-data (terraform/proxmox/cloudinit/windows-bootstrap.ps1.tpl).")
+        print(
+            "  NOTE: provider 'proxmox' — before deploy, fill terraform/proxmox/host.auto.tfvars.json (see host.auto.tfvars.example.json) and export PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN. Windows templates now only need cloudbase-init (with UserDataPlugin enabled) baked in — WinRM + the `ansible` admin are bootstrapped at first boot via cloudbase-init user-data (terraform/proxmox/cloudinit/windows-bootstrap.ps1.tpl)."
+        )
 
     if args.plan:
         return run_terraform_plan(out_dir / "terraform" / provider)
@@ -2203,6 +2371,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 # for the hash dump — rather than guessing anything from the spec.
 # ---------------------------------------------------------------------------
 
+
 def query_ad_inventory(dc_ip: str, domain: str, admin_user: str, admin_password: str) -> dict:
     from ldap3 import ALL, SIMPLE, SUBTREE, Connection, Server
 
@@ -2217,29 +2386,35 @@ def query_ad_inventory(dc_ip: str, domain: str, admin_user: str, admin_password:
         return dn.split(",", 1)[0].split("=", 1)[1]
 
     conn.search(
-        base_dn, "(&(objectClass=user)(objectCategory=person))", SUBTREE,
+        base_dn,
+        "(&(objectClass=user)(objectCategory=person))",
+        SUBTREE,
         attributes=["sAMAccountName", "userAccountControl", "memberOf", "description"],
     )
     users = []
     for e in conn.entries:
         uac = int(e.userAccountControl.value)
         member_of = [dn_to_name(dn) for dn in e.memberOf.values] if "memberOf" in e else []
-        users.append({
-            "username": str(e.sAMAccountName),
-            "enabled": not (uac & 2),  # ADS_UF_ACCOUNTDISABLE
-            "description": str(e.description) if "description" in e and e.description else "",
-            "groups": sorted(member_of),
-        })
+        users.append(
+            {
+                "username": str(e.sAMAccountName),
+                "enabled": not (uac & 2),  # ADS_UF_ACCOUNTDISABLE
+                "description": str(e.description) if "description" in e and e.description else "",
+                "groups": sorted(member_of),
+            }
+        )
 
     conn.search(base_dn, "(objectClass=group)", SUBTREE, attributes=["sAMAccountName", "description", "member"])
     groups = []
     for e in conn.entries:
         members = [dn_to_name(dn) for dn in e.member.values] if "member" in e else []
-        groups.append({
-            "name": str(e.sAMAccountName),
-            "description": str(e.description) if "description" in e and e.description else "",
-            "members": sorted(members),
-        })
+        groups.append(
+            {
+                "name": str(e.sAMAccountName),
+                "description": str(e.description) if "description" in e and e.description else "",
+                "members": sorted(members),
+            }
+        )
     conn.unbind()
 
     hashes: dict[str, dict] = {}
@@ -2247,7 +2422,9 @@ def query_ad_inventory(dc_ip: str, domain: str, admin_user: str, admin_password:
     if nxc_bin:
         result = subprocess.run(
             [nxc_bin, "smb", dc_ip, "-d", domain, "-u", admin_user, "-p", admin_password, "--ntds", "drsuapi"],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         # nxc's own line format: "SMB   <ip>   445   <hostname>   <domain\>user:rid:lmhash:nthash:::"
         for line in result.stdout.splitlines():
@@ -2270,7 +2447,10 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
     inventory_path = lab_dir / "ansible" / "inventory" / "hosts.yml"
     manifest_path = lab_dir / "lab-manifest.json"
     if not inventory_path.exists() or not manifest_path.exists():
-        print(f"error: {lab_dir} has no generated inventory/manifest — run `generate` (and deploy) first.", file=sys.stderr)
+        print(
+            f"error: {lab_dir} has no generated inventory/manifest — run `generate` (and deploy) first.",
+            file=sys.stderr,
+        )
         return 2
 
     inventory = load_yaml(inventory_path)
@@ -2335,7 +2515,10 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
     live_names = {u["username"] for u in data["users"]}
     missing = planned_names - live_names
     if planned_names and missing:
-        print(f"warning: {len(missing)} of {len(planned_names)} planned population users were NOT found live — ad-population.yml may not have completed.", file=sys.stderr)
+        print(
+            f"warning: {len(missing)} of {len(planned_names)} planned population users were NOT found live — ad-population.yml may not have completed.",
+            file=sys.stderr,
+        )
 
     template = jinja2.Template(
         (TEMPLATES_DIR / "ad-inventory.md.j2").read_text(encoding="utf-8"), keep_trailing_newline=True
@@ -2351,7 +2534,9 @@ def cmd_ad_inventory(args: argparse.Namespace) -> int:
     )
     out_path = lab_dir / "ad-inventory.md"
     out_path.write_text(rendered, encoding="utf-8")
-    print(f"OK: wrote {out_path} ({len(data['users'])} users, {len(data['groups'])} groups, {len(data['hashes'])} NT hashes)")
+    print(
+        f"OK: wrote {out_path} ({len(data['users'])} users, {len(data['groups'])} groups, {len(data['hashes'])} NT hashes)"
+    )
     return 0
 
 
@@ -2387,10 +2572,16 @@ ROAST_FLAGS = {
 # LANDED (APPLIED); actually abusing it stays a human step (EXPLOITABLE).
 LDAP_APPLIED_FILTERS = {
     "readable-gmsa": ("(objectClass=msDS-GroupManagedServiceAccount)", "gMSA object present"),
-    "unconstrained-delegation": ("(&(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=8192)))", "non-DC principal trusted for unconstrained delegation"),
+    "unconstrained-delegation": (
+        "(&(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=8192)))",
+        "non-DC principal trusted for unconstrained delegation",
+    ),
     "constrained-delegation": ("(msDS-AllowedToDelegateTo=*)", "msDS-AllowedToDelegateTo set"),
     "shadow-credentials": ("(msDS-KeyCredentialLink=*)", "msDS-KeyCredentialLink set"),
-    "rbcd-abuse": ("(msDS-AllowedToActOnBehalfOfOtherIdentity=*)", "RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity) set"),
+    "rbcd-abuse": (
+        "(msDS-AllowedToActOnBehalfOfOtherIdentity=*)",
+        "RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity) set",
+    ),
 }
 
 # vuln id -> PowerShell one-shot check executed over WinRM (nxc/netexec winrm -X),
@@ -2451,7 +2642,7 @@ WINRM_APPLIED_CHECKS = {
     "adminsdholder-acl": (
         "Import-Module ActiveDirectory; "
         "$dn = (Get-ADDomain).DistinguishedName; "
-        "$acl = Get-Acl (\"AD:\\CN=AdminSDHolder,CN=System,\" + $dn); "
+        '$acl = Get-Acl ("AD:\\CN=AdminSDHolder,CN=System," + $dn); '
         "$hasAce = [bool]($acl.Access | Where-Object { $_.IdentityReference -match '__ACCOUNT__' -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll }); "
         "Write-Output ('PF_CHECK:' + $hasAce)"
     ),
@@ -2481,7 +2672,9 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
         if secrets_path.exists():
             admin_pass = json.loads(secrets_path.read_text(encoding="utf-8")).get("admin_password")
     if not admin_pass:
-        raise SpecError("no admin_password in terraform.tfvars.json or secrets.auto.tfvars.json — deploy the lab first (secrets are minted at deploy).")
+        raise SpecError(
+            "no admin_password in terraform.tfvars.json or secrets.auto.tfvars.json — deploy the lab first (secrets are minted at deploy)."
+        )
     admin_user = "Administrator"  # the domain's RID-500, not the local admin_username
 
     machines = manifest.get("machines_flat", [])
@@ -2511,60 +2704,114 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
             row["applied"] = row["exploitable"] = "PENDING"
         elif vid in ROAST_FLAGS:
             flag, label = ROAST_FLAGS[vid]
-            out = _nxc_run([nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, flag, "--kdcHost", dc_ip])
+            out = _nxc_run(
+                [nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, flag, "--kdcHost", dc_ip]
+            )
             got_hash = out is not None and ("$krb5" in out)
             if got_hash:
                 row.update(applied="YES", exploitable="YES", evidence=f"nxc returned a {label}.")
             elif out is None:
-                row.update(applied="PENDING", exploitable="PENDING", evidence="nxc did not run (missing/timeout) — retry the command below.")
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence="nxc did not run (missing/timeout) — retry the command below.",
+                )
             else:
-                row.update(applied="NO", exploitable="NO", evidence=f"nxc {flag} returned no hash (KDC_ERR_ETYPE_NOSUPP? — see AZURE-DEPLOY-RUNBOOK.md step 7).")
+                row.update(
+                    applied="NO",
+                    exploitable="NO",
+                    evidence=f"nxc {flag} returned no hash (KDC_ERR_ETYPE_NOSUPP? — see AZURE-DEPLOY-RUNBOOK.md step 7).",
+                )
         elif vid in LDAP_APPLIED_FILTERS:
             filt, label = LDAP_APPLIED_FILTERS[vid]
             out = _nxc_run([nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, "--query", filt, ""])
             if out is None:
-                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence="nxc did not run — retry the command below.")
+                row.update(
+                    applied="PENDING",
+                    exploitable="REQUIRES-HUMAN",
+                    evidence="nxc did not run — retry the command below.",
+                )
             elif _nxc_query_nonempty(out):
-                row.update(applied="YES", exploitable="REQUIRES-HUMAN", evidence=f"LDAP confirms {label}; exploit it manually (command below).")
+                row.update(
+                    applied="YES",
+                    exploitable="REQUIRES-HUMAN",
+                    evidence=f"LDAP confirms {label}; exploit it manually (command below).",
+                )
             else:
-                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence=f"LDAP query for {label} returned nothing parseable — confirm by hand.")
+                row.update(
+                    applied="PENDING",
+                    exploitable="REQUIRES-HUMAN",
+                    evidence=f"LDAP query for {label} returned nothing parseable — confirm by hand.",
+                )
         elif vid in WINRM_APPLIED_CHECKS:
             target_ip = host.get("ip")
             if not target_ip:
-                row.update(applied="PENDING", exploitable="REQUIRES-HUMAN", evidence=f"no IP for host {r['run_on']!r} in the manifest.")
+                row.update(
+                    applied="PENDING",
+                    exploitable="REQUIRES-HUMAN",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
             else:
                 script = WINRM_APPLIED_CHECKS[vid].replace("__ACCOUNT__", r.get("account") or "")
                 out = _winrm_run(nxc, target_ip, admin_user, admin_pass, script)
                 result = _winrm_check_result(out or "")
                 if result is True:
-                    row.update(applied="YES", exploitable="REQUIRES-HUMAN",
-                               evidence=f"WinRM check on {r['run_on']} ({target_ip}) confirms the artifact is present; exploit it manually (command below).")
+                    row.update(
+                        applied="YES",
+                        exploitable="REQUIRES-HUMAN",
+                        evidence=f"WinRM check on {r['run_on']} ({target_ip}) confirms the artifact is present; exploit it manually (command below).",
+                    )
                 elif result is False:
-                    row.update(applied="NO", exploitable="NO",
-                               evidence=f"WinRM check on {r['run_on']} ({target_ip}) found the artifact absent or not matching.")
+                    row.update(
+                        applied="NO",
+                        exploitable="NO",
+                        evidence=f"WinRM check on {r['run_on']} ({target_ip}) found the artifact absent or not matching.",
+                    )
                 else:
-                    row.update(applied="PENDING", exploitable="REQUIRES-HUMAN",
-                               evidence="WinRM check did not run (auth/timeout/unreachable) — retry the command below.")
+                    row.update(
+                        applied="PENDING",
+                        exploitable="REQUIRES-HUMAN",
+                        evidence="WinRM check did not run (auth/timeout/unreachable) — retry the command below.",
+                    )
         elif vid == "mssql-weak-sa":
             target_ip = host.get("ip")
             sa_password = r.get("password")
             if not target_ip or not sa_password:
-                row.update(applied="PENDING", exploitable="PENDING", evidence="missing host IP or sa password in the manifest.")
+                row.update(
+                    applied="PENDING", exploitable="PENDING", evidence="missing host IP or sa password in the manifest."
+                )
             else:
                 out = _nxc_run([nxc, "mssql", target_ip, "-u", "sa", "-p", sa_password, "--local-auth", "-x", "whoami"])
                 # nxc's mssql protocol authenticates as sa, THEN runs -x via xp_cmdshell —
                 # a returned "nt authority\..." line proves both sa auth AND xp_cmdshell exec.
                 if out is None:
-                    row.update(applied="PENDING", exploitable="PENDING", evidence="nxc did not run (missing/timeout) — retry the command below.")
+                    row.update(
+                        applied="PENDING",
+                        exploitable="PENDING",
+                        evidence="nxc did not run (missing/timeout) — retry the command below.",
+                    )
                 elif out and "nt authority" in out.lower():
-                    row.update(applied="YES", exploitable="YES", evidence="nxc authenticated as sa and ran `whoami` via xp_cmdshell.")
+                    row.update(
+                        applied="YES",
+                        exploitable="YES",
+                        evidence="nxc authenticated as sa and ran `whoami` via xp_cmdshell.",
+                    )
                 else:
-                    row.update(applied="NO", exploitable="NO", evidence="sa auth or xp_cmdshell execution failed — see nxc output; a control may have neutralized it.")
+                    row.update(
+                        applied="NO",
+                        exploitable="NO",
+                        evidence="sa auth or xp_cmdshell execution failed — see nxc output; a control may have neutralized it.",
+                    )
         else:
-            row.update(applied="REQUIRES-HUMAN", exploitable="REQUIRES-HUMAN",
-                       evidence="ACL/SYSVOL/registry state — confirm with the command below (bloodhound-python / nxc / dacledit).")
+            row.update(
+                applied="REQUIRES-HUMAN",
+                exploitable="REQUIRES-HUMAN",
+                evidence="ACL/SYSVOL/registry state — confirm with the command below (bloodhound-python / nxc / dacledit).",
+            )
 
-        row["command"] = _live_command(vid, dc_ip, domain, admin_user, host.get("ip"), r.get("account"), r.get("password"))
+        row["command"] = _live_command(
+            vid, dc_ip, domain, admin_user, host.get("ip"), r.get("account"), r.get("password")
+        )
         confirmed.append(row)
 
         if row["applied"] == "NO":
@@ -2572,7 +2819,9 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
         elif row["applied"] in ("PENDING", "REQUIRES-HUMAN"):
             findings.append(f"{vid}: needs a manual check — run: {row['command']}")
         elif row["exploitable"] == "NO":
-            findings.append(f"{vid}: applied but NOT exploitable — a control may have neutralized it ({row['evidence']}).")
+            findings.append(
+                f"{vid}: applied but NOT exploitable — a control may have neutralized it ({row['evidence']})."
+            )
 
     return confirmed, findings
 
@@ -2594,7 +2843,9 @@ def _winrm_run(nxc: str, host_ip: str, user: str, password: str, script: str) ->
     try:
         res = subprocess.run(
             [nxc, "winrm", host_ip, "-u", user, "-p", password, "-X", script],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
         return (res.stdout or "") + (res.stderr or "")
     except (subprocess.TimeoutExpired, OSError):
@@ -2623,8 +2874,13 @@ def _nxc_query_nonempty(out: str) -> bool:
 
 
 def _live_command(
-    vid: str, dc_ip: str, domain: str, admin_user: str,
-    target_ip: str | None = None, account: str | None = None, password: str | None = None,
+    vid: str,
+    dc_ip: str,
+    domain: str,
+    admin_user: str,
+    target_ip: str | None = None,
+    account: str | None = None,
+    password: str | None = None,
 ) -> str:
     """The exact copy-pasteable command an operator runs to confirm a vuln the
     harness can't safely auto-confirm. Uses <PASS> as a placeholder for the lab
@@ -2638,7 +2894,7 @@ def _live_command(
     if vid in ROAST_FLAGS:
         return f"{base} {ROAST_FLAGS[vid][0]} out --kdcHost {dc_ip}"
     if vid in LDAP_APPLIED_FILTERS:
-        return f"{base} --query \"{LDAP_APPLIED_FILTERS[vid][0]}\" \"\""
+        return f'{base} --query "{LDAP_APPLIED_FILTERS[vid][0]}" ""'
     if vid in WINRM_APPLIED_CHECKS:
         script = WINRM_APPLIED_CHECKS[vid].replace("__ACCOUNT__", account or "<account>")
         return f"nxc winrm {target_ip or '<host-ip>'} -u {admin_user} -p '<PASS>' -X \"{script}\""
@@ -2677,8 +2933,7 @@ def render_results_template(rows: list[dict]) -> dict:
     return {
         "_help": f"Per vuln set `applied` and `exploitable` to one of {list(VALID_RESULT)} from the live check, plus an `evidence` string. Then: forge.py validate <spec> --results <this file>.",
         "vulns": [
-            {"id": r["id"], "mitre": r["mitre"], "applied": None, "exploitable": None, "evidence": ""}
-            for r in rows
+            {"id": r["id"], "mitre": r["mitre"], "applied": None, "exploitable": None, "evidence": ""} for r in rows
         ],
     }
 
@@ -2702,11 +2957,15 @@ def merge_validation_results(rows: list[dict], results: dict) -> tuple[list[dict
             row[field] = val or "PENDING"
         row["evidence"] = res.get("evidence", "")
         if row["applied"] == "NO":
-            findings.append(f"{r['id']}: config NOT applied — injection did not land (expected artifact: {r['applied_signature']}).")
+            findings.append(
+                f"{r['id']}: config NOT applied — injection did not land (expected artifact: {r['applied_signature']})."
+            )
         elif row["applied"] == "PENDING":
             findings.append(f"{r['id']}: no live result recorded.")
         elif row["exploitable"] == "NO":
-            findings.append(f"{r['id']}: applied but NOT exploitable — a control may have neutralized it ({row['evidence'] or 'no evidence given'}).")
+            findings.append(
+                f"{r['id']}: applied but NOT exploitable — a control may have neutralized it ({row['evidence'] or 'no evidence given'})."
+            )
         confirmed.append(row)
     return confirmed, findings
 
@@ -2742,7 +3001,16 @@ def render_validation_report(lab_name: str, confirmed: list[dict], findings: lis
     report_path = lab_dir / "validation-report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
     (lab_dir / "validation-report.json").write_text(
-        json.dumps({"lab": lab_name, "summary": {"applied": applied_yes, "exploitable": exploit_yes, "total": n}, "findings": findings, "vulns": confirmed}, indent=2) + "\n",
+        json.dumps(
+            {
+                "lab": lab_name,
+                "summary": {"applied": applied_yes, "exploitable": exploit_yes, "total": n},
+                "findings": findings,
+                "vulns": confirmed,
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return report_path
@@ -2821,7 +3089,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     print(f"OK: wrote {lab_dir / 'validation-plan.json'}, validation-plan.md, validation-results.template.json")
     for r in rows:
-        print(f"    - {r['id']} [{r['mitre']}] on {r['run_on']}: applied? [{r['applied_signature']}]  exploitable? [{r['exploit_check']}]")
+        print(
+            f"    - {r['id']} [{r['mitre']}] on {r['run_on']}: applied? [{r['applied_signature']}]  exploitable? [{r['exploit_check']}]"
+        )
 
     # --run: do the live checks ourselves and write the confirmed report directly,
     # collapsing the fill-a-JSON-by-hand loop into one command.
@@ -2834,9 +3104,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
         report_path = render_validation_report(lab_name, confirmed, findings, lab_dir)
         applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
         exploit_yes = sum(1 for r in confirmed if r["exploitable"] == "YES")
-        need_human = sum(1 for r in confirmed if "REQUIRES-HUMAN" in (r["applied"], r["exploitable"]) or "PENDING" in (r["applied"], r["exploitable"]))
+        need_human = sum(
+            1
+            for r in confirmed
+            if "REQUIRES-HUMAN" in (r["applied"], r["exploitable"]) or "PENDING" in (r["applied"], r["exploitable"])
+        )
         print(f"OK: wrote {report_path} (live run)")
-        print(f"  auto-confirmed applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {need_human} need a manual command (listed in the report + findings)")
+        print(
+            f"  auto-confirmed applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {need_human} need a manual command (listed in the report + findings)"
+        )
         for r in confirmed:
             print(f"    - {r['id']}: applied={r['applied']} exploitable={r['exploitable']}")
         return 0
@@ -2856,7 +3132,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
         applied_yes = sum(1 for r in confirmed if r["applied"] == "YES")
         exploit_yes = sum(1 for r in confirmed if r["exploitable"] == "YES")
         print(f"OK: wrote {report_path} (confirmed)")
-        print(f"  applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {len(findings)} finding(s)")
+        print(
+            f"  applied: {applied_yes}/{len(confirmed)}, exploitable: {exploit_yes}/{len(confirmed)}; {len(findings)} finding(s)"
+        )
 
     return 0
 
@@ -2929,7 +3207,9 @@ def cmd_guardrail(args: argparse.Namespace) -> int:
         for backend in lab_dir.glob("terraform/*/backend.hcl"):
             text = backend.read_text(encoding="utf-8").lower()
             if "storage_account_name" not in text and "dynamodb" not in text and "bucket" not in text:
-                failures.append(f"#4 state: {backend} does not look like a remote backend (S3/DynamoDB or Azure Storage)")
+                failures.append(
+                    f"#4 state: {backend} does not look like a remote backend (S3/DynamoDB or Azure Storage)"
+                )
 
     print(f"guardrail — {lab_name}")
     if failures:
@@ -2937,15 +3217,21 @@ def cmd_guardrail(args: argparse.Namespace) -> int:
         for f in failures:
             print(f"  ✗ {f}")
     else:
-        print("PASS — all machine-checkable invariants hold (#1 isolation, #2 purple coupling, #3 reconciliation, #4 lifecycle/state)")
+        print(
+            "PASS — all machine-checkable invariants hold (#1 isolation, #2 purple coupling, #3 reconciliation, #4 lifecycle/state)"
+        )
     if provider == "proxmox":
-        print("REVIEW — #4 state: provider 'proxmox' uses a LOCAL Terraform backend by decision "
-              "(no on-prem cloud object store to mint per-deployer). Remote-state-with-locking is "
-              "relaxed for this provider — point terraform/proxmox/versions.tf at a pg/s3(MinIO)/http "
-              "backend if a shared state store exists.")
+        print(
+            "REVIEW — #4 state: provider 'proxmox' uses a LOCAL Terraform backend by decision "
+            "(no on-prem cloud object store to mint per-deployer). Remote-state-with-locking is "
+            "relaxed for this provider — point terraform/proxmox/versions.tf at a pg/s3(MinIO)/http "
+            "backend if a shared state store exists."
+        )
     # inv #6 is a judgement call, never auto-passed.
-    print("REVIEW — #6 authorized use: confirm this is an isolated lab for authorized "
-          "testing, not automation aimed at third-party/production systems. Human/LLM must judge; not machine-checked.")
+    print(
+        "REVIEW — #6 authorized use: confirm this is an isolated lab for authorized "
+        "testing, not automation aimed at third-party/production systems. Human/LLM must judge; not machine-checked."
+    )
     return 1 if failures else 0
 
 
@@ -2953,35 +3239,70 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="forge.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_lab_spec = sub.add_parser("lab-spec", help="Validate, resolve and reconcile a lab-spec.yml; emit lab-manifest.json")
+    p_lab_spec = sub.add_parser(
+        "lab-spec", help="Validate, resolve and reconcile a lab-spec.yml; emit lab-manifest.json"
+    )
     p_lab_spec.add_argument("spec", help="Path to a lab-spec YAML file")
-    p_lab_spec.add_argument("--check-only", action="store_true", help="Validate/reconcile but do not write lab-manifest.json")
+    p_lab_spec.add_argument(
+        "--check-only", action="store_true", help="Validate/reconcile but do not write lab-manifest.json"
+    )
     p_lab_spec.add_argument("--out-dir", help="Override output directory (default: generated/<lab.name>/)")
     p_lab_spec.set_defaults(func=cmd_lab_spec)
 
-    p_generate = sub.add_parser("generate", help="Render Terraform + Ansible artifacts for a lab-spec.yml into generated/<lab>/")
+    p_generate = sub.add_parser(
+        "generate", help="Render Terraform + Ansible artifacts for a lab-spec.yml into generated/<lab>/"
+    )
     p_generate.add_argument("spec", help="Path to a lab-spec YAML file")
     p_generate.add_argument("--out-dir", help="Override output directory (default: generated/<lab.name>/)")
-    p_generate.add_argument("--plan", action="store_true", help="Also run terraform init/validate/plan after rendering (needs terraform on PATH; needs cloud credentials for a full plan)")
+    p_generate.add_argument(
+        "--plan",
+        action="store_true",
+        help="Also run terraform init/validate/plan after rendering (needs terraform on PATH; needs cloud credentials for a full plan)",
+    )
     p_generate.set_defaults(func=cmd_generate)
 
-    p_deploy = sub.add_parser("deploy", help="Deterministic no-AI deploy: guardrail gate, then run the generated deploy.sh (state backend, auto-sizing, terraform apply, WireGuard, Ansible site.yml)")
+    p_deploy = sub.add_parser(
+        "deploy",
+        help="Deterministic no-AI deploy: guardrail gate, then run the generated deploy.sh (state backend, auto-sizing, terraform apply, WireGuard, Ansible site.yml)",
+    )
     p_deploy.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_deploy.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
-    p_deploy.add_argument("--skip-guardrail", action="store_true", help="Skip the pre-deploy guardrail gate (not recommended — it enforces the CLAUDE.md invariants before spend)")
-    p_deploy.add_argument("--sizes-only", action="store_true", help="Only (re)write sizes.auto.tfvars.json (auto-pick a cheap unrestricted SKU) and exit — no apply")
+    p_deploy.add_argument(
+        "--skip-guardrail",
+        action="store_true",
+        help="Skip the pre-deploy guardrail gate (not recommended — it enforces the CLAUDE.md invariants before spend)",
+    )
+    p_deploy.add_argument(
+        "--sizes-only",
+        action="store_true",
+        help="Only (re)write sizes.auto.tfvars.json (auto-pick a cheap unrestricted SKU) and exit — no apply",
+    )
     p_deploy.set_defaults(func=cmd_deploy)
 
-    p_teardown = sub.add_parser("teardown", help="Deterministic no-AI teardown: run the generated teardown.sh (start deallocated VMs, destroy, sweep stray snapshots, verify cost-zero, local cleanup)")
+    p_teardown = sub.add_parser(
+        "teardown",
+        help="Deterministic no-AI teardown: run the generated teardown.sh (start deallocated VMs, destroy, sweep stray snapshots, verify cost-zero, local cleanup)",
+    )
     p_teardown.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_teardown.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_teardown.set_defaults(func=cmd_teardown)
 
-    p_destroy = sub.add_parser("destroy", help="terraform destroy a generated lab + verify no Azure resource group is left behind (lower-level; `teardown` wraps this with the deallocated-VM/snapshot gotchas)")
+    p_destroy = sub.add_parser(
+        "destroy",
+        help="terraform destroy a generated lab + verify no Azure resource group is left behind (lower-level; `teardown` wraps this with the deallocated-VM/snapshot gotchas)",
+    )
     p_destroy.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_destroy.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
-    p_destroy.add_argument("--yes", action="store_true", help="Pass -auto-approve to terraform destroy (default: terraform's own interactive confirmation prompt)")
-    p_destroy.add_argument("--check-only", action="store_true", help="Run 'terraform plan -destroy' instead of actually destroying anything")
+    p_destroy.add_argument(
+        "--yes",
+        action="store_true",
+        help="Pass -auto-approve to terraform destroy (default: terraform's own interactive confirmation prompt)",
+    )
+    p_destroy.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Run 'terraform plan -destroy' instead of actually destroying anything",
+    )
     p_destroy.set_defaults(func=cmd_destroy)
 
     p_ad_inventory = sub.add_parser(
@@ -2989,7 +3310,9 @@ def main() -> int:
         help="Query a LIVE deployed lab's domain (LDAP + DCSync via nxc) and render generated/<lab>/ad-inventory.md: users, groups, NT hashes",
     )
     p_ad_inventory.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
-    p_ad_inventory.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_ad_inventory.add_argument(
+        "--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)"
+    )
     p_ad_inventory.set_defaults(func=cmd_ad_inventory)
 
     p_validate = sub.add_parser(
@@ -2998,8 +3321,15 @@ def main() -> int:
     )
     p_validate.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_validate.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
-    p_validate.add_argument("--results", help="Path to a filled validation-results JSON (from the live run); merges it into the confirmed validation-report.md")
-    p_validate.add_argument("--run", action="store_true", help="Run the live checks over the tunnel (nxc/netexec) and write validation-report.md directly — no by-hand JSON. Auto-confirms the roasting vulns; emits a ready-to-run command for the interactive ones.")
+    p_validate.add_argument(
+        "--results",
+        help="Path to a filled validation-results JSON (from the live run); merges it into the confirmed validation-report.md",
+    )
+    p_validate.add_argument(
+        "--run",
+        action="store_true",
+        help="Run the live checks over the tunnel (nxc/netexec) and write validation-report.md directly — no by-hand JSON. Auto-confirms the roasting vulns; emits a ready-to-run command for the interactive ones.",
+    )
     p_validate.set_defaults(func=cmd_validate)
 
     p_guardrail = sub.add_parser(

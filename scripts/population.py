@@ -32,6 +32,7 @@ built-in groups (BadBlood queries live AD for every isCriticalSystemObject
 group, which this offline generator can't do) rather than modeling AD's
 exact group-scope taxonomy.
 """
+
 from __future__ import annotations
 
 import random
@@ -56,9 +57,17 @@ _TIER_PREFIX = {"Tier 0": "T0", "Tier 1": "T1", "Tier 2": "T2"}
 # privileged built-ins) without needing to enumerate AD's full well-known-SID
 # list.
 BUILT_IN_PRIVILEGED_GROUPS = [
-    "Domain Admins", "Enterprise Admins", "Administrators", "Account Operators",
-    "Backup Operators", "Server Operators", "Print Operators", "DnsAdmins",
-    "Group Policy Creator Owners", "Remote Desktop Users", "Event Log Readers",
+    "Domain Admins",
+    "Enterprise Admins",
+    "Administrators",
+    "Account Operators",
+    "Backup Operators",
+    "Server Operators",
+    "Print Operators",
+    "DnsAdmins",
+    "Group Policy Creator Owners",
+    "Remote Desktop Users",
+    "Event Log Readers",
     "Cryptographic Operators",
 ]
 
@@ -90,9 +99,26 @@ _SERVER_TYPES = ("APPS", "WEBS", "DBAS", "SECS", "CTRX", "APPS")
 # as flavor text, not as real credentials. A small fixed list here achieves
 # the same "plausible-looking bulk group name" effect deterministically.
 _GROUP_NAME_WORDS = [
-    "reports", "backup", "sync", "portal", "gateway", "monitor", "cluster",
-    "archive", "staging", "pipeline", "queue", "cache", "registry", "vault",
-    "billing", "ledger", "intake", "export", "import", "audit",
+    "reports",
+    "backup",
+    "sync",
+    "portal",
+    "gateway",
+    "monitor",
+    "cluster",
+    "archive",
+    "staging",
+    "pipeline",
+    "queue",
+    "cache",
+    "registry",
+    "vault",
+    "billing",
+    "ledger",
+    "intake",
+    "export",
+    "import",
+    "audit",
 ]
 
 
@@ -178,23 +204,32 @@ def _generate_users(rng: random.Random, count: int, vocab: dict, ou_paths: list[
 
         password_in_desc = rng.randint(1, 1000) < 10  # BadBlood: ~1%
         password = generate_password(rng=rng)
-        description = f"Just so I dont forget my password is {password}" if password_in_desc else "Created by PurpleForge population generator."
+        description = (
+            f"Just so I dont forget my password is {password}"
+            if password_in_desc
+            else "Created by PurpleForge population generator."
+        )
 
-        users.append({
-            "name": sam,
-            "display_name": display,
-            "sam_account_name": sam,
-            "password": password,
-            "description": description,
-            "ou": rng.choice(ou_paths),  # BadBlood: flat-uniform across every OU, not weighted
-            "is_service_account": is_service,
-            "password_in_description": password_in_desc,
-            "asrep_roastable": rng.randint(1, 1000) < 50,  # BadBlood: ~5% (consolidated from its two redundant rolls)
-        })
+        users.append(
+            {
+                "name": sam,
+                "display_name": display,
+                "sam_account_name": sam,
+                "password": password,
+                "description": description,
+                "ou": rng.choice(ou_paths),  # BadBlood: flat-uniform across every OU, not weighted
+                "is_service_account": is_service,
+                "password_in_description": password_in_desc,
+                "asrep_roastable": rng.randint(1, 1000)
+                < 50,  # BadBlood: ~5% (consolidated from its two redundant rolls)
+            }
+        )
     return users
 
 
-def _generate_groups(rng: random.Random, count: int, ou_paths: list[str], user_names: list[str], extra_groups: list[dict]) -> list[dict]:
+def _generate_groups(
+    rng: random.Random, count: int, ou_paths: list[str], user_names: list[str], extra_groups: list[dict]
+) -> list[dict]:
     groups = []
     used_names: set[str] = set()
     for _ in range(count):
@@ -204,22 +239,26 @@ def _generate_groups(rng: random.Random, count: int, ou_paths: list[str], user_n
         function = "admingroup" if rng.randint(1, 100) <= 25 else "distlist"  # BadBlood: 25/75 split
         base = f"{prefix}-{word}-{function}"
         name = _dedupe_name(rng, base, used_names, max_len=64)
-        groups.append({
-            "name": name,
-            "ou": rng.choice(ou_paths),
-            "managed_by": owner,
-            "curated": False,
-            "description": f"Bulk population group (owner: {owner})" if owner else "Bulk population group.",
-        })
+        groups.append(
+            {
+                "name": name,
+                "ou": rng.choice(ou_paths),
+                "managed_by": owner,
+                "curated": False,
+                "description": f"Bulk population group (owner: {owner})" if owner else "Bulk population group.",
+            }
+        )
     for g in extra_groups:
         name = _dedupe_name(rng, g["name"], used_names, max_len=64)
-        groups.append({
-            "name": name,
-            "ou": None,  # curated groups sit at the domain root, matching today's ad_theming_overlay behavior
-            "managed_by": None,
-            "curated": True,
-            "description": g["description"],
-        })
+        groups.append(
+            {
+                "name": name,
+                "ou": None,  # curated groups sit at the domain root, matching today's ad_theming_overlay behavior
+                "managed_by": None,
+                "curated": True,
+                "description": g["description"],
+            }
+        )
     return groups
 
 
@@ -244,17 +283,21 @@ def _generate_computers(rng: random.Random, count: int, houses: list[dict], user
         n = counters.get(prefix, 1000000)
         counters[prefix] = n + 1
         name = f"{prefix}{n}"
-        computers.append({
-            "name": name,
-            "ou": ou,  # None means "caller picks a random OU from the tree"
-            "managed_by": rng.choice(user_names) if user_names else None,
-            "extra_spn": rng.randint(1, 100) <= 10,  # BadBlood: ~10%
-            "is_workstation": is_workstation,
-        })
+        computers.append(
+            {
+                "name": name,
+                "ou": ou,  # None means "caller picks a random OU from the tree"
+                "managed_by": rng.choice(user_names) if user_names else None,
+                "extra_spn": rng.randint(1, 100) <= 10,  # BadBlood: ~10%
+                "is_workstation": is_workstation,
+            }
+        )
     return computers
 
 
-def _generate_memberships(rng: random.Random, users: list[dict], groups: list[dict], computers: list[dict]) -> list[dict]:
+def _generate_memberships(
+    rng: random.Random, users: list[dict], groups: list[dict], computers: list[dict]
+) -> list[dict]:
     memberships: list[dict] = []
     user_names = [u["name"] for u in users]
     group_names = [g["name"] for g in groups]
@@ -311,7 +354,9 @@ def _generate_memberships(rng: random.Random, users: list[dict], groups: list[di
     return memberships
 
 
-def _generate_acl_noise(rng: random.Random, users: list[dict], groups: list[dict], computers: list[dict], ou_paths: list[str]) -> list[dict]:
+def _generate_acl_noise(
+    rng: random.Random, users: list[dict], groups: list[dict], computers: list[dict], ou_paths: list[str]
+) -> list[dict]:
     """BadBlood's GenerateRandomPermissions.ps1 — the only permission family
     its own apply-loop actually invokes is GenericAll, granted to a random
     sample of users/groups/computers, mostly on a random OU, occasionally at
@@ -374,7 +419,11 @@ def generate_population_plan(
             g["ou"] = domain_dn if g["curated"] else (rng.choice(full_ou_dns) if full_ou_dns else domain_dn)
 
     memberships = _generate_memberships(rng, users, groups, computers)
-    acl_noise = _generate_acl_noise(rng, users, groups, computers, full_ou_dns) if population.get("include_noise_acls", True) else []
+    acl_noise = (
+        _generate_acl_noise(rng, users, groups, computers, full_ou_dns)
+        if population.get("include_noise_acls", True)
+        else []
+    )
     for a in acl_noise:
         if a["target"] == "domain_root":
             a["target"] = domain_dn
