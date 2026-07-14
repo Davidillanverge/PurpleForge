@@ -32,6 +32,7 @@ import shutil
 import string
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2728,8 +2729,13 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
             row["applied"] = row["exploitable"] = "PENDING"
         elif vid in ROAST_FLAGS:
             flag, label = ROAST_FLAGS[vid]
+            # nxc's --asreproast/--kerberoasting REQUIRE an output-file argument;
+            # omitting it makes argparse fail ("expected one argument") so no hash
+            # is ever returned (false NO). The hashes are also echoed to the
+            # console, which is what _nxc_run reads — the file is throwaway.
+            roast_out = str(Path(tempfile.gettempdir()) / f"pf-roast-{vid}.txt")
             out = _nxc_run(
-                [nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, flag, "--kdcHost", dc_ip]
+                [nxc, "ldap", dc_ip, "-u", admin_user, "-p", admin_pass, "-d", domain, flag, roast_out, "--kdcHost", dc_ip]
             )
             got_hash = out is not None and ("$krb5" in out)
             if got_hash:
