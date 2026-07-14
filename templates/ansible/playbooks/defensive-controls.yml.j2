@@ -26,6 +26,15 @@
 {% if not g.skip_rule_vars %}
     _no_skip_rules_for_this_os: true
 {% endif %}
+    # ansible-lockdown's Windows-*-CIS roles gate on min_ansible_version 2.16, but
+    # their tasks (win_regedit/win_shell/win_security_policy/win_lineinfile/…) all
+    # run on the 2.12.6 that GOAD's AD roles pin — the 2.16 floor is a conservative
+    # upstream policy bump, not a technical dependency. Lower the gate so the CIS
+    # baseline can run under the pin. 2019/2022/2025-CIS read the bare var;
+    # 10/11-CIS read the win{10,11}cis_-prefixed one.
+    min_ansible_version: "2.12.6"
+    win10cis_min_ansible_version: "2.12.6"
+    win11cis_min_ansible_version: "2.12.6"
   tasks:
     - name: "Apply {{ g.role_name }} ({{ g.tags | join(', ') }})"
       ansible.builtin.include_role:
