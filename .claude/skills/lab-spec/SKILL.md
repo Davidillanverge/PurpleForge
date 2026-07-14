@@ -83,12 +83,11 @@ IP plan, and reconciliation; they don't re-read `defense.profile`/`neutralized_b
 
 ## Testing
 
-The golden-tested corpus lives in `tests/fixtures/` — minimal SYNTHETIC specs, not
-demo labs. Each must resolve and match its `tests/golden/<name>.json`
-(`pytest tests/`). Coverage of the reconciliation paths: `two-domain-azure.yml`
-(baseline-bundled exclusion — `gpp-cpassword` ⟷ `cis-l1`, `on_conflict:
-exclude-control`), `fixed-toggle-aws.yml` (a fixed-toggle exclusion —
-`lsa_protection` vs `unconstrained-delegation`, `cis-l2`), and `warn-recon-azure.yml`
-(the `warn` path). When you change the deterministic core on purpose, regenerate
-with `python3 tests/generate_golden.py` and review the `git diff`. Add or extend a
-fixture rather than relying on an ad-hoc lab.
+`tests/test_manifest.py` asserts the resolution INVARIANTS on specs built in code
+via `make_spec()` (`tests/_helpers.py`) — no committed example specs, no golden
+files. It covers the IP plan (no collisions, in-subnet, deterministic), cost
+(per-provider), and every reconciliation path: baseline-bundled exclusion
+(`gpp-cpassword` ⟷ `cis-l1`, `exclude-control`), fixed-toggle exclusion
+(`lsa_protection` vs `unconstrained-delegation`, `cis-l2`), `warn`, and `fail`
+(returns None). When adding a vuln/control or changing the core, add or extend a
+`make_spec()` case rather than an ad-hoc lab, and run `pytest tests/`.

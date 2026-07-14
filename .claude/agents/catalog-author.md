@@ -42,7 +42,7 @@ only the baseline-level conflict, not a fake rule number. Never invent a CIS id.
 ## Finish
 
 Validate the catalog still resolves: run the test suite (`python3 -m pytest tests/
--q`) — the golden fixtures in `tests/fixtures/` resolve every code path — and
-`lab-spec --check-only` a spec that selects the new vuln (add it to a fixture or a
-scratch spec) so its prerequisites/neutralized_by are exercised. Report the new id,
+-q`) — `test_catalog.py` enforces the per-vuln contract and the invariant tests
+build specs in code — and `lab-spec --check-only` a scratch spec that selects the
+new vuln so its prerequisites/neutralized_by are exercised. Report the new id,
 ATT&CK mapping, primitive source, neutralized_by. Don't deploy.

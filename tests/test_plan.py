@@ -6,7 +6,7 @@ import ipaddress
 
 import forge
 import pytest
-from _helpers import FIXTURES_DIR
+from _helpers import make_spec
 
 
 # ---------------------------------------------------------------- stable_octet
@@ -23,18 +23,14 @@ def test_stable_octet_varies_across_names():
 
 
 # ------------------------------------------------------------------ assign_ips
-def _load(spec_name: str) -> dict:
-    return forge.load_yaml(FIXTURES_DIR / spec_name)
-
-
 def test_assign_ips_no_duplicate_host_ips():
-    plan = forge.assign_ips(_load("two-domain-azure.yml"))
+    plan = forge.assign_ips(make_spec(domains=2, members=1, workstations=2))
     ips = [h["ip"] for dom in plan["domains"].values() for h in dom["hosts"]]
     assert len(ips) == len(set(ips)), "duplicate host IPs in the plan"
 
 
 def test_assign_ips_hosts_sit_in_their_domain_subnet():
-    plan = forge.assign_ips(_load("two-domain-azure.yml"))
+    plan = forge.assign_ips(make_spec(domains=2, members=1, workstations=2))
     for dom in plan["domains"].values():
         subnet = ipaddress.ip_network(dom["subnet"])
         for host in dom["hosts"]:
@@ -42,7 +38,7 @@ def test_assign_ips_hosts_sit_in_their_domain_subnet():
 
 
 def test_assign_ips_jumpbox_in_management_subnet():
-    plan = forge.assign_ips(_load("single-dc-azure.yml"))
+    plan = forge.assign_ips(make_spec())
     assert ipaddress.ip_address(plan["jumpbox_ip"]) in ipaddress.ip_network(plan["management_subnet"])
 
 
@@ -58,7 +54,7 @@ def test_assign_ips_overflow_raises():
 
 # ----------------------------------------------------------------- cost model
 def test_estimate_cost_scales_with_machine_count():
-    spec = _load("single-dc-azure.yml")
+    spec = make_spec(members=1, workstations=1)
     base = forge.estimate_cost(spec)["hourly_usd"]
     for m in spec["machines"]:
         m["count"] *= 2
@@ -67,7 +63,7 @@ def test_estimate_cost_scales_with_machine_count():
 
 
 def test_estimate_cost_warns_when_over_budget():
-    spec = _load("single-dc-azure.yml")
+    spec = make_spec()
     spec["lab"]["budget_alert_usd"] = 0.01  # force the daily estimate over budget
     cost = forge.estimate_cost(spec)
     assert cost["warning"] is not None

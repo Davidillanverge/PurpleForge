@@ -11,9 +11,7 @@ import copy
 import json
 
 import forge
-from _helpers import FIXTURES_DIR
-
-SPEC = str(FIXTURES_DIR / "single-dc-azure.yml")
+from _helpers import make_spec, write_spec
 
 
 def _passing_manifest() -> dict:
@@ -32,8 +30,10 @@ def _passing_manifest() -> dict:
 
 
 def _run(tmp_path, manifest: dict) -> int:
+    # The gate reads the manifest from out_dir; the spec path only needs to load.
+    spec_path = write_spec(tmp_path, make_spec(name="single-dc-test"))
     (tmp_path / "lab-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    args = argparse.Namespace(spec=SPEC, out_dir=str(tmp_path))
+    args = argparse.Namespace(spec=str(spec_path), out_dir=str(tmp_path))
     return forge.cmd_guardrail(args)
 
 

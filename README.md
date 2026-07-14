@@ -69,14 +69,17 @@ Covered by a test suite — the deterministic core (manifests, plan, guardrail,
 catalog) and the generated Terraform/Ansible artifacts. Run locally:
 
 ```bash
-pytest                                  # unit + golden-file + guardrail + artifact tests
+pytest                                  # invariant + unit + guardrail + catalog tests
 ruff check . && ruff format --check .   # optional: lint + format
 mypy                                    # optional: type-check scripts/
 ```
 
-Golden manifests live in `tests/golden/`. If you change the deterministic core on
-purpose, regenerate with `python3 tests/generate_golden.py` and **review the
-`git diff`** — it's the audit surface for every lab's manifest.
+The tests own their inputs — they build specs in code with `make_spec()`
+(`tests/_helpers.py`) and assert **invariants that hold for any spec** (IP plan has
+no collisions and stays in-subnet, reconciliation excludes/warns on conflicts, cost
+is per-provider, resolution is deterministic). There are no committed example specs
+or golden files to keep in sync — add or extend a `make_spec()` case to cover a new
+path.
 
 ## Create a lab
 
