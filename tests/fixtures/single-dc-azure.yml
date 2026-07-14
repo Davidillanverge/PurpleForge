@@ -1,9 +1,9 @@
-# PurpleForge — Fase 2 acceptance spec: the minimal case network-topology +
-# infra-azure + ad-topology must handle end-to-end: one domain, one isolated
-# DC, VPN-only access, `terraform plan` clean. No vulnerabilities/reconciliation
-# here on purpose — that's already exercised by the other two example specs.
+# Golden-test fixture (NOT a demo lab): minimal single-DC Azure case — no vulns,
+# no hardening, sparse population. Exercises the baseline manifest: 1-domain IP
+# plan, jumpbox placement, per-machine cost, empty reconciliation. Referenced by
+# name in test_plan.py and test_guardrail.py.
 lab:
-  name: single-dc-test
+  name: single-dc
   theme: corporate
   provider: azure
   region: westeurope

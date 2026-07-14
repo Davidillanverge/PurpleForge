@@ -81,12 +81,12 @@ grants — set `false` for cleaner signal, e.g. `attack_chain.mode: ctf`.
 ## Testing (structural — no live DC)
 
 ```bash
-python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
+python3 scripts/forge.py generate specs/<lab>.yml
 python3 -c "
-import json; m=json.load(open('generated/shadow-keep/lab-manifest.json'))
+import json; m=json.load(open('generated/<lab>/lab-manifest.json'))
 for p in m['population_plans']: print(p['domain'], len(p['users']),'users', len(p['groups']),'groups', len(p['ous']),'OUs')
 "
-cd generated/shadow-keep/ansible && ansible-playbook --syntax-check playbooks/ad-population.yml
+cd generated/<lab>/ansible && ansible-playbook --syntax-check playbooks/ad-population.yml
 ```
 
 Live: confirm `ad-population.yml` created the exact graph

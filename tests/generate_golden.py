@@ -18,12 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import forge  # noqa: E402
-from _helpers import EXAMPLE_SPECS, GOLDEN_DIR, normalize_manifest  # noqa: E402
+from _helpers import GOLDEN_DIR, GOLDEN_SPECS, normalize_manifest  # noqa: E402
 
 
 def main() -> int:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
-    for spec in EXAMPLE_SPECS:
+    for spec in GOLDEN_SPECS:
         res = forge.load_and_resolve(spec)
         if res is None:
             print(f"ERROR: {spec} failed to resolve", file=sys.stderr)

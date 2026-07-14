@@ -10,11 +10,11 @@ deploy.sh/teardown.sh + lab-report.md), guardrail, deploy, validate --run,
 teardown, destroy, ad-inventory.
 
 Usage:
-    scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml
-    scripts/forge.py generate specs/examples/single-dc-azure.yml --plan
-    scripts/forge.py deploy   specs/examples/single-dc-azure.yml
-    scripts/forge.py validate specs/examples/single-dc-azure.yml --run
-    scripts/forge.py teardown specs/examples/single-dc-azure.yml
+    scripts/forge.py lab-spec specs/<lab>.yml
+    scripts/forge.py generate specs/<lab>.yml --plan
+    scripts/forge.py deploy   specs/<lab>.yml
+    scripts/forge.py validate specs/<lab>.yml --run
+    scripts/forge.py teardown specs/<lab>.yml
 """
 
 from __future__ import annotations

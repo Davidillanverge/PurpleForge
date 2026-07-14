@@ -41,7 +41,8 @@ only the baseline-level conflict, not a fake rule number. Never invent a CIS id.
 
 ## Finish
 
-Validate the catalog still resolves: `python3 scripts/forge.py lab-spec
-specs/examples/vuln-catalog-test-azure.yml --check-only` (plus theme/hardening
-example specs if touched). Report the new id, ATT&CK mapping, primitive source,
-neutralized_by. Don't deploy.
+Validate the catalog still resolves: run the test suite (`python3 -m pytest tests/
+-q`) — the golden fixtures in `tests/fixtures/` resolve every code path — and
+`lab-spec --check-only` a spec that selects the new vuln (add it to a fixture or a
+scratch spec) so its prerequisites/neutralized_by are exercised. Report the new id,
+ATT&CK mapping, primitive source, neutralized_by. Don't deploy.

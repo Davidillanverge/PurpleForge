@@ -1,0 +1,54 @@
+# Golden-test fixture (NOT a demo lab): the WARN reconciliation path — cis-l1 would
+# neutralize gpp-cpassword, but on_conflict: warn records it under
+# reconciliation.warnings and changes nothing (no excluded_controls). Also a
+# member-server OS-privesc vuln target and a third theme's population.
+lab:
+  name: warn-recon
+  theme: star-wars
+  provider: azure
+  region: westeurope
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 60
+
+forest:
+  - domain: empire.local
+    netbios: EMPIRE
+    functional_level: "2016"
+    domain_controllers: 1
+
+machines:
+  - role: domain-controller
+    os: windows-server-2019
+    domain: empire.local
+    count: 1
+  - role: workstation
+    os: windows-11-23h2
+    domain: empire.local
+    count: 1
+
+population:
+  users: 20
+  density: realistic
+  seed: 66
+
+vulnerabilities:
+  - gpp-cpassword
+  - kerberoasting
+  - unquoted-service-path
+
+defense:
+  profile: none
+  hardening:
+    baseline: cis-l1
+    apply_to: all
+    controls:
+      laps: true
+      smb_signing: enforce
+
+on_conflict: warn
+
+validation:
+  bloodhound: false
+  pingcastle: false
+  atomic_red_team: []

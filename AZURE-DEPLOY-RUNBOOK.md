@@ -25,7 +25,7 @@ docker run --rm python:3.10-slim python3 --version   # confirm docker + pre-pull
 ## 1. Validate the spec
 
 ```bash
-python3 scripts/forge.py lab-spec specs/examples/<lab>.yml
+python3 scripts/forge.py lab-spec specs/<lab>.yml
 ```
 
 Fix schema/reconciliation errors first. Nothing below touches the network.
@@ -88,7 +88,7 @@ families like Fasv7). Suffix isn't consistent (`2016`/`2019` `-gensecond`,
 ## 3. Generate
 
 ```bash
-python3 scripts/forge.py generate specs/examples/<lab>.yml --plan
+python3 scripts/forge.py generate specs/<lab>.yml --plan
 ```
 
 `--plan` runs `terraform init -backend=false`/`validate`/`plan` (no creds needed).
@@ -227,7 +227,7 @@ sets `msDS-SupportedEncryptionTypes = 28`.* On an old lab:
 ## 7b. Verify the live domain (users, groups, NT hashes)
 
 ```bash
-python3 scripts/forge.py ad-inventory specs/examples/<lab>.yml
+python3 scripts/forge.py ad-inventory specs/<lab>.yml
 # generated/<lab>/ad-inventory.md — every user (NT hash, memberships, VULN/PRIV tags) + group
 ```
 
@@ -243,7 +243,7 @@ docker exec -w /repo/generated/<lab>/ansible pf-ansible \
   ansible-playbook -i inventory/hosts.yml playbooks/verify.yml
 
 export ARM_SUBSCRIPTION_ID=... ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_CLIENT_SECRET=...
-python3 scripts/forge.py destroy specs/examples/<lab>.yml --yes
+python3 scripts/forge.py destroy specs/<lab>.yml --yes
 ```
 
 **`destroy` fails with `Cannot modify extensions ... VM is not running` /
@@ -258,7 +258,7 @@ for vm in <lab>-bastion dc01 mbr01 ws01; do   # names from lab-report.md
   az rest --method post --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Compute/virtualMachines/$vm/start?api-version=2023-07-01"
 done
 # poll until all PowerState/running, then:
-python3 scripts/forge.py destroy specs/examples/<lab>.yml --yes
+python3 scripts/forge.py destroy specs/<lab>.yml --yes
 ```
 
 `forge.py destroy` confirms via ARM REST (`az rest`) that the RG is gone. Confirm

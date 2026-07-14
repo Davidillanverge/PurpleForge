@@ -11,9 +11,9 @@ import copy
 import json
 
 import forge
-from _helpers import EXAMPLES_DIR
+from _helpers import FIXTURES_DIR
 
-SPEC = str(EXAMPLES_DIR / "single-dc-azure.yml")
+SPEC = str(FIXTURES_DIR / "single-dc-azure.yml")
 
 
 def _passing_manifest() -> dict:

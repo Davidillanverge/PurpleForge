@@ -35,8 +35,7 @@ CLAUDE.md            # invariant rules for any agent in this repo
   skills/            # lab-spec, network-topology, infra-azure/proxmox, ad-topology,
                      #   ad-theming, vuln-injection, defensive-controls, purple-validation
 specs/
-  schema/lab-spec.schema.json
-  examples/          # medieval-2dom-azure.yml, corp-espionage-aws.yml, single-dc-azure.yml
+  schema/lab-spec.schema.json   # your hand-written/AI-generated <lab>.yml live here (not committed)
 catalog/
   vulnerabilities/   # <id>.yml: attack + inject + neutralized_by + mitigate + validate
   themes/            # vocabulary + extra_groups
@@ -154,8 +153,9 @@ per `on_conflict`:
 - **`fail`** — stops generation; resolve it in the spec.
 
 ```bash
-python3 scripts/forge.py lab-spec specs/examples/medieval-2dom-azure.yml
-# gpp-cpassword + cis-l1 genuinely conflict → reports the derived exclusion
+# a spec that selects gpp-cpassword under hardening.baseline: cis-l1 genuinely
+# conflicts — lab-spec reports the exclusion it derives to keep the gap open:
+python3 scripts/forge.py lab-spec specs/<lab>.yml
 ```
 
 ## Theming and population

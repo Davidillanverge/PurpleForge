@@ -62,7 +62,7 @@
     "auto_shutdown": "20:00 Europe/Madrid",
     "budget_alert_usd": 150,
     "isolation": "vpn-only",
-    "name": "shadow-keep",
+    "name": "two-domain",
     "provider": "azure",
     "region": "westeurope",
     "theme": "medieval-kingdom"
@@ -103,7 +103,7 @@
         "hosts": [
           {
             "image_id": null,
-            "ip": "10.86.1.10",
+            "ip": "10.21.1.10",
             "os": "windows-server-2019",
             "role": "domain-controller",
             "services": [],
@@ -111,7 +111,7 @@
           },
           {
             "image_id": null,
-            "ip": "10.86.1.50",
+            "ip": "10.21.1.50",
             "os": "windows-server-2022",
             "role": "member-server",
             "services": [
@@ -122,7 +122,7 @@
           },
           {
             "image_id": null,
-            "ip": "10.86.1.100",
+            "ip": "10.21.1.100",
             "os": "windows-10-22h2",
             "role": "workstation",
             "services": [],
@@ -130,32 +130,32 @@
           },
           {
             "image_id": null,
-            "ip": "10.86.1.101",
+            "ip": "10.21.1.101",
             "os": "windows-10-22h2",
             "role": "workstation",
             "services": [],
             "vm_size": null
           }
         ],
-        "subnet": "10.86.1.0/24"
+        "subnet": "10.21.1.0/24"
       },
       "vassals.kingdom.local": {
         "hosts": [
           {
             "image_id": null,
-            "ip": "10.86.2.10",
+            "ip": "10.21.2.10",
             "os": "windows-server-2019",
             "role": "domain-controller",
             "services": [],
             "vm_size": null
           }
         ],
-        "subnet": "10.86.2.0/24"
+        "subnet": "10.21.2.0/24"
       }
     },
-    "jumpbox_ip": "10.86.0.10",
-    "management_subnet": "10.86.0.0/24",
-    "supernet": "10.86.0.0/16"
+    "jumpbox_ip": "10.21.0.10",
+    "management_subnet": "10.21.0.0/24",
+    "supernet": "10.21.0.0/16"
   },
   "notes": [
     "Windows evaluation images expire 180 days after install (os: windows-10-22h2, windows-server-2019, windows-server-2022). Plan a redeploy or apply a retail license before that date."
@@ -163,7 +163,7 @@
   "population": {
     "density": "realistic",
     "seed": 1337,
-    "users": 300
+    "users": 40
   },
   "reconciliation": {
     "conflicts_detected": [
@@ -189,7 +189,7 @@
     "on_conflict": "exclude-control",
     "warnings": []
   },
-  "source_spec": "medieval-2dom-azure.yml",
+  "source_spec": "two-domain-azure.yml",
   "vulnerabilities": [
     "kerberoasting",
     "adcs-esc1",

@@ -6,7 +6,7 @@ import ipaddress
 
 import forge
 import pytest
-from _helpers import EXAMPLES_DIR
+from _helpers import FIXTURES_DIR
 
 
 # ---------------------------------------------------------------- stable_octet
@@ -24,17 +24,17 @@ def test_stable_octet_varies_across_names():
 
 # ------------------------------------------------------------------ assign_ips
 def _load(spec_name: str) -> dict:
-    return forge.load_yaml(EXAMPLES_DIR / spec_name)
+    return forge.load_yaml(FIXTURES_DIR / spec_name)
 
 
 def test_assign_ips_no_duplicate_host_ips():
-    plan = forge.assign_ips(_load("medieval-2dom-azure.yml"))
+    plan = forge.assign_ips(_load("two-domain-azure.yml"))
     ips = [h["ip"] for dom in plan["domains"].values() for h in dom["hosts"]]
     assert len(ips) == len(set(ips)), "duplicate host IPs in the plan"
 
 
 def test_assign_ips_hosts_sit_in_their_domain_subnet():
-    plan = forge.assign_ips(_load("medieval-2dom-azure.yml"))
+    plan = forge.assign_ips(_load("two-domain-azure.yml"))
     for dom in plan["domains"].values():
         subnet = ipaddress.ip_network(dom["subnet"])
         for host in dom["hosts"]:

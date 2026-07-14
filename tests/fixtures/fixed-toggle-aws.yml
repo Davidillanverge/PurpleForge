@@ -1,9 +1,10 @@
-# PurpleForge — second worked example: single domain, corporate-espionage theme,
-# AWS provider, defense.profile: hardened (CIS L2 + prevent-mode EDR, minimal gaps).
-# Exercises a different provider, theme, SIEM/EDR pair and reconciliation path than
-# medieval-2dom-azure.yml.
+# Golden-test fixture (NOT a demo lab): the AWS provider + cis-l2 hardened profile +
+# the FIXED-TOGGLE reconciliation path — unconstrained-delegation is neutralized by
+# the lsa_protection control (a hardening.controls.* toggle, not a baseline rule),
+# so on_conflict: exclude-control flips that toggle in defense_resolved. Also a
+# `messy` population density and iis/mssql services.
 lab:
-  name: raven-corp
+  name: fixed-toggle
   theme: corporate
   provider: aws
   region: eu-west-1
@@ -33,24 +34,22 @@ machines:
     count: 3
 
 population:
-  users: 150
+  users: 30
   density: messy
   seed: 4242
 
-vulnerabilities:               # the deliberate gaps
+vulnerabilities:
   - asreproast
   - unconstrained-delegation
   - passwords-in-description
 
 defense:
   profile: hardened
-
   edr:
     - product: defender-av
       mode: enabled
       settings: { asr_rules: block, tamper_protection: true, network_protection: true }
       targets: all
-
   hardening:
     baseline: cis-l2
     apply_to: all
@@ -62,8 +61,7 @@ defense:
       ldap_signing: enforce
       disable_llmnr_nbtns_mdns: true
       protected_users_group: [RAVENCORP\da-finance]
-    intentional_gaps_auto: true    # derive skip_rule exclusions from each vuln's neutralized_by
-
+    intentional_gaps_auto: true
   deception:
     honey_accounts: 2
 

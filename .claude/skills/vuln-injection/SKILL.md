@@ -108,8 +108,8 @@ Before "done" — every item below was a real bug caught only against a live dom
 ## Testing (structural — no live DC)
 
 ```bash
-python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
-cd generated/shadow-keep/ansible
+python3 scripts/forge.py generate specs/<lab>.yml
+cd generated/<lab>/ansible
 ansible-playbook --syntax-check -i inventory/hosts.yml playbooks/vuln-injection.yml
 ```
 

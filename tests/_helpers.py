@@ -8,16 +8,20 @@ from pathlib import Path
 import forge
 
 REPO_ROOT = Path(forge.REPO_ROOT)
-EXAMPLES_DIR = REPO_ROOT / "specs" / "examples"
 SPECS_DIR = REPO_ROOT / "specs"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 
-# The canonical example specs are the golden-tested set: single/multi-domain
-# forests, both providers, the reconciliation exclusion path, and a broad vuln
-# selection.
-EXAMPLE_SPECS = sorted(EXAMPLES_DIR.glob("*.yml"))
-# Every hand-maintained spec (examples + top-level) must at least resolve.
-ALL_SPECS = sorted(EXAMPLES_DIR.glob("*.yml")) + sorted(SPECS_DIR.glob("*.yml"))
+# The golden-tested corpus lives with the tests as minimal SYNTHETIC fixtures
+# (not demo labs — the harness generates real labs from a prompt on demand). They
+# deliberately cover the manifest code paths: azure/aws/proxmox providers, single
+# and multi-domain forests with a trust, each defense baseline (none/
+# baseline-controls/cis-l1/cis-l2/realistic-profile), the reconciliation
+# exclude + fixed-toggle + warn paths, and adcs/mssql/iis services.
+GOLDEN_SPECS = sorted(FIXTURES_DIR.glob("*.yml"))
+# Every hand-maintained spec (fixtures + any top-level regression specs) must at
+# least resolve — this catches a spec left with a now-invalid field.
+ALL_SPECS = GOLDEN_SPECS + sorted(SPECS_DIR.glob("*.yml"))
 
 
 def normalize_manifest(manifest: dict) -> dict:

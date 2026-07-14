@@ -39,7 +39,7 @@
     "auto_shutdown": "20:00 Europe/Madrid",
     "budget_alert_usd": 50,
     "isolation": "vpn-only",
-    "name": "single-dc-test",
+    "name": "single-dc",
     "provider": "azure",
     "region": "westeurope",
     "theme": "corporate"
@@ -58,19 +58,19 @@
         "hosts": [
           {
             "image_id": null,
-            "ip": "10.20.1.10",
+            "ip": "10.74.1.10",
             "os": "windows-server-2019",
             "role": "domain-controller",
             "services": [],
             "vm_size": null
           }
         ],
-        "subnet": "10.20.1.0/24"
+        "subnet": "10.74.1.0/24"
       }
     },
-    "jumpbox_ip": "10.20.0.10",
-    "management_subnet": "10.20.0.0/24",
-    "supernet": "10.20.0.0/16"
+    "jumpbox_ip": "10.74.0.10",
+    "management_subnet": "10.74.0.0/24",
+    "supernet": "10.74.0.0/16"
   },
   "notes": [
     "Windows evaluation images expire 180 days after install (os: windows-server-2019). Plan a redeploy or apply a retail license before that date."

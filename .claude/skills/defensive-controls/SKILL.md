@@ -100,7 +100,7 @@ mark `backend_required: true`.
    other Defender control is unaffected.
 
 ```bash
-python3 scripts/forge.py generate specs/examples/medieval-2dom-azure.yml
-python3 -c "import yaml; yaml.safe_load(open('generated/shadow-keep/ansible/playbooks/defensive-controls.yml'))"
-cd generated/shadow-keep/ansible && ansible-playbook --syntax-check -i inventory/hosts.yml playbooks/defensive-controls.yml
+python3 scripts/forge.py generate specs/<lab>.yml
+python3 -c "import yaml; yaml.safe_load(open('generated/<lab>/ansible/playbooks/defensive-controls.yml'))"
+cd generated/<lab>/ansible && ansible-playbook --syntax-check -i inventory/hosts.yml playbooks/defensive-controls.yml
 ```

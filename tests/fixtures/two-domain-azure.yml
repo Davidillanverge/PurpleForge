@@ -1,9 +1,11 @@
-# PurpleForge — worked example (2-domain medieval lab on Azure)
-# Two-domain medieval-themed forest on Azure, defense.profile: realistic,
-# on_conflict: exclude-control -> hardening.cis-l1 is applied with the specific
-# rules excluded that would neutralize kerberoasting/adcs-esc1/gpp-cpassword/dcsync-acl.
+# Golden-test fixture (NOT a demo lab): two-domain Azure forest with a parent-child
+# trust. Exercises the multi-domain IP plan (a /24 per domain), trust references,
+# adcs+mssql services, the full realistic defense stack (Defender AV + cis-l1 +
+# fixed controls + honey accounts), and the baseline-bundled reconciliation
+# exclusion path (gpp-cpassword ⟷ cis-l1, on_conflict: exclude-control). Referenced
+# by name in test_plan.py for the multi-domain assertions.
 lab:
-  name: shadow-keep
+  name: two-domain
   theme: medieval-kingdom
   provider: azure
   region: westeurope
@@ -44,11 +46,11 @@ machines:
     count: 2
 
 population:
-  users: 300
+  users: 40
   density: realistic
   seed: 1337
 
-vulnerabilities:               # the deliberate gaps
+vulnerabilities:
   - kerberoasting
   - adcs-esc1
   - gpp-cpassword
@@ -56,28 +58,23 @@ vulnerabilities:               # the deliberate gaps
 
 defense:
   profile: realistic
-  # 'profile' fixes defaults for edr/hardening/deception below; the rest
-  # are fine-grained overrides layered on top of the profile.
-
   edr:
     - product: defender-av
       mode: enabled
       settings: { asr_rules: audit, tamper_protection: true, network_protection: true }
       targets: all
-
   hardening:
     baseline: cis-l1
     apply_to: all
     controls:
       laps: true
       lsa_protection: true
-      credential_guard: false      # would break some intentional credential-theft paths
+      credential_guard: false
       smb_signing: enforce
       ldap_signing: enforce
       disable_llmnr_nbtns_mdns: true
       protected_users_group: [KINGDOM\da-treasury]
-    intentional_gaps_auto: true    # derive skip_rule exclusions from each vuln's neutralized_by
-
+    intentional_gaps_auto: true
   deception:
     honey_accounts: 3
 

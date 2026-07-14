@@ -84,19 +84,19 @@ qm template 9000     # record 9000 as bastion_template_id
 
 ## 3. Write + validate the spec
 
-Use `lab.provider: proxmox`. Start from `specs/examples/single-dc-proxmox.yml`
+Use `lab.provider: proxmox`. Start from `specs/<lab>.yml`
 (one DC, no vulns) for the first live deploy.
 
 ```bash
-python3 scripts/forge.py lab-spec specs/examples/single-dc-proxmox.yml
+python3 scripts/forge.py lab-spec specs/<lab>.yml
 ```
 
 ## 4. Generate + fill the host binding
 
 ```bash
-python3 scripts/forge.py generate specs/examples/single-dc-proxmox.yml
-cp generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.example.json \
-   generated/single-dc-proxmox-test/terraform/proxmox/host.auto.tfvars.json
+python3 scripts/forge.py generate specs/<lab>.yml
+cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
+   generated/<lab>/terraform/proxmox/host.auto.tfvars.json
 ```
 
 Edit the copy (gitignored, never commit):
@@ -114,7 +114,7 @@ Edit the copy (gitignored, never commit):
 ## 5. Deploy
 
 ```bash
-./generated/single-dc-proxmox-test/deploy.sh
+./generated/<lab>/deploy.sh
 ```
 
 Order (per `deploy-proxmox.sh.j2`): preflight → infra secrets → `terraform
@@ -125,8 +125,8 @@ path) — see the symptom table for what to check.
 ## 6. Verify + teardown
 
 ```bash
-python3 scripts/forge.py validate specs/examples/single-dc-proxmox.yml --run
-./generated/single-dc-proxmox-test/teardown.sh
+python3 scripts/forge.py validate specs/<lab>.yml --run
+./generated/<lab>/teardown.sh
 ```
 
 No per-hour billing, but `teardown.sh` still removes the pool/VMs/firewall rules +

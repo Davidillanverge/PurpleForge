@@ -1,6 +1,6 @@
 {
   "cost_estimate": {
-    "budget_alert_usd": 50,
+    "budget_alert_usd": 10,
     "estimated_daily_usd": 0.0,
     "estimated_monthly_usd": 0.0,
     "hourly_usd": 0.0,
@@ -13,72 +13,86 @@
     "edr": [],
     "hardening": {
       "apply_to": "all",
-      "baseline": "none",
+      "baseline": "baseline-controls",
       "controls": {
         "credential_guard": false,
         "disable_llmnr_nbtns_mdns": false,
-        "laps": false,
-        "ldap_signing": "disable",
+        "laps": true,
+        "ldap_signing": "enforce",
         "lsa_protection": false,
         "ntlmv2_only": false,
         "protected_users_group": [],
-        "smb_signing": "disable"
+        "smb_signing": "enforce"
       },
       "intentional_gaps_auto": false
     }
   },
   "forest": [
     {
-      "domain": "test.local",
+      "domain": "corp.local",
       "domain_controllers": 1,
       "functional_level": "2016",
-      "netbios": "TEST"
+      "netbios": "CORP"
     }
   ],
   "lab": {
     "auto_shutdown": "20:00 Europe/Madrid",
-    "budget_alert_usd": 50,
+    "budget_alert_usd": 10,
     "isolation": "vpn-only",
-    "name": "single-dc-proxmox-test",
+    "name": "single-dc-proxmox",
     "provider": "proxmox",
-    "region": "pve",
+    "region": "home-lab",
     "theme": "corporate"
   },
   "machines": [
     {
       "count": 1,
-      "domain": "test.local",
-      "os": "windows-server-2019",
+      "domain": "corp.local",
+      "os": "windows-server-2022",
       "role": "domain-controller"
+    },
+    {
+      "count": 1,
+      "domain": "corp.local",
+      "os": "windows-11-23h2",
+      "role": "workstation"
     }
   ],
   "network_plan": {
     "domains": {
-      "test.local": {
+      "corp.local": {
         "hosts": [
           {
             "image_id": null,
-            "ip": "10.68.1.10",
-            "os": "windows-server-2019",
+            "ip": "10.209.1.10",
+            "os": "windows-server-2022",
             "role": "domain-controller",
+            "services": [],
+            "vm_size": null
+          },
+          {
+            "image_id": null,
+            "ip": "10.209.1.100",
+            "os": "windows-11-23h2",
+            "role": "workstation",
             "services": [],
             "vm_size": null
           }
         ],
-        "subnet": "10.68.1.0/24"
+        "subnet": "10.209.1.0/24"
       }
     },
-    "jumpbox_ip": "10.68.0.10",
-    "management_subnet": "10.68.0.0/24",
-    "supernet": "10.68.0.0/16"
+    "jumpbox_ip": "10.209.0.10",
+    "management_subnet": "10.209.0.0/24",
+    "supernet": "10.209.0.0/16"
   },
   "notes": [
-    "Windows evaluation images expire 180 days after install (os: windows-server-2019). Plan a redeploy or apply a retail license before that date."
+    "Windows evaluation images expire 180 days after install (os: windows-11-23h2, windows-server-2022). Plan a redeploy or apply a retail license before that date."
   ],
   "population": {
     "density": "sparse",
-    "seed": 1,
-    "users": 10
+    "seed": 7,
+    "users": 8
   },
   "reconciliation": {
     "conflicts_detected": [],
@@ -88,5 +102,7 @@
     "warnings": []
   },
   "source_spec": "single-dc-proxmox.yml",
-  "vulnerabilities": []
+  "vulnerabilities": [
+    "kerberoasting"
+  ]
 }

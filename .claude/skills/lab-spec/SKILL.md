@@ -83,10 +83,12 @@ IP plan, and reconciliation; they don't re-read `defense.profile`/`neutralized_b
 
 ## Testing
 
-`specs/examples/medieval-2dom-azure.yml` and `corp-espionage-aws.yml` are the
-golden specs — both must `--check-only` exit 0. The medieval spec is a
-reconciliation test case: `gpp-cpassword` + `cis-l1` genuinely conflict, while
-`kerberoasting`/`adcs-esc1`/`dcsync-acl` only conflict at `cis-l2`/`stig` (pass
-through at `cis-l1`). The corp-espionage spec exercises a fixed-toggle exclusion
-(`lsa_protection` vs `unconstrained-delegation`). When adding a vuln/control,
-extend these two specs' assertions rather than writing a third.
+The golden-tested corpus lives in `tests/fixtures/` — minimal SYNTHETIC specs, not
+demo labs. Each must resolve and match its `tests/golden/<name>.json`
+(`pytest tests/`). Coverage of the reconciliation paths: `two-domain-azure.yml`
+(baseline-bundled exclusion — `gpp-cpassword` ⟷ `cis-l1`, `on_conflict:
+exclude-control`), `fixed-toggle-aws.yml` (a fixed-toggle exclusion —
+`lsa_protection` vs `unconstrained-delegation`, `cis-l2`), and `warn-recon-azure.yml`
+(the `warn` path). When you change the deterministic core on purpose, regenerate
+with `python3 tests/generate_golden.py` and review the `git diff`. Add or extend a
+fixture rather than relying on an ad-hoc lab.
