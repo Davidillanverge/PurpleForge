@@ -319,6 +319,36 @@ HELPER
     || warn "could not install crontab entry — auto_shutdown not enforced"
 }
 
+# ---- clean-state snapshot (CLAUDE.md deploy order: the LAST provisioning ------
+# step, AFTER hardening+vulns, BEFORE any attack). One Proxmox snapshot named
+# "pf-clean" per lab VM, via the API — `forge reset` (reset.sh) rolls back to it.
+# Best-effort: never fails the deploy.
+snapshot_clean() {
+  [ "${PF_SNAPSHOT:-1}" = "1" ] || { log "5b. Clean-state snapshot (skipped: PF_SNAPSHOT=0)"; return 0; }
+  log "5b. Clean-state snapshot (post-hardening+vulns, pre-attack) — pf-clean"
+  local k=""; [ "${PROXMOX_VE_INSECURE:-false}" = "true" ] && k="-k"
+  local base="${PROXMOX_VE_ENDPOINT%/}"
+  local auth="Authorization: PVEAPIToken=$PROXMOX_VE_API_TOKEN"
+  local members
+  members="$(curl -s $k -H "$auth" "$base/api2/json/pools/$LAB" \
+    | python3 -c 'import json,sys
+try: d=json.load(sys.stdin).get("data",{})
+except Exception: d={}
+for m in d.get("members",[]):
+    if m.get("type")=="qemu": print(m["node"], m["vmid"])' 2>/dev/null || true)"
+  [ -z "$members" ] && { warn "no VMs found — skipping snapshot"; return 0; }
+  while read -r node vmid; do
+    [ -n "$node" ] && [ -n "$vmid" ] || continue
+    echo "  snapshot vm $vmid -> pf-clean"
+    # delete a stale pf-clean first so re-deploys refresh it (ignore if absent)
+    curl -s $k -H "$auth" -X DELETE "$base/api2/json/nodes/$node/qemu/$vmid/snapshot/pf-clean" >/dev/null 2>&1 || true
+    curl -s $k -H "$auth" -X POST "$base/api2/json/nodes/$node/qemu/$vmid/snapshot" \
+      --data-urlencode "snapname=pf-clean" --data-urlencode "description=PurpleForge clean state (post-hardening+vulns, pre-attack)" >/dev/null 2>&1 \
+      || warn "could not snapshot vm $vmid (continuing)"
+  done <<< "$members"
+  echo "  clean-state snapshot(s) done — reset with: forge reset {{ spec_rel }}"
+}
+
 main() {
   preflight
   ensure_secrets
@@ -329,6 +359,7 @@ main() {
   route_lab
   ansible_up
   run_site
+  snapshot_clean
   setup_auto_shutdown
   log "DEPLOY COMPLETE — $LAB"
   cat <<EOF

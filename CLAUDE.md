@@ -55,9 +55,13 @@ Determinista y sin IA: `forge generate` emite `deploy.sh`/`teardown.sh` en
 override `PF_VM_SIZE`) → `terraform apply` → túnel WireGuard → `site.yml`.
 Validación: `forge validate --run`. Desmontaje: `forge teardown`.
 
-> Nota: el snapshot de estado limpio aún no está implementado (necesita un
-> recurso de snapshot azurerm o equivalente Ansible). El orden es el mandato;
-> el snapshot es un gap conocido — no asumas "reset entre ejercicios".
+> Nota: el snapshot de estado limpio se toma como último paso de `deploy.sh`
+> (`snapshot_clean`, tras hardening+vulns y ANTES de cualquier ataque): un
+> snapshot de disco por VM en Azure (`<lab>-<vm>-clean`) o `pf-clean` en Proxmox.
+> `forge reset <spec>` restaura ese estado (Azure: swap del disco OS desde el
+> snapshot; Proxmox: `qm rollback`) para reiniciar entre ejercicios. Los scripts
+> están renderizados pero, como `verify.yml`, aún no ejercitados contra un
+> despliegue real — trátalos con la misma cautela hasta validarlos en vivo.
 
 ## Convenciones del repositorio
 

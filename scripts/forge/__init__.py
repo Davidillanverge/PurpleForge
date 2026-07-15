@@ -68,8 +68,10 @@ from .core import (
     yaml_scalar,
 )
 from .lifecycle import (
+    clean_snapshot_name,
     cmd_deploy,
     cmd_destroy,
+    cmd_reset,
     cmd_teardown,
     run_terraform_plan,
     verify_azure_teardown,
@@ -498,6 +500,14 @@ def main() -> int:
     p_teardown.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_teardown.set_defaults(func=cmd_teardown)
 
+    p_reset = sub.add_parser(
+        "reset",
+        help="Roll a deployed lab back to its clean-state snapshot (taken at the end of deploy, after hardening+vulns, before any attack) — run the generated reset.sh. Lets an exercise restart from a pristine lab.",
+    )
+    p_reset.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
+    p_reset.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_reset.set_defaults(func=cmd_reset)
+
     p_destroy = sub.add_parser(
         "destroy",
         help="terraform destroy a generated lab + verify no Azure resource group is left behind (lower-level; `teardown` wraps this with the deallocated-VM/snapshot gotchas)",
@@ -579,7 +589,8 @@ __all__ = [
     "render_site_playbook", "render_verify_playbook", "render_vuln_injection", "resolve_defender_av_expected",
     "write_lab_secrets",
     # lifecycle
-    "cmd_deploy", "cmd_destroy", "cmd_teardown", "run_terraform_plan", "verify_azure_teardown",
+    "clean_snapshot_name", "cmd_deploy", "cmd_destroy", "cmd_reset", "cmd_teardown", "run_terraform_plan",
+    "verify_azure_teardown",
     # validate
     "LDAP_APPLIED_FILTERS", "ROAST_FLAGS", "VALID_RESULT", "WINRM_APPLIED_CHECKS", "build_vuln_check",
     "cmd_ad_inventory", "cmd_validate", "merge_validation_results", "query_ad_inventory", "render_results_template",

@@ -429,6 +429,34 @@ run_site() {
   echo "  provisioning complete"
 }
 
+# ---- clean-state snapshot (CLAUDE.md deploy order: the LAST step, AFTER --------
+# hardening+vulns, BEFORE any attack) so exercises can reset to a pristine lab.
+# Best-effort: a snapshot failure never fails the deploy. One managed-disk
+# snapshot per VM, named "<lab>-<vm>-clean" (the exact name `forge reset` and
+# lifecycle.clean_snapshot_name() look for). teardown.sh's sweep_rg deletes these
+# with the RG, so they add no leftover cost after teardown.
+snapshot_clean() {
+  [ "${PF_SNAPSHOT:-1}" = "1" ] || { log "7. Clean-state snapshot (skipped: PF_SNAPSHOT=0)"; return 0; }
+  log "7. Clean-state snapshot (post-hardening+vulns, pre-attack)"
+  local vms
+  vms="$(az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$LAB/providers/Microsoft.Compute/virtualMachines?api-version=2023-07-01" 2>/dev/null \
+        | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+for v in d.get("value",[]):
+    disk=(((v.get("properties") or {}).get("storageProfile") or {}).get("osDisk") or {}).get("managedDisk") or {}
+    if disk.get("id"): print(v["name"]+"\t"+disk["id"])' || true)"
+  [ -z "$vms" ] && { warn "no VMs with a managed OS disk found — skipping snapshot"; return 0; }
+  printf '%s\n' "$vms" | while IFS=$'\t' read -r vm diskid; do
+    [ -n "$vm" ] || continue
+    local snap="${LAB}-${vm}-clean"
+    echo "  snapshot $vm -> $snap"
+    az snapshot create -g "$LAB" -n "$snap" --source "$diskid" --tags purpleforge=clean-state lab="$LAB" >/dev/null 2>&1 \
+      || warn "could not snapshot $vm (continuing) — take it manually or re-run this step"
+  done
+  echo "  clean-state snapshot(s) done — reset with: forge reset {{ spec_rel }}"
+}
+
 main() {
   preflight
   ensure_secrets
@@ -441,6 +469,7 @@ main() {
   wg_up
   ansible_up
   run_site
+  snapshot_clean
   log "DEPLOY COMPLETE — $LAB"
   cat <<EOF
 

@@ -177,6 +177,41 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     return subprocess.run(["bash", str(teardown_sh)]).returncode
 
 
+def clean_snapshot_name(lab_name: str, vm_name: str) -> str:
+    """The deterministic name of a VM's clean-state snapshot on Azure —
+    "<lab>-<vm>-clean". deploy.sh creates it (its last step, after
+    hardening+vulns, before any attack) and reset.sh restores from it; this is
+    the single source of truth for that name so the two never drift. (Proxmox
+    uses a fixed per-VM snapshot name, "pf-clean", since snapshots there are
+    namespaced under the VM already.)"""
+    return f"{lab_name}-{vm_name}-clean"
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    """Deterministic no-AI reset: run the generated reset.sh to roll every lab VM
+    back to the clean-state snapshot deploy.sh took after hardening + vuln
+    injection (before any attack). Lets an exercise restart from a pristine,
+    fully-instrumented lab instead of whatever the last attack left behind. Thin
+    wrapper around reset.sh (the single source of truth for the exact commands),
+    mirroring cmd_teardown."""
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    lab_name = load_yaml(spec_path)["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    reset_sh = lab_dir / "reset.sh"
+    if not reset_sh.exists():
+        print(
+            f"error: {reset_sh} not found — run `forge generate {args.spec}` first "
+            "(reset.sh is rendered alongside deploy.sh/teardown.sh).",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"=== RESET {lab_name} — roll every VM back to its clean-state snapshot ===")
+    return subprocess.run(["bash", str(reset_sh)]).returncode
+
+
 def cmd_destroy(args: argparse.Namespace) -> int:
     spec_path = Path(args.spec).resolve()
     if not spec_path.exists():
