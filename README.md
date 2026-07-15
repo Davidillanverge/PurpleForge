@@ -1,311 +1,460 @@
 # PurpleForge
 
-A spec-driven harness that turns a declarative `lab-spec.yml` into complete
-automation (Terraform + Ansible + PowerShell) for deploying **Purple-Team AD
-labs** on **Azure or on-prem Proxmox VE** (AWS on the roadmap) — with a
-configurable **defensive stack** (CIS/STIG hardening, Defender AV, deception)
-deployed alongside the intentional vulnerabilities.
+A spec-driven harness that compiles one declarative `specs/<lab>.yml` into
+complete automation (Terraform + Ansible + PowerShell) for deploying isolated,
+**Purple-Team-instrumented Active Directory labs** on **Azure or on-prem
+Proxmox VE** (AWS on the roadmap). Every lab ships its **defensive stack**
+(CIS/STIG hardening, Defender AV, deception) *alongside* the intentional
+vulnerabilities — attack and defense are generated, reconciled, and deployed
+together.
 
-It wraps mature upstream projects pinned as submodules in `vendor/`: **GOAD v3**
-(IaC + AD engine), **Vulnerable-AD** (vuln primitives), **ansible-lockdown**
-(CIS/STIG roles). See `CLAUDE.md` for invariants + deploy order,
-`.claude/agents/README.md` for the agent system; deterministic logic is in
-`scripts/forge/`.
+It does not reinvent Windows/AD deployment or hardening: it wraps mature
+upstream projects pinned as git submodules in `vendor/` — **GOAD v3** (IaC + AD
+engine), **Vulnerable-AD** (vulnerability primitives), and **ansible-lockdown**
+(CIS/STIG roles).
 
-## Philosophy
+---
 
-1. **Reuse, don't reinvent** — thin generation layers over `vendor/`.
-2. **Spec-driven** — `specs/<lab>.yml` is the only hand-edited source; everything
-   under `generated/<lab>/` is derived and reproducible.
-3. **Purple = offense ∧ defense, coupled** — every catalog vuln ships
-   detect+mitigate+neutralized_by.
-4. **Offense and defense are reconciled**, not just coexisting (see below).
-5. **Secure by construction** — VPN-only, deny-by-default, auto-shutdown, cost
-   control are code.
+## Objective
 
-**Authorized use only.** Isolated labs for testing you own or are authorized to
-test. No payloads or automation aimed at third-party systems.
+Stand up realistic, **safe-by-construction** AD environments for Purple-Team
+practice from a single, portable, human-readable spec — and make them
+**reproducible**: the same spec always produces the same lab, so a lab can be
+shared, versioned, and rebuilt identically on any infrastructure.
 
-## Repository layout
+The design goals, in priority order:
 
-```
-CLAUDE.md            # invariant rules for any agent in this repo
-.claude/
-  commands/          # /new-lab /deploy /validate /destroy
-  skills/            # lab-spec, network-topology, infra-azure/proxmox, ad-topology,
-                     #   ad-theming, vuln-injection, defensive-controls, purple-validation
-specs/
-  schema/lab-spec.schema.json   # your hand-written/AI-generated <lab>.yml live here (not committed)
-catalog/
-  vulnerabilities/   # <id>.yml: attack + inject + neutralized_by + mitigate + validate
-  themes/            # vocabulary + extra_groups
-  defense/           # profiles/, edr/ (only defender-av), hardening/ (+ control-cis-rules.yml)
-templates/
-  terraform/azure/   # VNet/NSGs/bastion + Windows VMs (thin wrapper over vendor/GOAD)
-  terraform/proxmox/ # on-prem: pool/firewall/VLANs + cloned VMs + bastion
-  ansible/           # ad-topology/-population/vuln-injection/defensive-controls + inventory
-vendor/              # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown
-generated/           # gitignored — per-lab output: lab-manifest.json, terraform/, ansible/
-scripts/forge/     # deterministic core: validation, reconciliation, IP plan, cost, render
-```
+1. **Reuse, don't reinvent.** Thin generation layers over `vendor/`; never
+   re-implement upstream deployment/hardening.
+2. **Spec-driven & reproducible.** `specs/<lab>.yml` is the *only* hand-edited
+   source. Everything under `generated/<lab>/` is derived, deterministic, and
+   gitignored — **the spec alone reproduces the entire lab, byte for byte**,
+   secrets included (all are seeded from `population.seed`).
+3. **Purple = offense ∧ defense, coupled.** Every catalog vulnerability ships
+   `mitigate` + `neutralized_by` + a valid ATT&CK id. A lab is *always* deployed
+   with its defensive stack, never the offensive half alone.
+4. **Offense and defense are reconciled**, not merely coexisting: before
+   generation, hardening is cross-checked against the selected vulnerabilities so
+   a control never silently cancels an intended gap.
+5. **Secure by construction.** VPN-only access, deny-by-default networking,
+   auto-shutdown, and budget alerts are all encoded, not left to the operator.
 
-## Getting started
+> **Authorized use only.** Isolated labs, for systems you own or are explicitly
+> authorized to test. PurpleForge generates nothing aimed at third-party or
+> production systems.
+
+**Scope today:** PREVENT/RESPOND — CIS/STIG hardening, Defender AV, deception.
+No SIEM/Sysmon/WEF telemetry; detection engineering is deliberately out of
+scope. Azure and Proxmox VE are supported; AWS is on the roadmap.
+
+---
+
+## Capabilities
+
+| Area | What PurpleForge does |
+|---|---|
+| **Infrastructure as code** | Renders Terraform for Azure (VNet, deny-by-default NSGs, WireGuard bastion, Windows VMs) or Proxmox VE (pool, firewall, VLAN-isolated bridges, cloned VMs, bastion) — a thin wrapper over `vendor/GOAD`. |
+| **AD topology** | Multi-domain forests, child domains, and trusts (parent-child / external / forest / shortcut), promoted and joined by GOAD's own Ansible roles. |
+| **Themed population** | Fully deterministic OU tree, users (with passwords), groups, computers, and ACL noise — generated in Python (`scripts/population.py`) from a theme's vocabulary and `population.seed`. No BadBlood at runtime. |
+| **Vulnerability injection** | 26 catalog vulns (AD, ADCS/ESC, delegation, ACL abuse, OS/service local-privesc) injected as **named, idempotent** artifacts on the correct host, cast onto real population objects — not random picks. |
+| **Defensive stack** | CIS L1/L2 or STIG baselines (via `ansible-lockdown`), fixed hardening toggles (LAPS, LSA protection, SMB/LDAP signing, LLMNR/NBT-NS off, Credential Guard, Protected Users), Defender AV (ASR/tamper/network protection), and deception honey accounts. |
+| **Reconciliation** | Cross-checks hardening against each vuln's `neutralized_by` and resolves conflicts per `on_conflict` (`warn` / `exclude-control` / `fail`) — so intended gaps survive an otherwise-hardened box. |
+| **Attack-chain design** | `independent` mode (each vuln targets its own object) or `ctf` mode (vulns deliberately share a real object, so exploiting one is a prerequisite for the next). |
+| **Cost & lifecycle** | Every lab carries `auto_shutdown` + `budget_alert_usd`; `teardown` verifies cost-zero; `reset` rolls back to a clean-state snapshot between exercises. |
+| **Validation** | `validate --run` drives the injected vulns live over the tunnel (roasting auto-confirmed with `nxc`; the rest emit a ready-to-run command). `ad-inventory` dumps the live domain (LDAP + DCSync hashes) and checks it against the plan. |
+| **Deterministic, no-AI lifecycle** | `generate` → `guardrail` → `deploy` → `validate` → `reset`/`teardown` are pure scripts. AI (skills/agents) only helps *author* a spec; nothing about deployment depends on it. |
+
+---
+
+## Get started
 
 ```bash
 git clone --recurse-submodules <this-repo>   # or: git submodule update --init --recursive
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .            # runtime; puts `forge` on PATH
-# ...or dev (linters, type-checker, tests):
+pip install -e .            # runtime; puts the `forge` command on PATH
+# ...or with the dev extras (linters, type-checker, tests):
 pip install -e ".[dev]"
 ```
 
-`forge lab-spec …` (the `forge` console script the editable install puts on PATH)
-works anywhere; without installing, `python3 -m forge …` from the repo root is the
-same entry point. `terraform` (>= 1.5) is only needed for `generate … --plan`;
-without it, `generate` renders everything and skips the plan.
+`forge <command>` works anywhere after the editable install. Without installing,
+`python3 -m forge <command>` from the repo root is the exact same entry point.
 
-### Developing on the harness
-
-Covered by a test suite — the deterministic core (manifests, plan, guardrail,
-catalog) and the generated Terraform/Ansible artifacts. Run locally:
+The full deterministic lifecycle for an existing spec:
 
 ```bash
-pytest                                  # invariant + unit + guardrail + catalog tests
-ruff check . && ruff format --check .   # optional: lint + format
-mypy                                    # optional: type-check scripts/
+forge lab-spec  specs/<lab>.yml           # validate + reconcile -> lab-manifest.json
+forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/reset/teardown scripts
+forge guardrail specs/<lab>.yml           # PASS/FAIL the CLAUDE.md invariants before any spend
+forge deploy    specs/<lab>.yml           # build infra + tunnel + AD + hardening + vulns + clean snapshot
+forge validate  specs/<lab>.yml --run     # confirm each vuln is applied + exploitable
+forge reset     specs/<lab>.yml           # roll every VM back to the clean-state snapshot
+forge teardown  specs/<lab>.yml           # destroy to cost-zero and verify nothing is left
 ```
 
-The tests own their inputs — they build specs in code with `make_spec()`
-(`tests/_helpers.py`) and assert **invariants that hold for any spec** (IP plan has
-no collisions and stays in-subnet, reconciliation excludes/warns on conflicts, cost
-is per-provider, resolution is deterministic). There are no committed example specs
-or golden files to keep in sync — add or extend a `make_spec()` case to cover a new
-path.
+`terraform` (>= 1.5) is only needed for `generate … --plan` (a structural dry
+run); without it, `generate` renders everything and skips the plan. Full deploy
+prerequisites are in [Deploying a lab](#deploying-a-lab-azure--proxmox-ve).
 
-## Create a lab
-
-A lab is one YAML spec in `specs/`. Write it by hand from an example, or let
-`/new-lab` turn a description into a validated spec:
+### Working on the harness itself
 
 ```bash
-/new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
+pytest                                   # invariant + unit + guardrail + catalog-schema + determinism tests
+ruff check . && ruff format --check .    # lint + format
+mypy                                     # type-check scripts/
 ```
 
-Everything after the spec exists is a plain `forge` command (no AI):
+Tests own their inputs — they build specs in code with `make_spec()`
+(`tests/_helpers.py`) and assert **invariants that hold for any spec** (IP plan
+has no collisions, reconciliation excludes/warns correctly, generation is
+byte-for-byte deterministic, every catalog entry matches its schema). There are
+no committed golden specs to keep in sync.
 
-```bash
-forge generate specs/<lab>.yml          # render TF + Ansible + deploy.sh/teardown.sh
-forge deploy   specs/<lab>.yml          # build the lab
-forge validate specs/<lab>.yml --run    # check vulns are live + exploitable
-forge teardown specs/<lab>.yml          # destroy, back to zero cost
+---
+
+## Lab creation flow
+
+A lab is one YAML file in `specs/`. From description to a deploy-ready lab:
+
+```
+  natural language ──/new-lab──▶ specs/<lab>.yml ──forge generate──▶ generated/<lab>/ ──forge deploy──▶ live lab
+        (AI, optional)             (hand-editable)      (deterministic, no AI)            (deterministic, no AI)
 ```
 
-`generate` writes a self-contained `generated/<lab>/` (Terraform, Ansible,
-`lab-report.md` with every credential + attack path, `deploy.sh`/`teardown.sh`).
-It's gitignored — to share a lab, share its `specs/<lab>.yml` (determinism
-guarantees byte-identical artifacts). Pick where it runs with `provider: azure`
-or `provider: proxmox`.
+1. **Author the spec.** Write `specs/<lab>.yml` by hand from an example, or let
+   the `/new-lab` skill turn a description into a validated spec:
+   ```bash
+   /new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
+   ```
+   The spec declares: the `lab` (name, theme, provider, region, isolation,
+   auto-shutdown, budget), the `forest` (domains + trusts), the `machines`
+   (roles, OS, services), the `population` (count, density, **seed**), the
+   `vulnerabilities[]`, the `defense` block, and `on_conflict`.
+2. **Validate & reconcile** — `forge lab-spec` runs JSON-Schema validation,
+   semantic checks (name/IP collisions, trust references, vuln prerequisites),
+   resolves the defense profile, assigns the IP plan, estimates cost, and runs
+   the hardening ⟷ vulnerability reconciliation. It emits
+   `generated/<lab>/lab-manifest.json` — the single artifact every later step
+   consumes.
+3. **Generate** — `forge generate` renders the whole `generated/<lab>/` tree
+   (Terraform, Ansible, `site.yml`, `deploy.sh`/`teardown.sh`/`reset.sh`,
+   `lab-report.md`). Deterministic and AI-free.
+4. **Guardrail** — `forge guardrail` hard-fails if any machine-checkable
+   invariant is violated (isolation, purple coupling, reconciliation recorded,
+   lifecycle/state). It gates `deploy`.
+5. **Deploy → validate → reset/teardown** — see
+   [Deploying a lab](#deploying-a-lab-azure--proxmox-ve).
 
-> **Status:** the full Azure lifecycle (generate → deploy → validate → teardown)
-> is deterministic today; Proxmox generate + deploy work the same. Scope stops at
-> PREVENT/RESPOND (hardening + Defender AV) — no SIEM — and AWS is on the roadmap.
+To share a lab, share its `specs/<lab>.yml`: determinism guarantees the recipient
+regenerates byte-identical artifacts (and the same credentials).
 
-## The `defense:` block
+---
 
-Every spec declares its defensive stack alongside the vulnerabilities:
+## Vulnerability creation flow
+
+Adding a vulnerability is **"add one YAML, touch no generator code"**:
+
+1. **Write** `catalog/vulnerabilities/<id>.yml` with the required shape (see
+   below). Model it on an existing entry (`kerberoasting.yml`, `adcs-esc1.yml`).
+2. **Author the inject primitive** it references — either a `vendor/Vulnerable-AD`
+   function or an Ansible task file under `templates/ansible/vulns/<id>.yml`. It
+   must create a **named, deterministic, idempotent** artifact.
+3. **Validate the shape** against the schema (this is the author-time contract
+   for invariant #3 — offense must ship its blue counterpart):
+   ```bash
+   python3 -c "import yaml,jsonschema,forge; \
+     jsonschema.Draft202012Validator(forge.load_vulnerability_schema()).validate(\
+       yaml.safe_load(open('catalog/vulnerabilities/<id>.yml'))); print('OK')"
+   # or validate the whole catalog:  pytest tests/test_catalog_schema.py
+   ```
 
 ```yaml
-defense:
-  profile: realistic                 # none | realistic | hardened
-  edr:
-    - { product: defender-av, mode: enabled, settings: { asr_rules: audit }, targets: all }
-  hardening:
-    baseline: cis-l1                 # none | cis-l1 | cis-l2 | stig | baseline-controls
-    apply_to: all
-    controls: { laps: true, lsa_protection: true, smb_signing: enforce, ldap_signing: enforce }
-    intentional_gaps_auto: true      # derive hardening exclusions from each vuln's neutralized_by
-  deception: { honey_accounts: 3 }
-on_conflict: exclude-control         # warn | exclude-control | fail
+id: adcs-esc1
+name: "ADCS ESC1 - enrollee-supplies-subject certificate template"
+severity: critical
+attack:
+  mitre_attack: [T1649]
+  requires_services: [adcs]          # or: target_role: workstation (for OS-level vulns)
+  intended_path: "..."
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/adcs-esc1.yml
+  params: {}
+neutralized_by:                       # MANDATORY — the blue counterpart
+  - hardening.controls.adcs_template_hardening
+  - { hardening.baseline: [cis-l2] }
+mitigate: { summary: "..." }          # MANDATORY
+validate: { bloodhound_edge: ADCSESC1, atomic: T1649 }
+chain: { target_shape: none }         # none | account | group_scope
 ```
 
-`profile` sets defaults (`catalog/defense/profiles/<profile>.yml`); `edr`/
-`hardening`/`deception` override on top.
+The `catalog-author` agent researches the ATT&CK id and the upstream primitive,
+and enforces the schema for you. `neutralized_by` may reference either a fixed
+`hardening.controls.<toggle>` or a `{ hardening.baseline: [...] }` list; the
+reconciler uses it to keep the gap open when the baseline would otherwise close
+it. `themes/` have their own schema (`catalog/schema/theme.schema.json`) and the
+same author-time validation.
+
+---
+
+## Results
+
+Two things constitute a lab, both under version control of the *spec*:
+
+### 1. The spec (`specs/<lab>.yml`) — the portable definition
+
+Hand-edited YAML validated by `specs/schema/lab-spec.schema.json`. **It contains
+everything needed to replicate the lab on any infrastructure**: topology,
+machines, population parameters, the vulnerability set, the full defensive stack,
+and the seed. Because every generated value (down to the domain-admin password)
+is a deterministic function of the spec, the spec *is* the lab. Example:
+
+```yaml
+lab:
+  name: kanto-league
+  theme: pokemon
+  provider: azure                # azure | proxmox
+  region: westeurope
+  isolation: vpn-only
+  auto_shutdown: "20:00 Europe/Madrid"
+  budget_alert_usd: 50
+forest:
+  - { domain: kanto.local, netbios: KANTO, functional_level: "2016", domain_controllers: 1 }
+machines:
+  - { role: domain-controller, os: windows-server-2019, domain: kanto.local, count: 1 }
+  - { role: member-server,     os: windows-server-2022, domain: kanto.local, count: 1, services: [adcs] }
+population: { users: 200, density: realistic, seed: 1337 }
+vulnerabilities: [kerberoasting, adcs-esc1, dcsync-acl]
+defense:
+  profile: realistic
+  edr: [{ product: defender-av, mode: enabled, settings: { asr_rules: audit }, targets: all }]
+  hardening: { baseline: cis-l1, apply_to: all, intentional_gaps_auto: true }
+  deception: { honey_accounts: 3 }
+on_conflict: exclude-control
+```
+
+### 2. The generated lab (`generated/<lab>/`) — ready to deploy
+
+`forge generate` produces a self-contained, gitignored directory:
+
+| Artifact | What it is |
+|---|---|
+| `lab-manifest.json` | The resolved plan every step reads: network plan, cost, reconciliation, population, planned vulns, hardening/EDR/deception plans, attack chain. |
+| `terraform/<provider>/` | The full infra layer. `terraform.tfvars.json` is secret-free & shareable; the two seed-derived infra secrets sit in the gitignored `secrets.auto.tfvars.json`. |
+| `ansible/` | Inventory (`hosts.yml`) + playbooks (`ad-topology`, `ad-population`, `defensive-controls`, `vuln-injection`, `service-provisioning`, `verify`) + `site.yml` (the single ordered entry point) + seed-derived secrets in `inventory/group_vars/all/`. |
+| `deploy.sh` / `teardown.sh` / `reset.sh` | The deterministic, no-AI deploy / cost-zero teardown / clean-state-reset scripts. `forge deploy`/`teardown`/`reset` are thin wrappers that add the guardrail gate. |
+| `lab-report.md` | Human-readable documentation of the whole lab (see below). |
+
+**The lab report (`lab-report.md`)** is the manifest as prose: machines, network
+topology, forest, the *complete* population (every user name + password), all
+credentials (domain admin, WinRM, local admin, each injection account),
+hardening applied (with exact `--tags` and skip-rule exclusions), EDR,
+vulnerabilities + target + neutralization status, and the suggested attack path.
+**Every value in it is reproducible from the spec** — running `forge generate`
+on the same spec anywhere regenerates the exact same report. Because it holds
+secrets, it lives in gitignored `generated/<lab>/` and is never committed. (The
+only value *not* in the report is the honey-account passwords, randomized by an
+Ansible lookup at deploy time; read them post-deploy via `ad-inventory`.)
+
+---
+
+## Folder structure
+
+```
+CLAUDE.md                     # invariant rules + deploy order for any agent in this repo
+README.md                     # this file
+AZURE-DEPLOY-RUNBOOK.md       # Azure symptom->cause reference + manual step-by-step
+PROXMOX-DEPLOY-RUNBOOK.md     # Proxmox host prep + deploy reference
+IMAGES-AND-TEMPLATES.md       # image/template requirements and overrides
+pyproject.toml                # packaging; the `forge` console script
+
+.claude/
+  agents/                     # lab-designer, catalog-author, deploy-operator, purple-validator
+  commands/                   # /new-lab /deploy /validate /destroy
+  skills/                     # lab-spec, network-topology, infra-azure/proxmox, ad-topology,
+                              #   ad-theming, vuln-injection, defensive-controls, purple-validation, ...
+
+specs/
+  schema/lab-spec.schema.json # the spec contract
+  <lab>.yml                   # your specs (gitignored — they are harness input, kept out of git)
+
+catalog/
+  vulnerabilities/            # <id>.yml: attack + inject + neutralized_by + mitigate + validate + chain
+  themes/                     # <theme>.yml: vocabulary + extra_groups + honey naming
+  defense/
+    profiles/                 # none | realistic | hardened (defaults for the defense block)
+    edr/                      # defender-av.yml (the only supported EDR)
+    hardening/                # cis-l1/-l2/stig baselines + control-cis-rules.yml (verified mappings)
+  schema/                     # vulnerability.schema.json + theme.schema.json (author-time contracts)
+
+templates/
+  terraform/azure/            # VNet/NSGs/bastion + Windows VMs
+  terraform/proxmox/          # pool/firewall/VLANs + cloned VMs + bastion
+  ansible/                    # playbooks, vuln task-files, service installers, pf_* roles, inventory
+  *.sh.j2                     # deploy/teardown/reset script templates (per provider)
+  *.md.j2                     # lab-report / ad-inventory templates
+
+scripts/
+  forge/                      # the deterministic core (a Python package — see below)
+  population.py               # the deterministic themed-population generator
+
+vendor/                       # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown (+ BadBlood, unused)
+tests/                        # the harness test suite
+generated/                    # gitignored — per-lab output
+```
+
+---
+
+## What each part does
+
+- **`scripts/forge/`** — the deterministic core, a layered Python package (never
+  re-implement it in prompts):
+  - `core` — paths, constants, `SpecError`, small pure helpers (YAML/schema
+    loading, deterministic naming, `generate_password`).
+  - `catalog` — vulnerability / theme / hardening / defense loaders (+ the
+    catalog schema loaders).
+  - `planning` — schema + semantic validation, IP plan, cost, the reconciliation,
+    and every *plan* (vuln-injection, hardening, EDR, deception, attack chain,
+    `derive_infra_secrets`).
+  - `render` — turns those plans into the Terraform/Ansible/report artifacts.
+  - `lifecycle` — `deploy` / `teardown` / `destroy` / `reset`.
+  - `validate` — live vulnerability validation + `ad-inventory`.
+  - `__init__` — the `generate`/`lab-spec`/`guardrail` commands and the CLI.
+- **`scripts/population.py`** — the seeded, themed population generator that
+  replaced BadBlood: same seed ⇒ same OU tree, users, groups, computers.
+- **`catalog/`** — all reusable content. A vuln, theme, hardening baseline, or
+  EDR profile is data here; adding one never touches the generator.
+- **`templates/`** — the Jinja/Terraform/Ansible sources the renderer fills in.
+  Thin wrappers around `vendor/`.
+- **`vendor/`** — pinned upstream submodules. Never edited; wrapped from
+  `templates/` and the skills.
+- **`specs/`** — the only hand-edited source of truth. Your `<lab>.yml` files are
+  gitignored (they are harness *input*/output, not source code).
+- **`generated/`** — gitignored, regenerable output. Sharing a lab = sharing its
+  spec, never this directory.
+- **`.claude/`** — the (optional) AI layer that only helps *author* specs and
+  catalog content. `skills/` are the deterministic building blocks; `agents/` are
+  the design/deploy/validation roles; `commands/` are the slash-command entry
+  points. None of it is required to deploy — the generated scripts are.
+- **`tests/`** — invariant, unit, guardrail, catalog-schema, and end-to-end
+  determinism tests over the deterministic core and the rendered artifacts.
+
+### Core concepts
+
+**The `defense:` block.** Every spec declares its defensive stack next to the
+vulnerabilities. `profile` (`none` / `realistic` / `hardened`) sets defaults from
+`catalog/defense/profiles/`; `edr` / `hardening` / `deception` override on top.
 
 | Profile | Deploys | For |
 |---|---|---|
 | `none` | nothing | purely offensive practice |
-| `realistic` | Defender AV (ASR audit) + CIS L1 (with gaps) + honey accounts | representative mid-size company |
-| `hardened` | CIS L2/STIG + ASR enforce + LAPS + Credential Guard | evasion/hardening stress-testing |
+| `realistic` | Defender AV (ASR audit) + CIS L1 (with gaps) + honey accounts | a representative mid-size company |
+| `hardened` | CIS L2/STIG + ASR enforce + LAPS + Credential Guard | evasion / hardening stress-testing |
 
-> **Scope:** PREVENT/RESPOND only — CIS/STIG hardening, Defender AV, deception. No
-> SIEM/Sysmon/WEF telemetry; detection engineering is out of scope for now.
-> Defender AV is the only supported EDR (others need a management backend).
+**Reconciliation (hardening ⟷ vulnerabilities).** Hardening can include the exact
+rule that would purge an intended vuln. `lab-spec` cross-references each vuln's
+`neutralized_by` against the resolved hardening and resolves per `on_conflict`:
+`exclude-control` (recommended, with `intentional_gaps_auto: true`) drops just
+the conflicting rule and keeps the rest of the baseline; `warn` applies hardening
+and lists what might get neutralized; `fail` stops generation. Only two vulns
+have a *verified* ansible-lockdown skip-rule mapping today; the rest are honestly
+reported as conceptual rather than guessed.
 
-## Hardening ⟷ vulnerability reconciliation
+**Theming & population.** `lab.theme` + `population` drive a fully deterministic
+population computed before any deploy. `population.users` is the user count;
+groups/computers scale off it by `density`; the theme's vocabulary feeds the
+generator and `population.seed` makes every name/password/OU reproducible.
 
-Hardening and intended vulns can conflict (a CIS L1 baseline may include the exact
-rule that purges the `gpp-cpassword` you asked for). `lab-spec` cross-references
-each vuln's `neutralized_by` against the resolved `defense.hardening` and resolves
-per `on_conflict`:
+**Deploy order (`site.yml`).** `generate` writes `site.yml` importing
+`ad-topology` → `ad-population` → `defensive-controls` → `vuln-injection` in that
+order, so hardening always lands before the gaps regardless of who runs it. The
+clean-state snapshot is taken as the *last* deploy step (after vulns, before any
+attack); `forge reset` restores it.
 
-- **`exclude-control`** (recommended, with `intentional_gaps_auto: true`) —
-  excludes the conflicting rule, keeps the rest of the baseline. A mostly-hardened
-  environment with deliberate gaps. Recorded in
-  `reconciliation.excluded_controls`.
-- **`warn`** — applies hardening, lists which vulns might get neutralized, changes
-  nothing.
-- **`fail`** — stops generation; resolve it in the spec.
+> The snapshot/reset scripts are rendered from the documented Azure/Proxmox
+> procedures but, like `verify.yml`, have not yet been exercised against a live
+> deploy — treat the first run with that caution.
 
-```bash
-# a spec that selects gpp-cpassword under hardening.baseline: cis-l1 genuinely
-# conflicts — lab-spec reports the exclusion it derives to keep the gap open:
-forge lab-spec specs/<lab>.yml
-```
+---
 
-## Theming and population
+## Deploying a lab (Azure & Proxmox VE)
 
-`lab.theme` + `population` drive a themed, fully deterministic population (OUs,
-users with passwords, groups, computers), computed in Python
-(`scripts/population.py`) before any deploy:
-
-```yaml
-lab:      { theme: medieval-kingdom, ... }
-population: { users: 300, density: realistic, seed: 1337 }
-```
-
-`population.users` is the user count; groups/computers scale off it by `density`.
-`catalog/themes/<theme>.yml`'s vocabulary feeds the generator;
-`random.Random(seed)` (offset per domain) makes it reproducible. Theme
-`extra_groups` fold into the same plan (tagged `curated: true`). Replaced an
-earlier BadBlood design (`vendor/BadBlood` stays pinned but unused; see
-`ad-theming/SKILL.md`).
-
-## Vulnerability catalog + injection
-
-Adding a vuln = one self-contained YAML in `catalog/vulnerabilities/` (no generator
-changes):
-
-```yaml
-id: adcs-esc1
-severity: critical
-attack:   { mitre_attack: [T1649], requires_services: [adcs], intended_path: "..." }
-inject:   { type: ansible, playbook: templates/ansible/vulns/adcs_esc1.yml, params: {...} }
-neutralized_by: [hardening.controls.adcs_template_hardening, {hardening.baseline: [cis-l2]}]
-mitigate: { summary: "..." }
-validate: { bloodhound_edge: ADCSESC1, atomic: T1649 }
-```
-
-26 entries ship (AD, ADCS, delegation, ACL, OS/service-privesc). `generate` turns
-each spec `vulnerabilities[]` id into an idempotent Ansible play targeting the
-right host, recording the intended path + reconciliation-derived neutralization
-status (`gap-preserved` / `AT RISK` / `clear`) in `lab-manifest.json`. Injected
-artifacts are **named and deterministic** (e.g. `svc-sqlreport` with an SPN), not
-random picks — see `vuln-injection/SKILL.md`.
-
-## Defensive controls (PREVENT/RESPOND — no SIEM)
-
-`generate` renders `defensive-controls.yml`: the resolved hardening baseline via
-`vendor/ansible-lockdown` (with `skip_rules` from the reconciliation), EDR
-(Defender AV only), and deception (honey accounts). Only two seed vulns have a
-**verified** ansible-lockdown rule mapping (`smb-signing-disabled` ↔ CIS
-2.3.8.x/2.3.9.x; `unconstrained-delegation` ↔ RunAsPPL, in the `ngws` profile not
-default L1/L2). The rest are conceptual — audited and honestly reported as having
-no matching rule rather than guessed. See `defensive-controls/SKILL.md`.
-
-## The lab report (`lab-report.md`)
-
-`generate` writes `generated/<lab>/lab-report.md` — the manifest as
-human-readable docs (machines, topology, forest, population, hardening applied
-with exact `--tags` + exclusions, EDR, every injected vuln + target + status).
-**It contains every generated secret** (domain admin, WinRM account, local admin,
-each injection account) and **every population user's name + password** (the whole
-population is deterministic Python). So it lives in gitignored `generated/<lab>/`,
-never committed. The only thing not knowable ahead of deploy is the honey
-accounts' passwords (randomized at deploy time) — query them after deploy via
-`ad-inventory`.
-
-### Post-deploy inventory (`forge ad-inventory`)
-
-Verification, not discovery — once the lab is reachable (tunnel up):
+One command builds infra + tunnel + AD + hardening + vulns + clean snapshot, and
+is safe to re-run:
 
 ```bash
-forge ad-inventory specs/<lab>.yml   # writes generated/<lab>/ad-inventory.md
+forge deploy specs/<lab>.yml            # == ./generated/<lab>/deploy.sh, behind the guardrail gate
 ```
 
-Queries the live domain (LDAP via `ldap3`; `nxc`/netexec for an NTDS hash dump via
-DCSync), confirms it matches the manifest's `population_plans` (flagging anything
-missing), and renders every user (NT hash, memberships, tagged `VULN:<id>`/`PRIV`)
-and group. NT hashes come from AD live (pass-the-hash usable, crackable with
-`hashcat -m 1000`). Same sensitivity as `lab-report.md` — gitignored, re-run
-anytime.
-
-## Deploy order: `site.yml`
-
-`generate` writes `site.yml`, importing `ad-topology.yml` → `ad-population.yml` →
-`defensive-controls.yml` → `vuln-injection.yml` (in that order — this is what makes
-"hardening before vulns" true regardless of who runs `/deploy`). **Run `site.yml`,
-not the individual playbooks.**
-
-> **Known gap:** the clean-state snapshot (after vuln-injection, before any attack)
-> has no mechanism yet — it needs an `azurerm` snapshot resource or Ansible
-> equivalent wired into a `/deploy` orchestrator. Don't assume "reset between
-> exercises" works. `site.yml`'s header carries the same note.
-
-## Deploy a lab
-
-One command builds infra + tunnel + AD + hardening + vulns, safe to re-run:
-
-```bash
-forge deploy specs/<lab>.yml   # == ./generated/<lab>/deploy.sh
-```
-
-When it finishes, `lab-report.md` has every credential + the attack path. You
-reach the lab **only** through the WireGuard tunnel `deploy.sh` brings up. Tear
-down with `./generated/<lab>/teardown.sh` (or `forge teardown`): zero cost.
+You reach the lab **only** through the WireGuard tunnel `deploy.sh` brings up — no
+lab host ever has a public IP or inbound RDP/WinRM. When it finishes,
+`lab-report.md` has every credential and the attack path. Between exercises,
+`forge reset` rolls every VM back to the clean-state snapshot; when finished,
+`forge teardown` destroys everything and verifies cost-zero.
 
 ### Prerequisites (both providers)
 
 - Repo cloned **with submodules** (`vendor/` holds the Ansible roles).
-- On the host: `terraform` (>= 1.5), `docker`, `wireguard-tools`, `openssl`,
-  `curl`, `python3`. Ansible runs in a container `deploy.sh` starts — you don't
-  install it.
+- On the deploy host: `terraform` (>= 1.5), `docker`, `wireguard-tools`,
+  `openssl`, `curl`, `python3`, and `nxc`/netexec (for `validate`/`ad-inventory`).
+  Ansible itself runs in a container `deploy.sh` starts — you don't install it.
+  `pip install -r scripts/requirements.txt` for the Python deps (`ldap3`).
 - Passwordless sudo for tunnel bring-up:
   ```bash
   echo "$USER ALL=(root) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick" \
     | sudo tee /etc/sudoers.d/pf-wireguard && sudo chmod 440 /etc/sudoers.d/pf-wireguard
   ```
 
-Nothing account- or host-specific is baked into a lab: credentials come from your
-environment at deploy time; `deploy.sh` mints the lab's infra secrets on first run.
+Nothing account- or host-specific is baked into a lab: cloud credentials come
+from your environment at deploy time, and **every lab secret is derived from the
+spec's seed** — `deploy.sh` mints nothing, it just deploys what `generate`
+produced.
 
 ### Azure
 
-Install `az`, then log in one of two ways:
+Install the `az` CLI and authenticate one of two ways:
 
 ```bash
 az login && az account set --subscription <sub-id>          # interactive
 # or non-interactive — export a service principal:
 export ARM_TENANT_ID=<t> ARM_SUBSCRIPTION_ID=<s> ARM_CLIENT_ID=<a> ARM_CLIENT_SECRET=<x>
-#   create once: az ad sp create-for-rbac --name pf-deployer --role Contributor --scopes /subscriptions/<sub-id>
+#   create once: az ad sp create-for-rbac --name pf-deployer --role Contributor \
+#                  --scopes /subscriptions/<sub-id>
 ```
 
-`./generated/<lab>/deploy.sh` creates its own remote-state storage account and
-auto-picks the cheapest available VM size. Optional (no spec edit):
-`PF_REGION=<region>`, `PF_VM_SIZE=<sku>`.
+Requirements & behavior:
 
-### Proxmox
+- The service principal / user needs **Contributor** on the target subscription
+  (it creates a resource group, VNet, NSGs, VMs, and a storage account).
+- `deploy.sh` creates its own **remote-state storage account** (Terraform state
+  is never local on Azure — invariant #4) and **auto-picks the cheapest VM size**
+  your subscription actually offers in the region (the #1 deploy blocker — a
+  region/quota-invalid SKU — is handled for you). On the very first deploy of a
+  new subscription, run it with the Azure MCP available so quota/pricing can be
+  cross-checked; after that the chosen size is baked into `sizes.auto.tfvars.json`.
+- Windows **evaluation images** from the marketplace expire ~180 days after
+  install — plan a redeploy or apply a retail license before then.
+- Optional overrides (no spec edit): `PF_REGION=<region>`, `PF_VM_SIZE=<sku>`,
+  `PF_TFSTATE_RG=<rg>`, and for images `PF_OS=windows-server-2022` or
+  `PF_IMAGE_ID=<resource-id>` (a managed image / gallery version).
+
+> Troubleshooting: [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) is the
+> symptom→cause reference and the manual step-by-step equivalent.
+
+### Proxmox VE
 
 > Fresh host? [`PROXMOX-DEPLOY-RUNBOOK.md`](PROXMOX-DEPLOY-RUNBOOK.md) covers host
 > prep (bridges, storage, API token, templates) first.
 
+Export the API connection (the token needs rights to create VMs, pools,
+snippets, and firewall rules; `openssh-client` must be on the host):
+
 ```bash
 export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
 export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxx-...."
-export PROXMOX_VE_INSECURE=true    # only if the cert is self-signed
+export PROXMOX_VE_INSECURE=true    # only if the PVE cert is self-signed
 ```
 
-Token needs rights to create VMs/pools/snippets/firewall rules; `openssh-client`
-must be on the host. Then fill the host binding once (the only host-specific part):
+Then fill the **one host-specific file** (everything else is spec-derived):
 
 ```bash
 cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
@@ -320,36 +469,28 @@ cp generated/<lab>/terraform/proxmox/host.auto.tfvars.example.json \
 | `mgmt_bridge` / `lab_bridge` | routable bridge for the bastion / isolated bridge for the lab |
 | `template_map` | each `os` → the **vm_id** of your Windows template to clone |
 | `bastion_template_id` | vm_id of an Ubuntu 22.04+ cloud-init template (qemu-guest-agent) |
-| `jumpbox_external_ip`/`_prefix`/`_gateway` | the bastion's address on `mgmt_bridge` |
+| `jumpbox_external_ip` / `_prefix` / `_gateway` | the bastion's address on `mgmt_bridge` |
 
-Windows templates need only **cloudbase-init** (UserDataPlugin enabled); WinRM +
-the `ansible` account are set up on first boot. See
-[`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md). Then
+Windows templates need only **cloudbase-init** (with UserDataPlugin enabled)
+baked in — WinRM and the `ansible` account are bootstrapped on first boot. See
+[`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md). Then run
 `./generated/<lab>/deploy.sh` (optional: `PF_TEMPLATE_ID=<vmid>` clones every VM
 from one template).
 
-### Different image/template without regenerating
-
-- **Azure:** `PF_OS=windows-server-2022` (stock) or `PF_IMAGE_ID=<resource-id>`
-  (your managed image / gallery version).
-- **Proxmox:** `PF_TEMPLATE_ID=<vmid>`.
-
-```bash
-PF_OS=windows-server-2022 ./generated/<lab>/deploy.sh
-```
-
-Swaps only the base image; hardening stays as generated. Full details:
-[`IMAGES-AND-TEMPLATES.md`](IMAGES-AND-TEMPLATES.md).
+Note: Proxmox deliberately uses a **local** Terraform state backend (no on-prem
+object store to mint per-deployer) — a documented relaxation of the remote-state
+invariant, surfaced as a REVIEW note by the guardrail rather than passing
+silently.
 
 ### After deploy
 
-- **Check:** `forge validate specs/<lab>.yml --run` (writes
-  `validation-report.md`).
-- **Tear down:** `./generated/<lab>/teardown.sh` — destroys everything, verifies
-  nothing billable remains.
+```bash
+forge validate specs/<lab>.yml --run     # writes validation-report.md (applied + exploitable)
+forge ad-inventory specs/<lab>.yml       # writes ad-inventory.md (live users/groups + NT hashes)
+forge reset specs/<lab>.yml              # roll back to the clean-state snapshot between exercises
+forge teardown specs/<lab>.yml           # destroy everything, verify nothing billable remains
+```
 
 > **If a step fails:** re-running `deploy.sh` usually clears transient errors.
-> [`AZURE-DEPLOY-RUNBOOK.md`](AZURE-DEPLOY-RUNBOOK.md) /
-> [`PROXMOX-DEPLOY-RUNBOOK.md`](PROXMOX-DEPLOY-RUNBOOK.md) are the symptom→cause
-> references and the manual step-by-step equivalent. AWS is not built yet — Azure
-> and Proxmox only.
+> The runbooks above are the manual, symptom→cause equivalents. AWS is not built
+> yet — Azure and Proxmox only.
