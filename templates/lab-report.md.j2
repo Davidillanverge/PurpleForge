@@ -5,6 +5,13 @@
 > in `generated/{{ lab.name }}/` (gitignored) — never commit it, never share
 > it outside this lab's authorized operators. Regenerate anytime with
 > `python3 -m forge generate <spec>` — nothing here is hand-edited.
+>
+> **Fully reproducible from the spec.** Every value below — topology, IPs,
+> population and their passwords, the domain-admin/WinRM credentials, injected
+> vulnerabilities and their accounts — is a deterministic function of
+> `{{ source_spec }}` (seeded by `population.seed`). Running `forge generate` on
+> that spec on any other machine or cloud reproduces this exact lab and report,
+> byte for byte. The spec is the complete, portable definition of the lab.
 
 ## Overview
 

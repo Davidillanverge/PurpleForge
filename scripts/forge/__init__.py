@@ -92,12 +92,12 @@ from .planning import (
     build_manifest,
     build_vuln_vars,
     compute_population_counts,
+    derive_infra_secrets,
     estimate_cost,
     eval_expiry_notes,
     expand_role_or_all,
     flatten_machines,
     load_and_resolve,
-    load_existing_infra_secrets,
     parse_auto_shutdown,
     plan_deception,
     plan_edr,
@@ -215,15 +215,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     network_plan = manifest["network_plan"]
     machines = flatten_machines(spec, network_plan)
-    # Reuse infra secrets from a prior generate so regenerating a deployed lab
-    # doesn't re-randomize admin_password (which forces Terraform to replace
-    # every VM). First generate mints a fresh unguessable pair.
-    admin_password, ansible_password = load_existing_infra_secrets(out_dir, provider)
-    if admin_password and ansible_password:
-        print("  reusing infra secrets (admin/ansible) from a previous generate")
-    else:
-        admin_password = generate_password()
-        ansible_password = generate_password()
+    # Infra secrets (domain admin + ansible WinRM) are derived from population.seed,
+    # so the spec alone reproduces the whole lab — lab-report.md included — and a
+    # regenerate is a Terraform no-op (same password every time). See
+    # planning.derive_infra_secrets.
+    admin_password, ansible_password = derive_infra_secrets(spec["population"]["seed"])
 
     if provider == "proxmox":
         render_proxmox_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
@@ -305,10 +301,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         f"  wrote terraform/{provider}/ (secret-free & shareable; strong secrets isolated in the gitignored secrets.auto.tfvars.json)"
     )
     print(
-        "  wrote ansible/ (hosts.yml + ad-population.yml secret-free; population passwords fixed at creation in the COMMITTED group_vars/all/population-secrets.yml; infra keys in the gitignored group_vars/all/secrets.yml)"
-    )
-    print(
-        "  wrote secrets-manifest.json (committed — lists the INFRA secrets deploy.sh mints if absent; population passwords are never minted at deploy)"
+        "  wrote ansible/ (hosts.yml + ad-population.yml secret-free; all secrets — population + infra keys — are seed-deterministic in the gitignored group_vars/all/, reproduced identically by generate)"
     )
     total_users = sum(len(p["users"]) for p in population_plans)
     total_groups = sum(len(p["groups"]) for p in population_plans)
@@ -578,8 +571,8 @@ __all__ = [
     "BASELINE_LEVELS", "BROKEN_UPSTREAM_CIS_RULES", "ENUM_HARDENING_TOGGLES", "FIXED_HARDENING_TOGGLES",
     "HOURLY_RATE_USD", "IANA_TO_WINDOWS_TIMEZONE", "VULN_WEAK_PASSWORD", "VULN_WEAK_PASSWORD_3",
     "VULN_WEAK_PASSWORD_ALT", "WINDOWS_EVAL_EXPIRY_DAYS", "assign_ips", "build_ansible_groups", "build_manifest",
-    "build_vuln_vars", "compute_population_counts", "estimate_cost", "eval_expiry_notes", "expand_role_or_all",
-    "flatten_machines", "load_and_resolve", "load_existing_infra_secrets", "parse_auto_shutdown", "plan_deception",
+    "build_vuln_vars", "compute_population_counts", "derive_infra_secrets", "estimate_cost", "eval_expiry_notes",
+    "expand_role_or_all", "flatten_machines", "load_and_resolve", "parse_auto_shutdown", "plan_deception",
     "plan_edr", "plan_hardening", "plan_service_provisioning", "plan_vuln_injection", "reconcile",
     "resolve_attack_chain", "resolve_hardening_skip_rules", "semantic_checks", "validate_schema",
     # render

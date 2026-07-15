@@ -98,44 +98,21 @@ preflight() {
   echo "  subscription: $SUB   region: $REGION"
 }
 
-# ---- infra secrets (mint the domain-admin + ansible keys if this is a share) -
-# Everything under generated/<lab>/ is versioned. Population USER passwords are
-# fixed at lab creation and committed (group_vars/all/population-secrets.yml) —
-# deploy NEVER (re)generates them. Only the two INFRA keys (domain admin +
-# ansible WinRM) are per-deployer and gitignored; when a lab is shared and
-# deployed without re-running `forge.py generate` they are absent, so we mint
-# them here. Matches scripts/forge.py generate_password (same alphabet +
-# complexity). Runs BEFORE terraform apply, which needs admin/ansible.
+# ---- infra secrets (verify present; NEVER minted here) ----------------------
+# Every secret under generated/<lab>/ — population USER passwords AND the two
+# infra keys (domain admin + ansible WinRM) — is deterministic from
+# population.seed, so `forge generate {{ spec_rel }}` reproduces them all from
+# the spec alone. deploy.sh mints NOTHING: it just confirms generate ran (they
+# are needed by terraform apply below) and tells you to run it if not.
 ensure_secrets() {
-  log "0b. Infra secrets (domain admin + ansible WinRM)"
+  log "0b. Infra secrets (verify generate produced them — never minted here)"
   local tf_secrets="$TF_DIR/secrets.auto.tfvars.json"
   local ans_secrets="$ANS_DIR/inventory/group_vars/all/secrets.yml"
-  [ -f "$ANS_DIR/inventory/group_vars/all/population-secrets.yml" ] \
-    || die "population-secrets.yml missing — it is committed with the lab; run 'forge.py generate {{ spec_rel }}' first"
-  if [ -f "$tf_secrets" ] && [ -f "$ans_secrets" ]; then
-    echo "  infra secrets already present — reusing (not a fresh share)"
-    return 0
-  fi
-  echo "  fresh share detected — minting the two infra keys (population passwords are committed, not touched)"
-  TF_OUT="$tf_secrets" ANS_OUT="$ans_secrets" python3 - <<'PY'
-import json, os, secrets, string
-symbols = "!@#*-_=+"   # cmd.exe-safe (no & ^ % $ < > | ") — see forge.py generate_password
-alphabet = string.ascii_letters + string.digits + symbols
-def pw(length=20):
-    while True:
-        p = "".join(secrets.choice(alphabet) for _ in range(length))
-        if (any(c.islower() for c in p) and any(c.isupper() for c in p)
-                and any(c.isdigit() for c in p) and any(c in symbols for c in p)):
-            return p
-admin, ansible = pw(), pw()
-with open(os.environ["TF_OUT"], "w") as f:
-    json.dump({"admin_password": admin, "ansible_password": ansible}, f, indent=2); f.write("\n")
-os.makedirs(os.path.dirname(os.environ["ANS_OUT"]), exist_ok=True)
-with open(os.environ["ANS_OUT"], "w") as f:
-    f.write("# minted by deploy.sh — gitignored, never commit\n")
-    json.dump({"pf_admin_password": admin, "pf_ansible_password": ansible}, f, indent=2); f.write("\n")
-print("  minted domain-admin + ansible keys (population passwords untouched)")
-PY
+  local pop_secrets="$ANS_DIR/inventory/group_vars/all/population-secrets.yml"
+  for f in "$pop_secrets" "$tf_secrets" "$ans_secrets"; do
+    [ -f "$f" ] || die "$(basename "$f") missing — every secret is seed-derived; run 'forge generate {{ spec_rel }}' first"
+  done
+  echo "  all secrets present (seed-derived by generate) — nothing to mint"
 }
 
 # ---- state backend (invariant #4: never local) -----------------------------

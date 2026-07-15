@@ -123,10 +123,10 @@ def render_azure_terraform(
         "bastion_size": lab.get("bastion_size") or "Standard_B1s",
     }
     (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
-    # Strong secrets in a SEPARATE gitignored auto-tfvars overlay (terraform
-    # auto-loads *.auto.tfvars.json). Written for the author's own deploy; a
-    # sharer who never regenerates gets it minted by deploy.sh from
-    # secrets-manifest.json instead.
+    # The two infra secrets in a SEPARATE gitignored auto-tfvars overlay (terraform
+    # auto-loads *.auto.tfvars.json), so the committed terraform.tfvars.json stays
+    # secret-free and shareable. Both are seed-derived (derive_infra_secrets), so
+    # `generate` reproduces this file identically from the spec.
     (dst / "secrets.auto.tfvars.json").write_text(
         json.dumps({"admin_password": admin_password, "ansible_password": ansible_password}, indent=2) + "\n",
         encoding="utf-8",
@@ -245,39 +245,36 @@ def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list
 
 
 def write_lab_secrets(out_dir: Path, admin_password: str, ansible_password: str, population_plans: list[dict]) -> int:
-    """Splits the lab's secrets by lifetime, all under the inventory-adjacent
-    group_vars/all/ so ansible auto-loads them for every host (win_ping + site.yml):
+    """Writes the lab's secrets as ansible group_vars under group_vars/all/ so
+    ansible auto-loads them for every host (win_ping + site.yml). EVERY secret
+    here — population USER passwords AND the two infra keys (domain admin +
+    ansible WinRM) — is deterministic from population.seed, so `generate`
+    reproduces them identically from the spec alone (CLAUDE.md invariant #5).
+    They all live under gitignored generated/<lab>/, so none reaches git and
+    none is ever minted at deploy time — sharing the spec is sufficient to
+    reproduce them.
 
-      - population-secrets.yml (COMMITTED): the population USER passwords. They
-        are decided ONCE, here at lab creation, and travel WITH the lab, so every
-        deploy of a shared lab uses the SAME user passwords — deploy.sh never
-        (re)generates them. They are lab content, not an infra key.
-      - secrets.yml (GITIGNORED): the infra keys (domain admin + ansible WinRM).
-        Per-deployer; deploy.sh mints these if absent so a shared clone deploys
-        without regenerating. terraform's mirror of the same two values is
-        secrets.auto.tfvars.json (written by render_azure_terraform, gitignored).
+      - population-secrets.yml: the population USER passwords (pf_pop_secrets).
+      - secrets.yml: the two infra keys (pf_admin_password/pf_ansible_password),
+        mirrored for Terraform in secrets.auto.tfvars.json (render_azure_terraform).
 
-    secrets-manifest.json (committed) records which INFRA secrets deploy.sh must
-    mint. JSON is a valid YAML subset, so the .yml bodies are written as JSON to
-    dodge password-quoting pitfalls. Returns the population-user count."""
+    JSON is a valid YAML subset, so the .yml bodies are written as JSON to dodge
+    password-quoting pitfalls. Returns the population-user count."""
     pop_secrets = {u["sam_account_name"]: u["password"] for plan in population_plans for u in plan["users"]}
     gv = out_dir / "ansible" / "inventory" / "group_vars" / "all"
     gv.mkdir(parents=True, exist_ok=True)
     (gv / "population-secrets.yml").write_text(
-        "# Population user passwords — generated ONCE at lab creation, versioned\n"
-        "# with the lab. deploy.sh never regenerates these.\n"
+        "# Population user passwords — deterministic from population.seed, so\n"
+        "# `forge generate` reproduces them identically from the spec.\n"
         + json.dumps({"pf_pop_secrets": pop_secrets}, indent=2)
         + "\n",
         encoding="utf-8",
     )
     (gv / "secrets.yml").write_text(
-        "# GITIGNORED — infra keys minted per deploy (domain admin + ansible). Never commit.\n"
+        "# Infra keys (domain admin + ansible WinRM) — deterministic from\n"
+        "# population.seed like every other secret. Gitignored; never commit.\n"
         + json.dumps({"pf_admin_password": admin_password, "pf_ansible_password": ansible_password}, indent=2)
         + "\n",
-        encoding="utf-8",
-    )
-    (out_dir / "secrets-manifest.json").write_text(
-        json.dumps({"infra_secrets": ["admin_password", "ansible_password"]}, indent=2) + "\n",
         encoding="utf-8",
     )
     return len(pop_secrets)

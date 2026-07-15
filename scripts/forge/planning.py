@@ -8,7 +8,6 @@ the render module turns these plans into Terraform/Ansible artifacts.
 from __future__ import annotations
 
 import copy
-import json
 import random
 import sys
 from pathlib import Path
@@ -469,21 +468,28 @@ def load_and_resolve(spec_path: Path) -> tuple[dict, dict] | None:
     return spec, manifest
 
 
-def load_existing_infra_secrets(out_dir: Path, provider: str) -> tuple[str | None, str | None]:
-    """Reuse the per-deployer infra secrets (admin/ansible passwords) minted by a
-    previous `generate` of this lab, so regenerating an already-deployed lab does
-    NOT re-randomize them. A fresh pair would make Terraform replace every VM
-    (admin_password forces replacement — it destroyed a live DC once) and break
-    WinRM auth against the running hosts. The first `generate` on an empty out_dir
-    still mints an unguessable CSPRNG pair; reuse only when both are present.
-    Delete secrets.auto.tfvars.json to intentionally rotate."""
-    secrets_file = out_dir / "terraform" / provider / "secrets.auto.tfvars.json"
-    try:
-        data = json.loads(secrets_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None, None
-    admin, ansible = data.get("admin_password"), data.get("ansible_password")
-    return (admin, ansible) if admin and ansible else (None, None)
+def derive_infra_secrets(seed: int) -> tuple[str, str]:
+    """The two infra credentials — the domain-admin password (also the local VM
+    admin + DSRM password) and the ansible WinRM password — derived
+    deterministically from population.seed.
+
+    Making them seed-derived (not a per-deployer CSPRNG pair) is what lets the
+    SPEC ALONE reproduce the entire lab: every value in lab-report.md, these two
+    included, is now a pure function of the spec, so sharing the spec reproduces
+    an identical lab on any infrastructure (CLAUDE.md invariant #5). It also makes
+    a regenerate a Terraform no-op — the same password comes out every time, so
+    no VM is ever replaced — which is what the old load-and-reuse hack existed to
+    avoid. The +7000/+7001 offsets keep these two streams distinct from
+    population.py's per-domain seeds (seed + domain index), resolve_attack_chain's
+    +8000 and plan_vuln_injection's +9000.
+
+    This is acceptable precisely because a PurpleForge lab is isolated
+    (invariant #1: no public IP, VPN-only) and authorized-use-only (invariant #6),
+    and its population user passwords are already seed-deterministic and travel
+    with the lab — the admin credential is no more exposed than they are."""
+    admin = generate_password(rng=random.Random(seed + 7000))
+    ansible = generate_password(rng=random.Random(seed + 7001))
+    return admin, ansible
 
 
 def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:

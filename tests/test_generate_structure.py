@@ -18,14 +18,9 @@ from _helpers import make_spec, write_spec
 
 
 def _generate(tmp_path, **spec_kwargs):
+    # All secrets are seed-derived, so generate is hermetic — no pre-seeding needed.
     spec_file = write_spec(tmp_path, make_spec(**spec_kwargs))
     out = tmp_path / "out"
-    # Pre-seed infra secrets so generate is hermetic (no CSPRNG surprises here).
-    sec = out / "terraform" / spec_kwargs.get("provider", "azure")
-    sec.mkdir(parents=True, exist_ok=True)
-    (sec / "secrets.auto.tfvars.json").write_text(
-        json.dumps({"admin_password": "Ax1!aaaa", "ansible_password": "Bx2!bbbb"}), encoding="utf-8"
-    )
     assert forge.cmd_generate(SimpleNamespace(spec=str(spec_file), out_dir=str(out), plan=False)) == 0
     return out
 
@@ -61,4 +56,6 @@ def test_committed_terraform_tfvars_carries_no_infra_secret(tmp_path):
     tfvars_text = (out / "terraform" / "azure" / "terraform.tfvars.json").read_text(encoding="utf-8")
     assert "admin_password" not in tfvars_text
     assert "ansible_password" not in tfvars_text
-    assert "Ax1!aaaa" not in tfvars_text
+    # the actual seed-derived admin secret must not leak into the shareable tfvars.
+    admin_pw, _ = forge.derive_infra_secrets(1)  # make_spec default seed
+    assert admin_pw not in tfvars_text

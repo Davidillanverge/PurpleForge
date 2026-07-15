@@ -3,13 +3,10 @@
 The manifest-level determinism check lives in test_manifest.py; this asserts the
 stronger, user-facing promise: "compartir un lab = compartir su spec → artefactos
 idénticos". Two independent `generate` runs of the same spec must produce a
-byte-for-byte identical tree (Terraform + Ansible + deploy scripts + report).
-
-The ONE thing that is deliberately NOT reproducible is the per-deployer infra
-secret pair (admin/ansible passwords — drawn from the CSPRNG, invariant #5's
-explicit carve-out). So both runs are pre-seeded with the same
-secrets.auto.tfvars.json, which `load_existing_infra_secrets` reuses — isolating
-the test to what the invariant actually promises is identical.
+byte-for-byte identical tree — Terraform + Ansible + deploy scripts + report AND
+every secret — because ALL secrets (population user passwords and the two infra
+keys) are now derived from population.seed. Nothing is per-deployer, so no
+pre-seeding is needed: the spec alone fully determines the lab.
 """
 
 from __future__ import annotations
@@ -20,14 +17,6 @@ from types import SimpleNamespace
 
 import forge
 from _helpers import make_spec, write_spec
-
-FIXED_SECRETS = {"admin_password": "Fixed_Admin_Pw_1!", "ansible_password": "Fixed_Ansible_Pw_1!"}
-
-
-def _seed_infra_secrets(out_dir, provider: str) -> None:
-    sec_dir = out_dir / "terraform" / provider
-    sec_dir.mkdir(parents=True, exist_ok=True)
-    (sec_dir / "secrets.auto.tfvars.json").write_text(json.dumps(FIXED_SECRETS), encoding="utf-8")
 
 
 def _generate(spec_file, out_dir) -> int:
@@ -56,8 +45,6 @@ def test_azure_generate_is_byte_identical_across_runs(tmp_path):
     )
     spec_file = write_spec(tmp_path, spec)
     a, b = tmp_path / "run-a", tmp_path / "run-b"
-    for d in (a, b):
-        _seed_infra_secrets(d, "azure")
     assert _generate(spec_file, a) == 0
     assert _generate(spec_file, b) == 0
     _assert_tree_identical(a, b)
@@ -74,21 +61,27 @@ def test_proxmox_generate_is_byte_identical_across_runs(tmp_path):
     )
     spec_file = write_spec(tmp_path, spec)
     a, b = tmp_path / "run-a", tmp_path / "run-b"
-    for d in (a, b):
-        _seed_infra_secrets(d, "proxmox")
     assert _generate(spec_file, a) == 0
     assert _generate(spec_file, b) == 0
     _assert_tree_identical(a, b)
 
 
-def test_generate_reuses_seeded_infra_secrets(tmp_path):
-    """A generate over an out_dir that already holds secrets.auto.tfvars.json must
-    reuse it verbatim (never re-randomize) — the mechanism the determinism test
-    above relies on, asserted directly."""
-    spec = make_spec(name="det-reuse", provider="azure", vulns=["kerberoasting"])
-    spec_file = write_spec(tmp_path, spec)
+def test_infra_secrets_are_seed_deterministic(tmp_path):
+    """The two infra credentials (admin/ansible) are a pure function of
+    population.seed: identical across regenerates of the same spec, and different
+    for a different seed. This is what makes lab-report.md fully reproducible from
+    the spec (no per-deployer values)."""
+    admin1, ansible1 = forge.derive_infra_secrets(1234)
+    admin2, ansible2 = forge.derive_infra_secrets(1234)
+    assert (admin1, ansible1) == (admin2, ansible2)
+    assert admin1 != ansible1, "admin and ansible must draw from distinct seed streams"
+    other_admin, _ = forge.derive_infra_secrets(9999)
+    assert other_admin != admin1, "a different seed must yield a different admin password"
+
+    # And they land, unchanged, in the generated secrets overlay.
+    spec_file = write_spec(tmp_path, make_spec(name="det-secrets", seed=1234, vulns=["kerberoasting"]))
     out = tmp_path / "run"
-    _seed_infra_secrets(out, "azure")
     assert _generate(spec_file, out) == 0
-    written = json.loads((out / "terraform" / "azure" / "secrets.auto.tfvars.json").read_text(encoding="utf-8"))
-    assert written == FIXED_SECRETS
+    tf = json.loads((out / "terraform" / "azure" / "secrets.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert tf["admin_password"] == admin1
+    assert tf["ansible_password"] == ansible1

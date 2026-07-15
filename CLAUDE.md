@@ -79,9 +79,14 @@ Validación: `forge validate --run`. Desmontaje: `forge teardown`.
   se resuelven al desplegar (`ARM_SUBSCRIPTION_ID` o login `az`). Estado remoto
   en storage account por-desplegador; región/SKU vía `PF_REGION`/`PF_VM_SIZE`/
   `PF_TFSTATE_RG` sin editar el spec.
-- **Secretos por ciclo de vida** (`ansible/inventory/group_vars/all/`): las
-  passwords de población son deterministas del seed (`population-secrets.yml`),
-  así que `generate` las reproduce idénticas. Las llaves de infra (admin de
-  dominio + ansible WinRM) son por-desplegador, minteadas por `deploy.sh`
-  (`ensure_secrets`). Como `generated/` está gitignored, ningún secreto llega a
-  git.
+- **Todos los secretos son deterministas del seed** (`ansible/inventory/
+  group_vars/all/`): tanto las passwords de población (`population-secrets.yml`)
+  como las dos llaves de infra (admin de dominio + ansible WinRM,
+  `secrets.yml` / `secrets.auto.tfvars.json`, vía `derive_infra_secrets`) se
+  derivan de `population.seed`. Por eso **el spec por sí solo reproduce el
+  laboratorio completo** — todo lo que aparece en `lab-report.md` incluido — y
+  regenerar es un no-op para Terraform (misma password siempre, sin reemplazo de
+  VMs). `deploy.sh` no mintea nada: solo verifica que `generate` los produjo.
+  Como `generated/` está gitignored, ningún secreto llega a git; compartir el
+  spec basta para reproducirlos. Es aceptable porque el lab está aislado
+  (invariante #1) y es de uso autorizado (invariante #6).

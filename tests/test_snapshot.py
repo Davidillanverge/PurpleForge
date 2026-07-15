@@ -9,7 +9,6 @@ and cmd_reset's pre-flight guards.
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import forge
@@ -17,14 +16,9 @@ from _helpers import make_spec, write_spec
 
 
 def _generate(tmp_path, **spec_kwargs):
-    provider = spec_kwargs.get("provider", "azure")
+    # All secrets are seed-derived, so generate is hermetic — no pre-seeding needed.
     spec_file = write_spec(tmp_path, make_spec(**spec_kwargs))
     out = tmp_path / "out"
-    sec = out / "terraform" / provider
-    sec.mkdir(parents=True, exist_ok=True)
-    (sec / "secrets.auto.tfvars.json").write_text(
-        json.dumps({"admin_password": "Ax1!aaaa", "ansible_password": "Bx2!bbbb"}), encoding="utf-8"
-    )
     assert forge.cmd_generate(SimpleNamespace(spec=str(spec_file), out_dir=str(out), plan=False)) == 0
     return spec_file, out
 
