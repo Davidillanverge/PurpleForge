@@ -40,21 +40,6 @@ function Ensure-LocalAdmin($Name, $Password) {
     Add-LocalGroupMember -Group $adminGroup -Member $Name
   }
 }
-# Free the "Administrator" name for GOAD's promotion-time rename. The
-# domain_controller role renames the local ${admin_username} account to
-# "Administrator"; that fails with "The name Administrator is already in use" if
-# the built-in Administrator (RID 500) still holds the name (as it does on any
-# stock Windows image where it's enabled). Rename+disable the built-in one out of
-# the way first — unless the admin IS the built-in Administrator. Local accounts
-# are superseded by the domain's at DC promotion, so this only matters pre-promo.
-if ('${admin_username}' -ne 'Administrator') {
-  $pfBuiltinAdmin = Get-LocalUser | Where-Object { $_.SID.Value -match '-500$' }
-  if ($pfBuiltinAdmin -and $pfBuiltinAdmin.Name -eq 'Administrator') {
-    Disable-LocalUser -Name $pfBuiltinAdmin.Name -ErrorAction SilentlyContinue
-    Rename-LocalUser -Name $pfBuiltinAdmin.Name -NewName 'Administrator.builtin' -ErrorAction SilentlyContinue
-  }
-}
-
 Ensure-LocalAdmin '${admin_username}' '${admin_password}'
 Ensure-LocalAdmin 'ansible' '${ansible_password}'
 
@@ -101,4 +86,20 @@ if (Get-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -ErrorAction Sile
 }
 
 Restart-Service -Name WinRM
+
+# Free the "Administrator" name for GOAD's promotion-time rename of the local
+# ${admin_username} account (it fails with "the name Administrator is already in
+# use" if the built-in Administrator still holds it). Done LAST — after WinRM/5986
+# is already up — and as a RENAME only (never Disable-LocalUser: disabling the
+# built-in account can log off the first-boot autologon session and kill this very
+# script mid-run, before the WinRM listener is created). Renaming keeps the SID,
+# so it doesn't drop the session. Local accounts are superseded by the domain's at
+# DC promotion, so this only matters for the pre-promotion rename.
+if ('${admin_username}' -ne 'Administrator') {
+  $pfBuiltinAdmin = Get-LocalUser | Where-Object { $_.SID -and $_.SID.Value -match '-500$' }
+  if ($pfBuiltinAdmin -and $pfBuiltinAdmin.Name -eq 'Administrator') {
+    Rename-LocalUser -Name 'Administrator' -NewName 'AdministratorBuiltin' -ErrorAction SilentlyContinue
+  }
+}
+
 Stop-Transcript -ErrorAction SilentlyContinue | Out-Null

@@ -105,7 +105,11 @@ tf_apply() {
   log "1. terraform init + apply (local state backend)"
   terraform -chdir="$TF_DIR" init -input=false || die "terraform init failed"
   local tries=0 max=5
-  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false; do
+  # -refresh=false: on a RE-RUN, bpg's refresh reads each existing VM through the
+  # QEMU guest agent and can block for minutes per VM (same agent-wait that hangs
+  # teardown). A fresh apply has nothing to refresh, so this is a no-op there and
+  # only speeds up idempotent re-runs; drift isn't expected in a deterministic lab.
+  until terraform -chdir="$TF_DIR" apply -refresh=false -auto-approve -input=false; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "terraform apply still failing after $tries tries — see the error above"
     warn "apply failed (attempt $tries/$max) — retrying in 15s (Proxmox API/clone lag is expected)"
