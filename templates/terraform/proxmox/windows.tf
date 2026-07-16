@@ -119,6 +119,16 @@ resource "proxmox_virtual_environment_vm" "windows" {
       }
     }
 
+    # Upstream DNS for the FIRST-boot window only. GOAD's `common` role installs
+    # PowerShellGet/NuGet from the internet BEFORE the DC is promoted, so the box
+    # needs a resolver it can actually reach (the isolated lab had no DNS -> an
+    # inherited/unreachable server -> name resolution failed). The lab reaches the
+    # internet via the bastion NAT (deploy.sh route_lab). GOAD repoints DNS to the
+    # domain controller during promotion/join, so this only matters at first boot.
+    dns {
+      servers = var.lab_upstream_dns
+    }
+
     # Keep user_account so cloudbase-init also sets the admin password the normal
     # way where the provider still honours cipassword alongside a custom
     # user_data; the bootstrap script re-asserts it regardless, so the two never

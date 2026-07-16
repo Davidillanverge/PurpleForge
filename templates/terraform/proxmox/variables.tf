@@ -178,3 +178,14 @@ variable "full_clone" {
   type        = bool
   default     = false
 }
+
+variable "lab_upstream_dns" {
+  description = <<-EOT
+    Public resolvers the lab Windows VMs use at FIRST boot, before GOAD repoints
+    DNS to the domain controller. Needed so the DC can resolve the internet for
+    GOAD's pre-promotion package installs (the lab reaches the internet via the
+    bastion NAT). Not used once the domain is up.
+  EOT
+  type        = list(string)
+  default     = ["1.1.1.1", "8.8.8.8"]
+}

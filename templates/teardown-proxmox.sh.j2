@@ -32,7 +32,7 @@ remove_cron() {
   if command -v crontab >/dev/null 2>&1; then
     crontab -l 2>/dev/null | grep -vF "$helper" | crontab - 2>/dev/null || true
   fi
-  rm -f "$helper" "$LAB_DIR/.pf-proxmox-env"
+  rm -f "$helper"
   echo "  cron + helper removed"
 }
 
@@ -41,7 +41,11 @@ destroy() {
   log "2. terraform destroy"
   terraform -chdir="$TF_DIR" init -input=false >/dev/null 2>&1 || true
   local tries=0
-  until terraform -chdir="$TF_DIR" destroy -auto-approve -input=false; do
+  # -refresh=false: the bpg provider's pre-destroy REFRESH reads each VM through
+  # the QEMU guest agent and BLOCKS on it (the same agent-wait that slows apply) —
+  # on teardown that hangs indefinitely. We're tearing everything down anyway, so
+  # destroy straight from the recorded state without re-reading the guests.
+  until terraform -chdir="$TF_DIR" destroy -refresh=false -auto-approve -input=false; do
     tries=$((tries+1))
     [ "$tries" -ge 3 ] && { warn "destroy still failing after $tries tries — check the Proxmox UI for leftover VMs in pool '$LAB'"; break; }
     warn "destroy failed (attempt $tries) — retrying in 15s"
@@ -83,4 +87,7 @@ remove_cron
 destroy
 verify
 local_cleanup
+# The secret env is removed LAST (not in remove_cron) so a failed/retried destroy
+# still has the credentials it was sourced with.
+rm -f "$LAB_DIR/.pf-proxmox-env"
 log "TEARDOWN COMPLETE — $LAB"
