@@ -13,5 +13,6 @@
   "bastion_template_id": 9000,
   "jumpbox_external_ip": "192.168.1.50",
   "jumpbox_external_prefix": 24,
-  "jumpbox_external_gateway": "192.168.1.1"
+  "jumpbox_external_gateway": "192.168.1.1",
+  "_cloud_from_remote": "If Proxmox is cloud-hosted and you deploy from a REMOTE host: export PF_BASTION_ENDPOINT=<proxmox-public-ip> and PF_BASTION_SSH_PORT=<dnat-ssh-port> before deploy.sh (reaches the bastion via the host's public IP + DNAT); and add an ssh{node{name,address=<public-ip>}} block to versions.tf's provider so bpg's snippet SSH targets the public IP (the node reports its internal IP). See PROXMOX-DEPLOY-RUNBOOK.md."
 }
