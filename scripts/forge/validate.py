@@ -134,7 +134,11 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
     render_validation_report consumes it unchanged. Reads the domain-admin
     password from the generated terraform.tfvars.json (the RID-500 Administrator
     shares it — see render_lab_report)."""
-    tfvars_path = lab_dir / "terraform" / "azure" / "terraform.tfvars.json"
+    # Provider-aware: the compute layer lives under terraform/<provider>/ (azure or
+    # proxmox), not always azure. Both carry the same terraform.tfvars.json +
+    # secrets.auto.tfvars.json split, so only the subdir differs.
+    provider = manifest.get("lab", {}).get("provider", "azure")
+    tfvars_path = lab_dir / "terraform" / provider / "terraform.tfvars.json"
     if not tfvars_path.exists():
         raise SpecError(f"{tfvars_path} not found — generate + deploy the lab first (need the live credentials).")
     tv = json.loads(tfvars_path.read_text(encoding="utf-8"))

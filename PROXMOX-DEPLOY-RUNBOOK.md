@@ -152,3 +152,44 @@ local Terraform state.
 | WireGuard tunnel never comes up | `jumpbox_external_ip`/`_gateway` wrong, or bastion didn't boot | Step 4 values, then bastion console |
 | WinRM never comes up on a guest | cloudbase-init/UserDataPlugin not enabled | Check `C:\pf-bootstrap.log` in-guest; redo step 2b.3 |
 | Windows VM won't network | Missing VirtIO net driver | Step 2b.2 |
+
+## Deploying to a CLOUD-hosted Proxmox from a REMOTE machine
+
+The provider assumes a bare-metal Proxmox on the same LAN as the deploy host. If
+Proxmox itself runs on a cloud VM (e.g. an Azure VM, nested-virt-capable size)
+and you deploy from elsewhere over the internet, a few host/topology items are
+NOT auto-generated (they're per-host, like `host.auto.tfvars.json`):
+
+- **Nested virt**: the cloud VM size must expose VT-x to the guest (Azure Dsv3+).
+  Confirm `/dev/kvm` exists on the Proxmox host.
+- **Disk**: use a fast disk (Azure Premium SSD, not Standard) — nested Windows on
+  a slow disk crawls. Clones are now LINKED by default (`full_clone=false`), so a
+  disk big enough for the templates + thin clones suffices.
+- **Firewall/NSG**: open inbound **UDP 51820** (WireGuard) and **TCP 2222**
+  (bastion SSH via DNAT) to the Proxmox host, plus 22/8006 for admin.
+- **Host NAT/DNAT** (so a remote deploy host reaches the internal bastion):
+  `iptables -t nat -A PREROUTING -i <wan> -p udp --dport 51820 -j DNAT --to <bastion-ip>:51820`,
+  same for `tcp --dport 2222 -> <bastion-ip>:22`, plus a `POSTROUTING ... -o vmbr0
+  -d <bastion-ip> -p tcp --dport 22 -j MASQUERADE` so the bastion's deny-by-default
+  firewall sees the host IP (it only opens 51820 to the world otherwise). Persist
+  with `netfilter-persistent`.
+- **deploy.sh from a remote host**: point the WireGuard endpoint + bastion SSH at
+  the Proxmox host's PUBLIC ip and port 2222 — set `BASTION_IP` to the public IP
+  in `wg_up`/`route_lab` and add `-p 2222` to the bastion `ssh`.
+- **bpg SSH to the node** (snippet uploads): the API token isn't enough — bpg SSHes
+  to the node. On a cloud host the node reports its INTERNAL ip, unreachable from
+  a remote deploy host, so override it in `terraform/proxmox/versions.tf`:
+  `provider "proxmox" { ssh { node { name = "<node>" address = "<public-ip>" } } }`
+  and export `PROXMOX_VE_SSH_USERNAME=root` + `PROXMOX_VE_SSH_PRIVATE_KEY` (add
+  your key to the node's `/root/.ssh/authorized_keys`, `PermitRootLogin prohibit-password`).
+
+## Windows template account hygiene (avoids a DC-promotion failure)
+
+`windows-bootstrap.ps1.tpl` creates the `purpleforge` + `ansible` accounts at
+first boot, and GOAD's `domain_controller` role RENAMES `purpleforge` -> the
+domain `Administrator` at promotion. So the template must NOT leave a second
+account already named `Administrator` enabled, and cloudbase-init must NOT create
+its own extra admin (set `username` in `cloudbase-init.conf` to `purpleforge`,
+not `Admin`). If the built-in Administrator is enabled in your golden image,
+disable or rename it before `qm template`, or promotion fails with
+`Rename-LocalUser : The name Administrator is already in use`.

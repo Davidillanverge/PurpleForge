@@ -142,6 +142,20 @@ BROKEN_UPSTREAM_CIS_RULES: dict[str, list[str]] = {
     ],
 }
 
+# Account lockout DURATION (1.2.1) and RESET WINDOW (1.2.4) are applied by the CIS
+# roles through win_security_policy's LOCAL secedit. On a DOMAIN CONTROLLER the
+# account lockout policy is domain-governed (Default Domain Policy), not local, so
+# secedit rejects those keys with "The parameter is incorrect" and aborts the whole
+# baseline. The lockout THRESHOLD (1.2.2) applies cleanly. These are skipped ONLY
+# for groups that include a domain controller — member servers / workstations set
+# them locally without issue. The domain still carries a lockout policy from the
+# Default Domain Policy; this only drops the two keys the local secedit can't set.
+DC_LOCAL_SECEDIT_UNSETTABLE_RULES: dict[str, list[str]] = {
+    "windows-server-2019": ["win19cis_rule_1_2_1", "win19cis_rule_1_2_4"],
+    "windows-server-2022": ["win22cis_rule_1_2_1", "win22cis_rule_1_2_4"],
+    "windows-server-2025": ["win25cis_rule_1_2_1", "win25cis_rule_1_2_4"],
+}
+
 
 def validate_schema(spec: dict, schema: dict) -> list[str]:
     validator = jsonschema.Draft202012Validator(schema)
@@ -1038,13 +1052,22 @@ def plan_hardening(machines: list[dict], resolved_defense: dict, reconciliation:
             continue
         roles_present = {m["role"] for m in target_machines if m["os"] == os_}
         tags = sorted({t for r in roles_present for t in baseline["tags_by_role"].get(r, [])})
+        dc_secedit_skips = (
+            DC_LOCAL_SECEDIT_UNSETTABLE_RULES.get(os_, [])
+            if "domain-controller" in roles_present
+            else []
+        )
         groups.append(
             {
                 "os": os_,
                 "role_name": role_name,
                 "hosts": hosts,
                 "tags": tags,
-                "skip_rule_vars": skip_rules_by_os.get(os_, []) + BROKEN_UPSTREAM_CIS_RULES.get(os_, []),
+                "skip_rule_vars": (
+                    skip_rules_by_os.get(os_, [])
+                    + BROKEN_UPSTREAM_CIS_RULES.get(os_, [])
+                    + dc_secedit_skips
+                ),
             }
         )
 

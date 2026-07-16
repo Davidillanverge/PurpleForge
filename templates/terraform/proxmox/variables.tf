@@ -165,3 +165,16 @@ variable "bastion_memory" {
   type        = number
   default     = 1024
 }
+
+variable "full_clone" {
+  description = <<-EOT
+    Clone mode for the lab VMs. false (default) = LINKED clone: a copy-on-write
+    thin snapshot of the template — near-instant and tiny, the sane default on
+    lvmthin/zfs/qcow2-dir (a full 60GB copy per VM crawls on a single-disk host
+    and makes every deploy/reset slow). true = FULL clone: an independent copy,
+    needed only on storage that can't linked-clone (lvm-thick, dir with raw). The
+    template disk stays present either way (it's a template), so linked is safe.
+  EOT
+  type        = bool
+  default     = false
+}

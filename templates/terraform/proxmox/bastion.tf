@@ -47,7 +47,7 @@ resource "proxmox_virtual_environment_vm" "bastion" {
 
   clone {
     vm_id = var.bastion_template_id
-    full  = true
+    full  = var.full_clone
   }
 
   agent {

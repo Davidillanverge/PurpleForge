@@ -12,6 +12,33 @@
 # win_domain_group_membership only report changed when the value differs).
 
 # --- LAPS ---
+# Native Windows LAPS ships only on patched Windows Server 2019+/Win10 22H2+
+# (the 2023-04 cumulative update onward). Older base images (e.g. an RTM
+# 2022 eval ISO) lack the LAPS PowerShell module, so probe for it first and
+# degrade gracefully instead of aborting the whole defense stack.
+- name: "pf_controls | laps | detect Windows LAPS module availability"
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      [bool](Get-Module -ListAvailable -Name LAPS -ErrorAction SilentlyContinue)
+  register: pf_controls_laps_probe
+  when: pf_controls_laps | bool
+
+- name: "pf_controls | laps | set availability fact"
+  ansible.builtin.set_fact:
+    pf_controls_laps_available: "{{ (pf_controls_laps | bool) and (pf_controls_laps_probe.output | default([false]) | first | bool) }}"
+
+- name: "pf_controls | laps | WARN Windows LAPS requested but the LAPS module is absent (skipping LAPS controls)"
+  ansible.builtin.debug:
+    msg: >-
+      Windows LAPS was requested (pf_controls_laps=true) but the LAPS PowerShell
+      module is not present on {{ inventory_hostname }} — this base image predates
+      Windows LAPS (2023-04 CU). Skipping the LAPS schema extension + policy. Patch
+      the template's OS or unset the control to silence this.
+  when:
+    - pf_controls_laps | bool
+    - not pf_controls_laps_available
+
 - name: "pf_controls | laps | extend AD schema for Windows LAPS (root DC only, one-time)"
   ansible.windows.win_powershell:
     script: |
@@ -23,7 +50,7 @@
         $Ansible.Changed = $false
       }
   when:
-    - pf_controls_laps | bool
+    - pf_controls_laps_available | default(false) | bool
     - pf_controls_laps_schema_host is not none
     - inventory_hostname == pf_controls_laps_schema_host
   vars:
@@ -43,7 +70,7 @@
     - { name: PasswordComplexity, data: 4 }
     - { name: PasswordLength, data: 16 }
     - { name: PasswordAgeDays, data: 30 }
-  when: pf_controls_laps | bool
+  when: pf_controls_laps_available | default(false) | bool
 
 # --- LSA protection (RunAsPPL) ---
 - name: "pf_controls | lsa_protection | enable RunAsPPL (LSASS as a protected process)"

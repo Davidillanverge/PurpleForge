@@ -68,14 +68,16 @@ resource "proxmox_virtual_environment_vm" "windows" {
     # PF_TEMPLATE_ID) > the os->template map (var.template_map, host.auto.tfvars).
     # lookup(...,null) instead of a bare index so an overridden host needs no
     # template_map entry for its os; coalesce still errors clearly if nothing
-    # resolves. full=true makes an independent copy so destroying the lab never
-    # touches the source template.
+    # resolves. var.full_clone (default false) = linked clone: instant + tiny on
+    # lvmthin, vs a full 60GB copy per VM that crawls on a single-disk host. The
+    # template disk stays present (it's a template), so destroying the lab never
+    # touches it either way.
     vm_id = coalesce(
       each.value.template_id,
       lookup(var.template_id_overrides, each.value.role, null),
       lookup(var.template_map, each.value.os, null),
     )
-    full = true
+    full = var.full_clone
   }
 
   agent {

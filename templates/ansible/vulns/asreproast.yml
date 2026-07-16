@@ -11,6 +11,39 @@
 # userAccountControl's DONT_REQ_PREAUTH bit isn't cleanly settable through
 # win_domain_user, so a separate win_powershell task flips it with the exact
 # Set-ADAccountControl call Vulnerable-AD uses.
+#
+# The crackable password is REJECTED by the hardened domain password policy (CIS
+# 1.1.4 min length 14, baked into the Default Domain Policy GPO). Exempt just this
+# account with a Fine-Grained Password Policy (the realistic gap) — must run BEFORE
+# the password reset. Shares the same 'pf-vuln-pso' the kerberoast inject uses.
+- name: "asreproast | exempt {{ vuln_asrep_account }} from the domain password policy (Fine-Grained Password Policy)"
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param([String]$Account)
+      Import-Module ActiveDirectory
+      $changed = $false
+      if (-not (Get-ADFineGrainedPasswordPolicy -Filter "name -eq 'pf-vuln-pso'" -ErrorAction SilentlyContinue)) {
+        New-ADFineGrainedPasswordPolicy -Name 'pf-vuln-pso' -Precedence 10 `
+          -MinPasswordLength 1 -ComplexityEnabled $false -PasswordHistoryCount 0 `
+          -MinPasswordAge '0.00:00:00' -MaxPasswordAge '365.00:00:00' `
+          -ReversibleEncryptionEnabled $false -LockoutThreshold 0 -Confirm:$false
+        $changed = $true
+      }
+      $subjects = @((Get-ADFineGrainedPasswordPolicy -Identity 'pf-vuln-pso').AppliesTo | ForEach-Object { $_.ToString() })
+      if (-not ($subjects -match $Account)) {
+        Add-ADFineGrainedPasswordPolicySubject -Identity 'pf-vuln-pso' -Subjects $Account
+        $changed = $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Account: "{{ vuln_asrep_account }}"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
 - name: "asreproast | reset {{ vuln_asrep_account }}'s password to the crackable value"
   win_domain_user:
     name: "{{ vuln_asrep_account }}"

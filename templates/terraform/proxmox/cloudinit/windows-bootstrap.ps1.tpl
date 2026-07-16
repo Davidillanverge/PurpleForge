@@ -72,13 +72,17 @@ Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $false
 Set-Item -Path WSMan:\localhost\Service\MaxMemoryPerShellMB -Value 1024 -ErrorAction SilentlyContinue
 
 # --- Firewall --------------------------------------------------------------
-# Allow 5986 from the lab supernet only. The lab bridge has no internet uplink,
-# so WinRM never reaches outside the lab regardless (CLAUDE.md invariant #1);
-# this scoping mirrors the Azure layer's VNet-scoped rule.
+# Allow 5986 from the lab supernet AND the WireGuard client subnet
+# (10.250.250.0/24). Ansible/operators reach the DC THROUGH the tunnel: the
+# bastion forwards those packets keeping the WG client's source IP (10.250.250.2),
+# which is NOT in the lab supernet — a supernet-only rule silently drops WinRM
+# over the tunnel (the bug that made 5986 unreachable while 5985 worked). Still
+# no inbound from outside these private ranges, so invariant #1 holds.
+$pfWinrmScopes = @('${supernet}','10.250.250.0/24')
 if (Get-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -ErrorAction SilentlyContinue) {
-  Set-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -RemoteAddress '${supernet}' -Enabled True
+  Set-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -RemoteAddress $pfWinrmScopes -Enabled True
 } else {
-  New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -Direction Inbound -Protocol TCP -LocalPort 5986 -RemoteAddress '${supernet}' -Action Allow -Profile Any | Out-Null
+  New-NetFirewallRule -DisplayName 'PurpleForge-WinRM-HTTPS' -Direction Inbound -Protocol TCP -LocalPort 5986 -RemoteAddress $pfWinrmScopes -Action Allow -Profile Any | Out-Null
 }
 
 Restart-Service -Name WinRM

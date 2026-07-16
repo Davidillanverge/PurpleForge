@@ -200,10 +200,16 @@ for _,v in d.items():
   # Detect the bastion NIC on the lab bridge = the one NOT carrying the default
   # route (net0 is the routable/mgmt NIC with the default gateway; net1 is the
   # lab-side NIC we tag per domain).
+  # base64 the rules so the whole "VLAN GW PREFIX" block survives the SSH hop:
+  # ssh joins argv with spaces and the remote shell re-splits, so a spaced/
+  # multi-line "$rules" passed as a positional arg arrives truncated to its first
+  # word (the bug that left the .254 gateway unset — "gw /"). A single base64
+  # token has no spaces, so $1 arrives intact.
+  local rules_b64; rules_b64="$(printf '%s' "$rules" | base64 | tr -d '\n')"
   local remote
-  remote="$($SSH bash -s -- "$rules" <<'REMOTE'
+  remote="$($SSH bash -s -- "$rules_b64" <<'REMOTE'
 set -e
-RULES="$1"
+RULES="$(printf '%s' "$1" | base64 -d)"
 sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
 DEFAULT_IF=$(ip route show default | awk '{print $5; exit}')
 LAB_IF=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | grep -vx "lo" | grep -vx "$DEFAULT_IF" | grep -E '^(eth|ens|enp)' | head -1)
@@ -215,6 +221,17 @@ echo "$RULES" | while read -r VLAN GW PREFIX; do
   sudo ip link set "${LAB_IF}.${VLAN}" up
   echo "  routed VLAN ${VLAN} gw ${GW}/${PREFIX} on ${LAB_IF}"
 done
+# Outbound-only internet for the lab: GOAD's `common` role installs
+# PowerShellGet/NuGet from the PS Gallery during setup (pre-DC-promotion), which
+# needs egress. On Azure the lab NICs have outbound by default; on the isolated
+# Proxmox lab bridge they don't. MASQUERADE lab subnets out the bastion's default
+# NIC — outbound only, no inbound is opened, so invariant #1 holds. Idempotent.
+LAB_SUPERNET="$(printf '%s' "$RULES" | awk 'NR==1{n=$2; sub(/\.[0-9]+\.[0-9]+$/,".0.0/16",n); print n}')"
+if [ -n "$LAB_SUPERNET" ]; then
+  sudo iptables -t nat -C POSTROUTING -s "$LAB_SUPERNET" -o "$DEFAULT_IF" -j MASQUERADE 2>/dev/null \
+    || sudo iptables -t nat -A POSTROUTING -s "$LAB_SUPERNET" -o "$DEFAULT_IF" -j MASQUERADE
+  echo "  lab egress NAT: $LAB_SUPERNET -> $DEFAULT_IF (outbound only)"
+fi
 REMOTE
 )" || die "bastion VLAN routing setup failed"
   echo "$remote"
