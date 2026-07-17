@@ -10,11 +10,15 @@
 # Prereqs (once per machine): terraform wireguard-tools openssl curl python3
 # docker openssh-client.
 #
-# CHOOSE THE PROXMOX HOST — this script bakes NO credentials. Export before run:
+# CHOOSE THE PROXMOX HOST — this script bakes NO credentials. Provide them EITHER
+# by exporting the env vars, OR by filling in the .pf-proxmox-env file next to this
+# script (deploy.sh sources it automatically; run once with nothing set and it
+# writes a .pf-proxmox-env.example to fill in):
 #   export PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
 #   export PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-xxxx-...."
 #   export PROXMOX_VE_INSECURE=true    # only if the PVE cert is self-signed
-# and fill terraform/proxmox/host.auto.tfvars.json (node/bridges/datastore/
+# A successful deploy rewrites .pf-proxmox-env, so teardown/reset/redeploy reuse it
+# with nothing to retype. Also fill terraform/proxmox/host.auto.tfvars.json (node/bridges/datastore/
 # template ids) from host.auto.tfvars.example.json. The Windows templates it
 # references MUST have WinRM + the local `ansible` admin + cloudbase-init baked
 # in (Proxmox has no VM extension to bootstrap WinRM, unlike Azure).
@@ -42,6 +46,7 @@ LAB_DIR="$PWD"
 TF_DIR="$LAB_DIR/terraform/proxmox"
 ANS_DIR="$LAB_DIR/ansible"
 REPO="$(cd "$LAB_DIR/../.." && pwd)"
+ENV_FILE="$LAB_DIR/.pf-proxmox-env"
 
 log()  { printf '\n\033[1;35m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
@@ -49,11 +54,55 @@ die()  { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 
+# A fill-in-the-blanks credentials file, same idea as host.auto.tfvars.example.json.
+# Written only when the operator has provided nothing to source, so `./deploy.sh`
+# points them at ONE file to edit instead of failing on a bare env-var error.
+pf_write_env_example() {
+  local ex="${ENV_FILE}.example"
+  [ -f "$ex" ] && return 0
+  umask 077
+  cat > "$ex" <<'EOF'
+# Copy to .pf-proxmox-env (gitignored) and fill in — deploy.sh/teardown.sh/reset.sh
+# source it AUTOMATICALLY. Proxmox credentials are read from the environment and
+# never baked into shared files (account/host independence). After a successful
+# deploy, deploy.sh rewrites .pf-proxmox-env so later teardown/reset/redeploy reuse
+# it with nothing to retype.
+PROXMOX_VE_ENDPOINT=https://your-proxmox:8006/
+PROXMOX_VE_API_TOKEN=user@pam!tokenid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+PROXMOX_VE_INSECURE=true            # self-signed PVE cert
+
+# --- only for a CLOUD-hosted Proxmox reached from a REMOTE deploy host ---
+# SSH to the node (bpg uploads the bastion snippet over SSH, not the API):
+#PROXMOX_VE_SSH_USERNAME=root
+#PROXMOX_VE_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"   # or rely on ssh-agent
+# Reach the bastion through the host's public IP + DNAT (see PROXMOX-DEPLOY-RUNBOOK.md):
+#PF_BASTION_ENDPOINT=<proxmox-public-ip>
+#PF_BASTION_SSH_PORT=2222
+EOF
+  echo "  wrote $(basename "$ex")"
+}
+
+# Proxmox credentials come from the ENVIRONMENT (never baked into generated files).
+# Convenience: if they are not exported but a .pf-proxmox-env sits next to this
+# script (written by a prior deploy, or filled in from the .example), source it
+# automatically so a plain `./deploy.sh` just works — no manual `set -a; source`.
+# Sourced INSIDE this bash script, so the token's `!` never trips zsh history
+# expansion (the reason a manual source under zsh failed before).
+pf_load_env() {
+  if [ -z "${PROXMOX_VE_ENDPOINT:-}" ] && [ -f "$ENV_FILE" ]; then
+    echo "  sourcing $(basename "$ENV_FILE")"
+    set -a; . "$ENV_FILE"; set +a
+  fi
+  if [ -z "${PROXMOX_VE_ENDPOINT:-}" ] || [ -z "${PROXMOX_VE_API_TOKEN:-}" ]; then
+    pf_write_env_example
+    die "Proxmox credentials not set. Fill in $ENV_FILE (template written to ${ENV_FILE}.example), or export PROXMOX_VE_ENDPOINT + PROXMOX_VE_API_TOKEN, then re-run ./deploy.sh"
+  fi
+}
+
 preflight() {
   log "0. Preflight"
   for b in terraform wg openssl curl python3 docker ssh; do need "$b"; done
-  [ -n "${PROXMOX_VE_ENDPOINT:-}" ] || die "PROXMOX_VE_ENDPOINT is not set (e.g. https://pve.example.lan:8006/)"
-  [ -n "${PROXMOX_VE_API_TOKEN:-}" ] || die "PROXMOX_VE_API_TOKEN is not set (user@realm!tokenid=uuid)"
+  pf_load_env
   [ -f "$TF_DIR/host.auto.tfvars.json" ] \
     || die "terraform/proxmox/host.auto.tfvars.json missing — copy host.auto.tfvars.example.json and fill node/bridges/datastore/template ids for your Proxmox host"
   echo "  endpoint: $PROXMOX_VE_ENDPOINT"
@@ -296,13 +345,21 @@ setup_auto_shutdown() {
   local hh mm envf helper
   hh="$(printf '%s' "$AUTO_SHUTDOWN" | cut -d: -f1)"
   mm="$(printf '%s' "$AUTO_SHUTDOWN" | cut -d: -f2 | cut -d' ' -f1)"
-  envf="$LAB_DIR/.pf-proxmox-env"
+  envf="$ENV_FILE"
   helper="$LAB_DIR/pf-autoshutdown.sh"
   umask 077
+  # Persist EVERY credential this deploy used (not just the core three) so a later
+  # teardown/reset/redeploy re-sources a complete env — including the SSH key and
+  # bastion overrides a cloud-hosted node needs. %q keeps the multiline SSH key
+  # sourceable ($'...\n...'). Optional vars are written only when set.
   {
     printf 'PROXMOX_VE_ENDPOINT=%q\n' "$PROXMOX_VE_ENDPOINT"
     printf 'PROXMOX_VE_API_TOKEN=%q\n' "$PROXMOX_VE_API_TOKEN"
     printf 'PROXMOX_VE_INSECURE=%q\n' "${PROXMOX_VE_INSECURE:-false}"
+    [ -n "${PROXMOX_VE_SSH_USERNAME:-}" ]    && printf 'PROXMOX_VE_SSH_USERNAME=%q\n' "$PROXMOX_VE_SSH_USERNAME"
+    [ -n "${PROXMOX_VE_SSH_PRIVATE_KEY:-}" ] && printf 'PROXMOX_VE_SSH_PRIVATE_KEY=%q\n' "$PROXMOX_VE_SSH_PRIVATE_KEY"
+    [ -n "${PF_BASTION_ENDPOINT:-}" ]        && printf 'PF_BASTION_ENDPOINT=%q\n' "$PF_BASTION_ENDPOINT"
+    [ -n "${PF_BASTION_SSH_PORT:-}" ]        && printf 'PF_BASTION_SSH_PORT=%q\n' "$PF_BASTION_SSH_PORT"
   } > "$envf"
   cat > "$helper" <<HELPER
 #!/usr/bin/env bash

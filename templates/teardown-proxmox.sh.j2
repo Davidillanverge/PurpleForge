@@ -16,14 +16,20 @@ LAB_DIR="$PWD"
 TF_DIR="$LAB_DIR/terraform/proxmox"
 REPO="$(cd "$LAB_DIR/../.." && pwd)"
 SPEC_REL="{{ spec_rel }}"
+ENV_FILE="$LAB_DIR/.pf-proxmox-env"
 
 log()  { printf '\n\033[1;35m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v terraform >/dev/null 2>&1 || die "missing prerequisite: terraform"
-[ -n "${PROXMOX_VE_ENDPOINT:-}" ] || die "PROXMOX_VE_ENDPOINT is not set"
-[ -n "${PROXMOX_VE_API_TOKEN:-}" ] || die "PROXMOX_VE_API_TOKEN is not set"
+# Reuse the credentials deploy.sh persisted (or an exported env). Sourced inside
+# this bash script so the token's `!` never triggers zsh history expansion.
+if [ -z "${PROXMOX_VE_ENDPOINT:-}" ] && [ -f "$ENV_FILE" ]; then
+  set -a; . "$ENV_FILE"; set +a
+fi
+[ -n "${PROXMOX_VE_ENDPOINT:-}" ] || die "PROXMOX_VE_ENDPOINT is not set (export it or fill $ENV_FILE)"
+[ -n "${PROXMOX_VE_API_TOKEN:-}" ] || die "PROXMOX_VE_API_TOKEN is not set (export it or fill $ENV_FILE)"
 
 # ---- 1. remove the auto_shutdown cron first (it points at the pool we destroy)
 remove_cron() {
@@ -87,7 +93,8 @@ remove_cron
 destroy
 verify
 local_cleanup
-# The secret env is removed LAST (not in remove_cron) so a failed/retried destroy
-# still has the credentials it was sourced with.
-rm -f "$LAB_DIR/.pf-proxmox-env"
+# KEEP .pf-proxmox-env (it is gitignored, holds no lab state, and a fresh
+# `forge generate` wipes generated/ anyway) so a later redeploy of this lab
+# re-sources the same credentials with nothing to retype. Previously this was
+# rm'd here, which forced re-supplying the token on every redeploy.
 log "TEARDOWN COMPLETE — $LAB"
