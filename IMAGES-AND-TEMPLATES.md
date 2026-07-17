@@ -124,17 +124,33 @@ reality. cloudbase-init is the lightest floor that also carries the static IP. (
 `autounattend.xml`/Packer ISO alternative is the path the project deliberately
 skips — heavier, still bakes WinRM.)
 
-**Minimal template checklist:**
+**Minimal template checklist** (manual, one-time per `os`):
 
-1. Install Windows Server (any `os`) as a normal VM.
-2. Install **virtio drivers** (disk/net under KVM).
+1. Install Windows Server (any `os`) as a normal VM. A **SATA** system disk skips
+   needing the VirtIO storage driver at install time.
+2. Install **virtio drivers** + guest tools (disk/net under KVM; `qemu-guest-agent`
+   too — it lets you salvage a stuck build with `qm guest exec`).
 3. Install **cloudbase-init**, default plugins (incl. `UserDataPlugin`,
    `SetHostNamePlugin`, `SetUserPasswordPlugin`); metadata service →
-   ConfigDrive/NoCloud.
-4. Generalize (sysprep `/generalize /oobe`), shut down, `qm template`.
+   ConfigDrive/NoCloud. **The build VM needs internet here** (the MSI is
+   downloaded) — on an isolated/no-DHCP bridge it gets APIPA `169.254.x.x` and the
+   download silently fails; build on a bridge with uplink or set a static IP+DNS
+   first (or pre-stage the MSI offline).
+4. Generalize (sysprep `/generalize /oobe /shutdown /unattend:<path>`), then
+   `qm template`. **sysprep rejects a `/unattend:` path containing spaces**
+   ("Malformed command line ... no dash or slash present in option /") — copy the
+   Unattend.xml to a no-space path (e.g. `C:\Windows\Temp\cbi-unattend.xml`) and
+   point sysprep there.
 5. Record its vm_id in `template_map` under the matching `os`.
 
-No WinRM config, no `ansible` user, no manual PowerShell.
+No WinRM config, no `ansible` user, no manual PowerShell. **Account hygiene:** don't
+leave a second enabled `Administrator` or an extra cloudbase-init admin in the golden
+image — GOAD renames `purpleforge`→`Administrator` at DC promotion and a name clash
+fails it (`cloudbase-init.conf` `username` = `purpleforge`, not `Admin`). See the
+account-hygiene section in `PROXMOX-DEPLOY-RUNBOOK.md`.
+
+*Eval-ISO note:* the WS2022 eval build 20348.169 predates Windows LAPS; the generator
+probes and skips LAPS gracefully on such images, so no manual action is needed.
 
 **Troubleshooting the bootstrap:**
 

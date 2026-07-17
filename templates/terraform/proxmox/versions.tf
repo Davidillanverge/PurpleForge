@@ -38,9 +38,25 @@ terraform {
 #   PROXMOX_VE_ENDPOINT="https://pve.example.lan:8006/"
 #   PROXMOX_VE_API_TOKEN="user@pam!tokenid=xxxxxxxx-xxxx-..."
 #   PROXMOX_VE_INSECURE=true   # only if the PVE cert is self-signed
-# The bastion cloud-init snippet is uploaded over the API, and the bastion SSH
-# key is written locally by a provisioner (see bastion.tf) — no SSH into the
-# PVE node itself is required for the core apply.
+# SSH TO THE NODE IS REQUIRED. The bastion cloud-init user-data is uploaded as a
+# `snippets` file (bastion.tf), and bpg can only upload snippets over SSH/SFTP —
+# NOT the API (the API upload path covers `iso`/`vztmpl` only). So the deploy host
+# must reach the PVE node over SSH with key auth, on ANY host (bare-metal LAN too,
+# not just cloud): export
+#   PROXMOX_VE_SSH_USERNAME=root
+#   PROXMOX_VE_SSH_PRIVATE_KEY=... (or have the key loaded in your ssh-agent)
+# and add the deploy host's pubkey to the node's /root/.ssh/authorized_keys.
+# CLOUD-hosted Proxmox: the node reports its INTERNAL ip (unreachable from a remote
+# deploy host), so also pin the reachable address with an ssh{node{}} block below.
+# See PROXMOX-DEPLOY-RUNBOOK.md §0.
 provider "proxmox" {
-  # All connection settings intentionally come from PROXMOX_VE_* env vars.
+  # Connection settings come from PROXMOX_VE_* env vars. For a cloud-hosted node
+  # reached over the internet, uncomment and set the reachable address so bpg's
+  # snippet SSH targets the public IP instead of the node's self-reported internal IP:
+  # ssh {
+  #   node {
+  #     name    = "<node_name>"
+  #     address = "<proxmox-public-ip>"
+  #   }
+  # }
 }

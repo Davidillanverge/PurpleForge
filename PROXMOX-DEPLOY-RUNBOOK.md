@@ -2,10 +2,12 @@
 
 Checklist from a **fresh Proxmox install** to a live PurpleForge lab.
 
-> **Not yet validated against a live Proxmox deploy.** Steps 0–2 (host prep) are
-> standard Proxmox admin and solid. Steps 3+ are the harness's documented behavior,
-> not battle-tested — expect to hit and fold back a few gotchas, as the Azure
-> runbook was. Design details: `infra-proxmox/SKILL.md`, `IMAGES-AND-TEMPLATES.md`.
+> **Validated end-to-end against a live Proxmox host** (single-DC lab, full
+> hands-off deploy + teardown, 2026-07-16). The gotchas hit on the way are folded
+> back into the generator and into this runbook. The template build (§2) is done
+> **manually, once**, and is the part most likely to bite — its real pitfalls are
+> documented inline. Multi-domain trust routing has not yet been exercised live.
+> Design details: `infra-proxmox/SKILL.md`, `IMAGES-AND-TEMPLATES.md`.
 
 ## 0. Deploy-host prerequisites (one-time)
 
@@ -20,6 +22,25 @@ curl -sk https://<proxmox-host>:8006/api2/json/version   # expect a JSON "versio
 
 `ssh` must be a real OpenSSH client (the deploy reaches the bastion over SSH).
 `ansible-core` is NOT installed on the host — it runs in the `pf-ansible` container.
+
+**SSH key access to the Proxmox node (REQUIRED, every host — not just cloud).**
+The bastion's cloud-init user-data is uploaded as a Proxmox **snippet**, and the
+`bpg/proxmox` provider can only push snippets over **SSH/SFTP** — the API upload
+path handles `iso`/`vztmpl` only. So `terraform apply` will SSH into the PVE node
+even on a bare-metal same-LAN host. Give the deploy host key-based SSH to the node:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<proxmox-node>   # or append the pubkey to /root/.ssh/authorized_keys
+# on the node, if root login is locked down: PermitRootLogin prohibit-password
+export PROXMOX_VE_SSH_USERNAME=root
+export PROXMOX_VE_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"   # or rely on ssh-agent
+ssh -i ~/.ssh/id_ed25519 root@<proxmox-node> hostname          # verify before deploying
+```
+
+(A non-root user with snippet-write + sudo also works, but root is simplest for a
+first pass — scope down later. For a CLOUD-hosted node reached over the internet,
+you additionally pin the node's reachable address in `versions.tf` — see §"Deploying
+to a CLOUD-hosted Proxmox".)
 
 **Nested virtualization** (if Proxmox runs inside another hypervisor): pass through
 VT-x/AMD-V or the Windows/bastion VMs won't boot (or crawl in emulation).
@@ -70,17 +91,41 @@ qm set 9000 --ide2 local-lvm:cloudinit --boot c --bootdisk scsi0 --serial0 socke
 qm template 9000     # record 9000 as bastion_template_id
 ```
 
-**2b. Windows template** (full checklist in `IMAGES-AND-TEMPLATES.md`):
+**2b. Windows template** (full checklist in `IMAGES-AND-TEMPLATES.md`). This is a
+**manual, one-time** build per `os`; the labs then clone it. The happy path is
+five steps, but a first build reliably hits the pitfalls flagged below.
 
-1. Install Windows Server (any `os` you'll use) as a normal VM.
-2. Add the **VirtIO driver ISO** (disk/net under KVM).
+1. Install Windows Server (any `os` you'll use) as a normal VM. Any install disk
+   layout works; a **SATA** system disk avoids needing the VirtIO storage driver
+   *at install time* (you still add VirtIO in step 2).
+   - *Eval ISO caveat:* WS2022 eval build **20348.169** predates Windows LAPS, so
+     `pf_controls_laps` can't apply on labs built from it. The generator now
+     degrades LAPS gracefully (probe + skip), so this is informational — no action.
+2. Add the **VirtIO driver ISO** and install guest tools (disk/net under KVM, plus
+   `qemu-guest-agent` — very handy for salvaging a stuck build via `qm guest exec`).
 3. Install **cloudbase-init**, default plugin set (includes `UserDataPlugin` — the
-   one thing the bootstrap depends on).
-4. Generalize (`sysprep /generalize /oobe /shutdown`), power off, `qm template <vmid>`.
+   one thing the bootstrap depends on); metadata service → ConfigDrive/NoCloud.
+   - **⚠ The build VM needs INTERNET while you install cloudbase-init** (its MSI is
+     downloaded). If you build it on the isolated lab bridge `vmbr1` (no uplink) or a
+     `vmbr0` with no DHCP, the VM gets an APIPA `169.254.x.x` address and the download
+     silently fails. Build on a bridge with internet, or set a static IP + DNS first
+     (`netsh interface ip set address ... static <ip> <mask> <gw>` +
+     `netsh interface ip set dns ... static 1.1.1.1`). Offline alternative: pre-stage
+     the cloudbase-init MSI on the install/payload media.
+4. Generalize + power off. Run sysprep as:
+   `sysprep /generalize /oobe /shutdown /unattend:<path>` — then `qm template <vmid>`.
+   - **⚠ sysprep fails on a `/unattend:` path that contains SPACES** ("Malformed
+     command line detected; no dash or slash present in option /"). The default
+     `C:\Program Files\Cloudbase Solutions\...\Unattend.xml` trips this. Copy the
+     Unattend.xml to a **no-space path** first and point sysprep there, e.g.
+     `copy "...\Unattend.xml" C:\Windows\Temp\cbi-unattend.xml` then
+     `... /unattend:C:\Windows\Temp\cbi-unattend.xml`.
 5. Record the vm_id under the matching `os` in `template_map`.
 
 **Do NOT** install WinRM, create accounts, or set passwords in the template —
-`windows-bootstrap.ps1.tpl` does that at first boot. Repeat per `os`.
+`windows-bootstrap.ps1.tpl` does that at first boot. **Account hygiene matters** for
+DC promotion: leave no second enabled `Administrator` and no extra cloudbase-init
+admin — see "Windows template account hygiene" below. Repeat per `os`.
 
 ## 3. Write + validate the spec
 
@@ -147,7 +192,8 @@ local Terraform state.
 | `api2/json/version` hangs/refuses | Network/firewall to Proxmox | Fix routing first |
 | VMs won't start / crawl | No nested virtualization | Enable VT-x/AMD-V passthrough (step 0) |
 | `terraform apply` token/permission errors | API token missing a privilege | Step 1c; simplest: un-scope the token |
-| Snippet upload fails | Snippets content type not enabled | Step 1b |
+| Snippet upload fails (SSH/permission denied, or `unable to create file`) | Deploy host has no key-based SSH to the PVE node (snippets go over SSH, not the API) | Step 0 — `PROXMOX_VE_SSH_*` + pubkey in the node's `authorized_keys` |
+| Snippet upload fails (`storage does not support content type`) | Snippets content type not enabled | Step 1b |
 | VM clone fails, template not found | Wrong vm_id, or source never `qm template`'d | Step 2, confirm `qm list` |
 | WireGuard tunnel never comes up | `jumpbox_external_ip`/`_gateway` wrong, or bastion didn't boot | Step 4 values, then bastion console |
 | WinRM never comes up on a guest | cloudbase-init/UserDataPlugin not enabled | Check `C:\pf-bootstrap.log` in-guest; redo step 2b.3 |
