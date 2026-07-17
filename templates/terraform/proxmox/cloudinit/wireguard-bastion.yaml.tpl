@@ -8,6 +8,14 @@
 package_update: true
 packages:
   - wireguard-tools
+  # qemu-guest-agent is REQUIRED here, not optional: bastion.tf sets
+  # `agent { enabled = true }`, so the bpg provider blocks the VM's `create`
+  # until the guest agent reports an IP. Ubuntu cloud images do NOT ship it, so
+  # without this line `terraform apply` hangs indefinitely on "Still creating"
+  # even though the bastion booted fine (its IP is static anyway). Installing it
+  # also makes the agent-up moment a natural "cloud-init has progressed" barrier
+  # before the deploy's WireGuard step SSHes in.
+  - qemu-guest-agent
 
 users:
   - name: ${jumpbox_username}
