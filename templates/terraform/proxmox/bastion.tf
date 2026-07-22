@@ -63,6 +63,25 @@ resource "proxmox_virtual_environment_vm" "bastion" {
     dedicated = var.bastion_memory
   }
 
+  # The Ubuntu cloud-init template ships a tiny (~2.2G) root disk. cloud-init's
+  # first-boot `apt update` + install of wireguard-tools/qemu-guest-agent fills
+  # it ("No space left on device"), so cloud-init hangs before it ever writes
+  # /etc/wireguard/publickey — and the deploy's WireGuard step then fails with an
+  # empty PublicKey. Grow the clone to a sane size; Ubuntu cloud images auto-run
+  # growpart on the root partition at first boot, so no in-guest step is needed.
+  # (Unlike windows.tf, which inherits its template's already-large disk.)
+  disk {
+    datastore_id = var.datastore_id
+    interface    = "scsi0"
+    size         = var.bastion_disk_size
+  }
+
+  lifecycle {
+    # The size above is enforced at create; on re-apply the bpg provider reports
+    # clone-inherited disk fields as drift, so ignore them (mirrors windows.tf).
+    ignore_changes = [disk, clone]
+  }
+
   # net0: routable NIC on the mgmt bridge (how the operator reaches WireGuard).
   network_device {
     bridge = var.mgmt_bridge

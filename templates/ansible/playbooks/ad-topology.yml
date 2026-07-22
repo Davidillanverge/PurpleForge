@@ -26,11 +26,44 @@
     # without this rename — done BEFORE domain creation, while it's still a
     # plain local account rename, not a domain object — those tasks fail with
     # "Could not find domain user ... named Administrator".
-    - name: Rename local admin account to Administrator before forest creation
+    # Azure path (verified): the VM's only local admin is local_admin_username
+    # (Azure forbids "Administrator" as admin_username) and there is no enabled
+    # built-in RID-500 to collide with, so a plain rename seeds the new forest's
+    # RID-500 Administrator from it.
+    - name: Rename local admin account to Administrator before forest creation (azure)
+      when: pf_provider | default('azure') != 'proxmox'
       ansible.windows.win_shell: |
         if (Get-LocalUser -Name '{{ local_admin_username }}' -ErrorAction SilentlyContinue) {
           Rename-LocalUser -Name '{{ local_admin_username }}' -NewName 'Administrator'
         }
+      changed_when: false
+
+    # Proxmox path: the operator-maintained Windows template ships an ENABLED
+    # built-in Administrator (RID-500) with a blank/unknown password, alongside
+    # the cloudbase-init local_admin_username account. The Azure rename then fails
+    # ("the name Administrator is already in use") and, even once freed, DCPromo
+    # exits 94 ("the local Administrator password is blank") because it seeds the
+    # domain Administrator from the machine RID-500 account — NOT from whatever
+    # account merely holds the *name* Administrator. Converge the RID-500 account
+    # to: named 'Administrator', enabled, carrying pf_admin_password. Idempotent.
+    - name: Ensure the RID-500 Administrator has the infra admin password before forest creation (proxmox)
+      when: pf_provider | default('azure') == 'proxmox'
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        # If a NON-RID500 account currently holds the name 'Administrator', free it.
+        $named = Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
+        if ($named -and $named.SID.Value -notmatch '-500$') {
+          Rename-LocalUser -Name 'Administrator' -NewName '{{ local_admin_username }}'
+        }
+        # Ensure the machine RID-500 account is the one named 'Administrator'.
+        $rid500 = Get-LocalUser | Where-Object { $_.SID.Value -match '-500$' }
+        if ($rid500 -and $rid500.Name -ne 'Administrator') {
+          Rename-LocalUser -Name $rid500.Name -NewName 'Administrator'
+        }
+        # Give it the seed infra admin password (compliant, non-blank) + enable it.
+        $sec = ConvertTo-SecureString '{{ pf_admin_password }}' -AsPlainText -Force
+        Set-LocalUser -Name 'Administrator' -Password $sec -PasswordNeverExpires $true
+        Enable-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
       changed_when: false
   roles:
     - common

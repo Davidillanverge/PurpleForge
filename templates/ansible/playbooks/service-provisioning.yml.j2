@@ -31,3 +31,20 @@
     - name: "adcs-install | provision"
       ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/adcs-install.yml"
 {% endfor %}
+{% if adcs_hosts %}
+# The EnterpriseRootCA install publishes its cert to AD's NTAuth store, but the
+# DC caches NTAuth locally and only refreshes on GP/autoenrollment — until it
+# does, PKINIT with an ADCS-issued cert (the end of an ESC1 chain) fails with
+# KDC_ERROR_CLIENT_NOT_TRUSTED. Pull the freshly-published CA into the DC's
+# NTAuth cache now, before the clean snapshot, so cert-logon works out of the box.
+- name: "PurpleForge | service-provisioning | refresh DC NTAuth cache for ADCS cert logon"
+  hosts: domain_controllers
+  gather_facts: false
+  tasks:
+    - name: "adcs | pulse autoenrollment + refresh computer GP so NTAuth is populated"
+      ansible.windows.win_shell: |
+        certutil -pulse
+        gpupdate /target:computer /force
+      changed_when: false
+      failed_when: false
+{% endif %}

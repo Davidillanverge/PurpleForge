@@ -509,6 +509,7 @@ def render_ansible(
         ansible_password=ansible_password,
         groups=groups,
         local_admin_username=WINDOWS_ADMIN_USERNAME,
+        provider=spec["lab"]["provider"],
     )
     (dst / "inventory" / "hosts.yml").write_text(rendered, encoding="utf-8")
     return groups

@@ -166,6 +166,17 @@ variable "bastion_memory" {
   default     = 1024
 }
 
+variable "bastion_disk_size" {
+  description = <<-EOT
+    Root disk size (GiB) for the WireGuard bastion. The clone is resized to this
+    at create and Ubuntu cloud images auto-growpart on first boot. Must exceed
+    the cloud-init template's own disk (typically ~2.2G, too small for apt +
+    wireguard-tools/qemu-guest-agent — see bastion.tf). 8G is ample (~24% used).
+  EOT
+  type        = number
+  default     = 8
+}
+
 variable "full_clone" {
   description = <<-EOT
     Clone mode for the lab VMs. false (default) = LINKED clone: a copy-on-write

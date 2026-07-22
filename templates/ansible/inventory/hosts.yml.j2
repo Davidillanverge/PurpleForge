@@ -25,6 +25,10 @@ all:
     ansible_winrm_server_cert_validation: ignore
     ansible_port: 5986
     local_admin_username: "{{ local_admin_username }}"
+    # Provider baked in at generate time so provider-specific playbook steps can
+    # branch (e.g. ad-topology's pre-promotion local-admin handling differs on
+    # Proxmox templates, which ship an enabled built-in RID-500 Administrator).
+    pf_provider: "{{ provider }}"
     two_adapters: false
     nat_adapter: ""
     add_route: "no"
