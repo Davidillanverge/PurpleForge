@@ -1,0 +1,81 @@
+# catalog/themes/football.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: football
+name: "World Football"
+description: >
+  Global club football standing in for BadBlood's corporate departments —
+  same non-literal, flavor-only use of a well-known domain already
+  established in this repo's batman/avengers/the-simpsons themes. `houses`
+  are famous clubs (3-letter codes), given/family names are famous players
+  and managers.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "orgs" here
+    - { code: RMA, name: "Real Madrid CF" }
+    - { code: FCB, name: "FC Barcelona" }
+    - { code: MUN, name: "Manchester United FC" }
+    - { code: LIV, name: "Liverpool FC" }
+    - { code: BAY, name: "FC Bayern Munich" }
+    - { code: JUV, name: "Juventus FC" }
+    - { code: PSG, name: "Paris Saint-Germain FC" }
+    - { code: MCI, name: "Manchester City FC" }
+
+  given_names_male:
+    - Lionel
+    - Cristiano
+    - Kylian
+    - Neymar
+    - Luka
+    - Sergio
+    - Andres
+    - Xavi
+    - Zinedine
+    - Ronaldinho
+    - Karim
+    - Toni
+    - Erling
+    - Kevin
+    - Mohamed
+    - Robert
+    - Thierry
+    - Pep
+
+  given_names_female:
+    - Alexia
+    - Alex
+    - Marta
+    - Megan
+    - Ada
+    - Sam
+    - Wendie
+    - Vivianne
+    - Jenni
+    - Aitana
+
+  family_names:
+    - Messi
+    - Ronaldo
+    - Mbappe
+    - Junior
+    - Modric
+    - Ramos
+    - Iniesta
+    - Hernandez
+    - Zidane
+    - Benzema
+    - Kroos
+    - Haaland
+    - DeBruyne
+    - Salah
+    - Lewandowski
+    - Henry
+    - Guardiola
+    - Putellas
+
+extra_groups:
+  - { name: "Ballon d'Or Committee", description: "Secret oversight tier — highly privileged, Domain Admins-adjacent" }
+  - { name: "VAR Officials", description: "Security tier" }
+  - { name: "Club Board of Directors", description: "Audit/oversight tier" }
+  - { name: "Loan Squad", description: "Infiltrated faction — isolated, low-trust accounts" }
+
+honey_account_naming: "referee.{n}"
