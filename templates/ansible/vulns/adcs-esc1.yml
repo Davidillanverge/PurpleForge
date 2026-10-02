@@ -53,7 +53,7 @@
   # template is present but unreachable from the WireGuard bastion subnet — the
   # only path into the lab (invariant #1). Scope the opening to the lab supernet
   # (never the internet); isolation stays enforced at the network layer.
-  ansible.windows.win_firewall_rule:
+  community.windows.win_firewall_rule:
     name: PF-ADCS-Enrollment-RPC
     localport: "135,445,49152-65535"
     remoteip: "{{ pf_supernet }}"
