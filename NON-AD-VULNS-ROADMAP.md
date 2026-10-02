@@ -9,7 +9,8 @@ Agreed phase order for the current round. Separates **services** (the
 platform/daemon that runs — IIS, MSSQL, SCCM) from **applications** (what gets
 deployed on top and carries its own flaws). Telemetry (SWG/EDR/SIEM) is
 **deferred** this round — it would reverse invariant #2 (adds the DETECT pillar);
-recorded as a proposal only, no implementation planned here.
+recorded as a proposal only, no implementation planned here. See **Telemetry
+(DETECT pillar)** below for the stack/provider details.
 
 - **Phase 1 — Services: install + VALIDATE they work (no vulns yet).** Each
   `machines[].services` entry installs SECURELY and passes an "is up" check
@@ -29,6 +30,8 @@ recorded as a proposal only, no implementation planned here.
   carry their own flaws (SQLi web→DB→RCE against the MSSQL host, unvalidated
   upload, auth bypass). Decision pending: own toggleable app (recommended) vs.
   vendored vulnerable app; adds an **HTTP** validation path to `validate.py`.
+  See **Application catalog** below for the third-party apps to provision (then
+  build vulns/CVEs on, same model as services).
 - **Phase 4 — Later: CVEs + Linux.**
   - *CVEs:* needs an image/patch-level decision first — a patch-level CVE can't
     survive a fully-patched+hardened box, which fights hardening-before-vulns.
@@ -40,6 +43,100 @@ recorded as a proposal only, no implementation planned here.
 Every vuln across all phases still ships `mitigate` + `neutralized_by` + valid
 `mitre_attack`, no `detect` block (invariant #2), lands on an already-hardened
 box, and injects deterministically + idempotently (invariant #5).
+
+## Application catalog — third-party apps to provision (then build vulns on) ⬜
+
+Pending. These are **applications** (full products), not Windows services. They
+follow the same contract as `services:` — **install the app SECURELY in a
+provisioning phase, then catalog vulns/CVEs reopen specific gaps on top**
+(`requires_services`/`requires_apps` routing, reconciliation-aware,
+deterministic). None are implemented yet; this is the backlog + the shape of the
+enabling work.
+
+**Enabling work (prerequisite for all of them):** an **application-provisioning
+phase** parallel to `service-provisioning` — a new `machines[].applications: []`
+field + enum, a `plan/render_application_provisioning`, one
+`templates/ansible/apps/<app>-install.yml` per app (secure baseline + an "is up"
+check, exactly like `iis`/`ftp`/`mssql`), and `requires_apps` on catalog vulns.
+This is the richer sibling of the "one self-contained app per vuln" model used in
+Phase 3 so far, and the right home for multi-flaw products.
+
+| App | Platform / stack | Install approach | Best home | Representative vuln/CVE class | Effort |
+|---|---|---|---|---|---|
+| **Jenkins** | Java (JRE) — cross-platform | MSI/WAR + Windows service | Windows (Phase 3) | Script-Console RCE, unauth access, CVE-2024-23897 (arg-file read) | low–med |
+| **Jira** | Java + DB (bundled/ext) — Win or Linux | Atlassian installer + DB | Windows (Phase 3) or Linux | SSTI CVE-2019-11581, auth bypass CVE-2022-0540, path traversal | high (DB, heavy) |
+| **Microsoft SharePoint** | Windows + IIS + SQL Server (farm) | Farm install, reuses iis+mssql services | Windows (Phase 3) | CVE-2019-0604, "ToolShell" CVE-2025-53770/53771 | very high |
+| **WordPress** | PHP + MySQL/MariaDB | IIS+PHP (Win) or LAMP (Linux) | Linux (Tier C) or IIS | plugin/theme RCE, XML-RPC abuse, weak-admin, SQLi | med (needs PHP+DB) |
+| **Joomla** | PHP + MySQL/MariaDB | IIS+PHP (Win) or LAMP (Linux) | Linux (Tier C) or IIS | unauth info disclosure CVE-2023-23752, SQLi, weak-admin | med (needs PHP+DB) |
+| **GitLab** | Linux (Omnibus CE) | omnibus package | **Linux (Tier C)** | CVE-2021-22205 (ExifTool RCE), account-takeover CVEs | high, Linux |
+| **KeePass** | Windows desktop (not a server) | a planted `.kdbx` + key material | artifact, any Windows host | crackable/weak master, key-file alongside DB, CVE-2023-32784 (master pw from memory) | low (different model) |
+
+Notes:
+- **KeePass is not a provisioned service/server** — it is a credential-store
+  artifact. Model it like `sysvol-script-creds`: plant a `.kdbx` (+ maybe its key
+  file) on a host for the attacker to exfiltrate and crack. No provisioning phase
+  needed; it is a vuln, not an app to install.
+- **WordPress/Joomla/GitLab are PHP/Linux-leaning** → they pull the
+  application-provisioning work toward **Tier C Linux** (PHP+DB or Omnibus, SSH
+  validation). WordPress/Joomla *can* run on Windows via IIS+PHP if a
+  Windows-only lab is wanted first.
+- **Jenkins is the best starting point**: cross-platform Java, trivial Windows
+  service install, and a famously rich offensive surface — highest value/effort
+  ratio of the set, and it validates the application-provisioning phase before the
+  heavier products (Jira/SharePoint) or the Linux pivot.
+- Every app vuln still obeys invariant #2 (mitigate + neutralized_by + valid
+  mitre_attack, no detect). CVE-based entries additionally depend on the Phase-4
+  image/patch-level decision.
+
+## Telemetry (DETECT pillar) — deferred ⬜
+
+Deferred by decision (2026-10-02). This is a **scope reversal, not an extension**:
+PurpleForge today is PREVENT/RESPOND only, and DETECT is designed OUT —
+`CLAUDE.md` invariant #2, the vuln schema hard-forbids `detect`/`siem_rule`
+(`false`), the `defense.edr[].product` enum accepts only `defender-av`, and the
+skills say "don't add SIEM". Recorded here as the intended shape for when/if that
+decision is revisited; no implementation is planned in the current rounds.
+
+### Three layers (deploy the tools)
+
+Telemetry splits into three independent layers, each a pluggable **provider** so a
+lab picks one per layer (mirrors how `defense.edr[]` already abstracts a product):
+
+| Layer | Priority example | Alternatives | What it is |
+|---|---|---|---|
+| **SWG** (Secure Web Gateway) | **Cloudflare** (Gateway / WARP) | **Zscaler** (ZIA) | egress/web filtering + web telemetry from the lab hosts |
+| **EDR** (endpoint agent) | **Elastic Agent / Elastic Defend** | **MDE** (Microsoft Defender for Endpoint) | endpoint detection agent beyond the built-in Defender-AV |
+| **SIEM** (detection backend) | **Elastic SIEM** (Elastic Security) | **Microsoft Sentinel** | log/telemetry aggregation + detection rules |
+
+Priority stack: **Cloudflare + Elastic Agent + Elastic SIEM**. Each provider needs
+a **backend/tenant** this project deliberately does not build today (a console,
+API keys, an agent enrollment token) — so adding any is new infra + new secret
+handling, and tenant-bound config tensions with the account-independence
+invariant (secrets would no longer be purely seed-derived).
+
+### Connect to the tools (obtain results)
+
+The point of the stack is a **detection-coverage feedback loop**: after
+`/validate` fires each injected attack, pull the detections/alerts back from each
+provider's API and correlate them to the vuln that triggered them — turning the
+current applied+exploitable matrix into an applied+exploitable+**detected**
+matrix. Integration points per provider:
+
+- **Elastic SIEM** — Elastic Detections/Alerts API (query alerts by time window +
+  rule).
+- **MDE** — the Defender/Graph security API (`alerts`/`incidents`).
+- **Sentinel** — Log Analytics query API (KQL over the workspace).
+- **Cloudflare / Zscaler** — Gateway/ZIA logs API for the web-egress events.
+
+### Enabling work (the scope reversal)
+
+- Rewrite invariant #2 to admit DETECT (PREVENT/RESPOND → PREVENT/RESPOND/DETECT).
+- Relax the vuln schema's `detect: false` / `siem_rule: false` guard and add an
+  optional detection-expectation block per vuln.
+- Expand `defense.edr[].product` beyond `defender-av`; add a `telemetry:` block
+  (SWG/EDR/SIEM provider + backend credentials) to the lab spec + schema.
+- A new deploy phase (agent enrollment + SWG/SIEM wiring) and a results-pull step
+  in `validate.py`; backend credential handling outside the seed-derived model.
 
 ## Tier A — OS-level local privilege escalation (Windows) ✅
 
