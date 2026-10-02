@@ -270,6 +270,10 @@
                 "protected_users_group": {
                   "type": "array",
                   "items": { "type": "string" }
+                },
+                "mssql_hardening": {
+                  "type": "boolean",
+                  "description": "Application-layer MSSQL control (PurpleForge pf_controls, not a CIS/STIG rule): disables the sa login and xp_cmdshell on hosts running MSSQL. Neutralizes catalog/vulnerabilities/mssql-weak-sa.yml; forced off by reconciliation when that vuln is selected. No-op on labs without an MSSQL host."
                 }
               }
             },

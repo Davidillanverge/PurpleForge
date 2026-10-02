@@ -2,7 +2,7 @@
 # pf_controls — PurpleForge-authored role applying the fixed
 # defense.hardening.controls.* toggles directly (registry policy / AD
 # module calls), independent of whichever CIS/STIG baseline (if any) is also
-# selected. No upstream role fits this exact bundle of 6 named controls —
+# selected. No upstream role fits this exact bundle of named controls —
 # GOAD's own laps/ role is deeply coupled to GOAD's inventory data model
 # (lab.hosts[dict_key].domain, custom win_gpo_* library modules) and was not
 # reused; this implements native Windows LAPS instead (built into Windows
@@ -174,3 +174,27 @@
     domain_username: "{{ domain_username }}"
     domain_password: "{{ domain_password }}"
   when: pf_controls_protected_users_group | length > 0
+
+# --- MSSQL hardening (application-layer; MSSQL hosts only) ---
+# Unlike the registry toggles above there is NO explicit "off" branch: the base
+# service-provisioning install is already secure (sa disabled, Windows-auth only,
+# xp_cmdshell off), and when this control is off it is the mssql-weak-sa vuln-
+# injection task (which runs AFTER defensive-controls) that deliberately re-opens
+# the gap — so pf_controls must not fight it. This only re-asserts the secure
+# state when the control is on. Runs via `SqlCmd -E` (the ansible/domain admin is
+# a sysadmin via ADDCURRENTUSERASSQLADMIN at install), and only on hosts that
+# actually run MSSQL — pf_controls_mssql_hosts is empty otherwise, so it no-ops.
+# changed_when is false: the statements are idempotent (ALTER LOGIN ... DISABLE /
+# sp_configure 'xp_cmdshell',0 are no-ops when already applied) and SqlCmd gives
+# no reliable changed signal.
+- name: "pf_controls | mssql_hardening | disable sa login + xp_cmdshell"
+  ansible.windows.win_shell: >-
+    SqlCmd -E -b -Q "SET NOCOUNT ON;
+    IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'sa' AND is_disabled = 0) ALTER LOGIN [sa] DISABLE;
+    EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+    EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;"
+  register: pf_controls_mssql
+  changed_when: false
+  when:
+    - pf_controls_mssql_hardening | bool
+    - inventory_hostname in pf_controls_mssql_hosts

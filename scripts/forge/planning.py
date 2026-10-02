@@ -46,6 +46,7 @@ FIXED_HARDENING_TOGGLES = {
     "ldap_signing",
     "disable_llmnr_nbtns_mdns",
     "ntlmv2_only",
+    "mssql_hardening",
 }
 
 # smb_signing/ldap_signing are enum-typed (disable|enable|enforce) in the

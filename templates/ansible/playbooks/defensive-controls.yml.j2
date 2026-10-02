@@ -75,7 +75,7 @@
     - pf_defender_av
 {% endfor %}
 
-- name: "PurpleForge | defensive-controls | concrete controls (LAPS, LSA protection, SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Protected Users)"
+- name: "PurpleForge | defensive-controls | concrete controls (LAPS, LSA protection, SMB/LDAP signing, LLMNR/NBT-NS/mDNS, Protected Users, MSSQL hardening)"
   hosts: "{{ all_target_hosts | join(':') }}"
   gather_facts: false
   vars:
@@ -86,6 +86,15 @@
     pf_controls_disable_llmnr_nbtns_mdns: {{ controls.disable_llmnr_nbtns_mdns }}
     pf_controls_credential_guard: {{ controls.credential_guard }}
     pf_controls_ntlmv2_only: {{ controls.ntlmv2_only }}
+    pf_controls_mssql_hardening: {{ controls.mssql_hardening }}
+{% if mssql_hosts %}
+    pf_controls_mssql_hosts:
+{% for h in mssql_hosts %}
+      - "{{ h }}"
+{% endfor %}
+{% else %}
+    pf_controls_mssql_hosts: []
+{% endif %}
 {% if controls.protected_users_group %}
     pf_controls_protected_users_group:
 {% for u in controls.protected_users_group %}

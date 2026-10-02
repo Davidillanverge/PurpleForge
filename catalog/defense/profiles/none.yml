@@ -16,6 +16,7 @@ defaults:
       ldap_signing: disable
       disable_llmnr_nbtns_mdns: false
       ntlmv2_only: false
+      mssql_hardening: false
       protected_users_group: []
     intentional_gaps_auto: false
   deception:

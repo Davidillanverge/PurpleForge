@@ -550,7 +550,12 @@ def render_defensive_controls(
         # (e.g. "KINGDOM\da-treasury") come out as valid YAML double-quoted
         # scalars — \d is not a legal YAML escape and would break the parse.
         "protected_users_group": [json.dumps(u) for u in controls.get("protected_users_group", [])],
+        "mssql_hardening": yaml_scalar(controls.get("mssql_hardening", False)),
     }
+
+    # Hosts that actually run MSSQL — the mssql_hardening pf_control is a no-op
+    # everywhere else (SqlCmd isn't present), so the task is gated on membership.
+    mssql_hosts = [m["name"] for m in machines if "mssql" in (m.get("services") or []) and m["name"] in all_target_hosts]
 
     template = jinja2.Template(
         (TEMPLATES_DIR / "ansible" / "playbooks" / "defensive-controls.yml.j2").read_text(encoding="utf-8"),
@@ -563,6 +568,7 @@ def render_defensive_controls(
         all_target_hosts=all_target_hosts,
         controls=controls_rendered,
         dc_hosts=dc_hosts,
+        mssql_hosts=mssql_hosts,
         laps_schema_host_yaml=json.dumps(laps_schema_host) if laps_schema_host else "null",
     )
     (dst / "playbooks" / "defensive-controls.yml").write_text(rendered, encoding="utf-8")
