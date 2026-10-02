@@ -2,8 +2,8 @@
 
 PurpleForge compila un `lab-spec.yml` declarativo en automatización completa
 (Terraform + Ansible + PowerShell) para desplegar laboratorios de Active
-Directory instrumentados para Purple Team, en **Azure o Proxmox** (AWS en
-roadmap). Envuelve proyectos upstream fijados en `vendor/` (GOAD,
+Directory instrumentados para Purple Team, en **Azure, AWS o Proxmox**.
+Envuelve proyectos upstream fijados en `vendor/` (GOAD,
 Vulnerable-AD, ansible-lockdown; BadBlood queda fijado pero ya sin usar) en
 vez de reinventar despliegue/hardening de Windows.
 

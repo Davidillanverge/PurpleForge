@@ -2,8 +2,8 @@
 
 A spec-driven harness that compiles one declarative `specs/<lab>.yml` into
 complete automation (Terraform + Ansible + PowerShell) for deploying isolated,
-**Purple-Team-instrumented Active Directory labs** on **Azure or on-prem
-Proxmox VE** (AWS on the roadmap). Every lab ships its **defensive stack**
+**Purple-Team-instrumented Active Directory labs** on **Azure, AWS, or on-prem
+Proxmox VE**. Every lab ships its **defensive stack**
 (CIS/STIG hardening, Defender AV, deception) *alongside* the intentional
 vulnerabilities — attack and defense are generated, reconciled, and deployed
 together.
@@ -45,7 +45,7 @@ The design goals, in priority order:
 
 **Scope today:** PREVENT/RESPOND — CIS/STIG hardening, Defender AV, deception.
 No SIEM/Sysmon/WEF telemetry; detection engineering is deliberately out of
-scope. Azure and Proxmox VE are supported; AWS is on the roadmap.
+scope. Azure, AWS, and Proxmox VE are supported.
 
 ---
 
@@ -544,5 +544,5 @@ forge teardown specs/<lab>.yml           # destroy everything, verify nothing bi
 ```
 
 > **If a step fails:** re-running `deploy.sh` usually clears transient errors.
-> The runbooks above are the manual, symptom→cause equivalents. AWS is not built
-> yet — Azure and Proxmox only.
+> The runbooks above are the manual, symptom→cause equivalents — one per
+> provider (Azure, AWS, Proxmox).
