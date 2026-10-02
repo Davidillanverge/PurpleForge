@@ -45,6 +45,24 @@
   register: vuln_esc1_result
   changed_when: "'ESC1' not in vuln_esc1_result.stdout"
 
+- name: "adcs-esc1 | open the CA enrollment RPC to the lab supernet (so the gap is reachable over the tunnel)"
+  # The ESC1 enrollment the attack path needs runs over RPC: the endpoint mapper
+  # (TCP 135) + a dynamic DCOM port, plus SMB (445) for the named-pipe fallback.
+  # A domain member server's Windows firewall blocks those inbound by default
+  # (unlike a DC, which opens them during promotion), so the published ESC1
+  # template is present but unreachable from the WireGuard bastion subnet — the
+  # only path into the lab (invariant #1). Scope the opening to the lab supernet
+  # (never the internet); isolation stays enforced at the network layer.
+  ansible.windows.win_firewall_rule:
+    name: PF-ADCS-Enrollment-RPC
+    localport: "135,445,49152-65535"
+    remoteip: "{{ pf_supernet }}"
+    direction: in
+    action: allow
+    protocol: tcp
+    enabled: true
+    state: present
+
 - name: "adcs-esc1 | record intended path"
   ansible.builtin.debug:
     msg: >-

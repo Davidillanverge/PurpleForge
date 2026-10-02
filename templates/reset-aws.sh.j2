@@ -40,6 +40,8 @@ rows="$(aws ec2 describe-instances --filters "Name=tag:lab,Values=$LAB" \
 printf '%s\n' "$rows" | while IFS=$'\t' read -r id name az rootdev oldvol; do
   [ -n "$id" ] || continue
   [ -n "$name" ] || name="$id"
+  # The bastion isn't snapshotted (disposable infra) — don't try to reset it.
+  [ "$name" = "${LAB}-bastion" ] && continue
   snap_ami="${LAB}-${name}-clean"
   log "reset $name  (from AMI $snap_ami)"
 

@@ -607,6 +607,12 @@ def render_ansible(
     # -server DNS task fails "No MSFT_NetAdapter objects found with property 'Name'
     # equal to 'Ethernet'".
     domain_adapter = "Ethernet 3" if provider == "aws" else "Ethernet"
+    # Lab-wide supernet (10.<octet>.0.0/16) exposed to playbooks so a network-
+    # reachable vuln (e.g. adcs-esc1's CA enrollment RPC) can scope its firewall
+    # opening to the lab, not the internet. Derived from a machine IP, same as
+    # the addressing scheme assign_ips uses.
+    octet_any = machines[0]["ip"].split(".")[1]
+    pf_supernet = f"10.{octet_any}.0.0/16"
     rendered = template.render(
         lab_name=spec["lab"]["name"],
         ansible_password=ansible_password,
@@ -615,6 +621,7 @@ def render_ansible(
         provider=provider,
         dns_server_forwarder=dns_server_forwarder,
         domain_adapter=domain_adapter,
+        pf_supernet=pf_supernet,
     )
     (dst / "inventory" / "hosts.yml").write_text(rendered, encoding="utf-8")
     return groups

@@ -312,6 +312,10 @@ snapshot_clean() {
   printf '%s\n' "$rows" | while IFS=$'\t' read -r id name; do
     [ -n "$id" ] || continue
     [ -n "$name" ] || name="$id"
+    # The bastion is disposable infra, not part of the clean lab state `forge
+    # reset` restores — skip it (also avoids a doubled "<lab>-<lab>-bastion-clean"
+    # AMI name, since its Name tag already carries the lab prefix).
+    [ "$name" = "${LAB}-bastion" ] && { echo "  skip bastion (disposable infra)"; continue; }
     local snap="${LAB}-${name}-clean"
     echo "  snapshot $name -> AMI $snap"
     aws ec2 create-image --instance-id "$id" --name "$snap" --no-reboot \
