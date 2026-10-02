@@ -145,6 +145,37 @@ A lab is one YAML file in `specs/`. From description to a deploy-ready lab:
      reports any technique with no catalog coverage (a runtime-only TTP, or a
      precondition no catalog vuln builds yet) rather than dropping it silently.
      See [`specs/README.md`](specs/README.md) for the input format and flags.
+     The **`/lab-from-exercise`** command wraps this with the coverage-gap
+     judgement, the `lab-spec`/`guardrail` gates, and a human spend gate — the
+     exercise-driven twin of `/new-lab`.
+
+   **Example — `/lab-from-exercise` on the bundled sample layer.** The example
+   layer mixes catalog-covered techniques with runtime-only TTPs; the command
+   authors the spec and tells you exactly what mapped and what did not:
+   ```console
+   $ forge from-exercise specs/example-exercise.json --name apt-demo
+   from-exercise — example-exercise.json: 8 technique(s)
+     matched 11 vuln(s):
+       - adcs-esc1  <- T1649
+       - constrained-delegation (approx)  <- T1558.003
+       - dcsync-acl  <- T1003.006
+       - esc4-template-acl  <- T1649
+       - gpp-cpassword  <- T1552.006
+       - kerberoasting  <- T1558.003
+       - laps-read-acl (approx)  <- T1552.006
+       - passwords-in-description (approx)  <- T1552.006
+       - rbcd-abuse (approx)  <- T1558.003
+       - unconstrained-delegation  <- T1558.003
+       - writable-gpo  <- T1484.001
+     3 technique(s) with no catalog coverage (not built into the lab):
+       T1566.001, T1059.001, T1071.001          # phishing / PowerShell / C2 — runtime TTPs
+   OK: wrote specs/apt-demo.yml (11 vuln(s), 2 machine(s))
+     next: forge lab-spec specs/apt-demo.yml
+   ```
+   The `approx` entries are parent↔sub-technique roll-ups (e.g. the layer's
+   `T1552.006` reaching the parent `T1552`'s `laps-read-acl`); `--exact-only`
+   keeps just the verbatim matches (5 vulns). Then follow the normal pipeline
+   (`forge lab-spec` → `generate` → `deploy`).
 
    The spec declares: the `lab` (name, theme, provider, region, isolation,
    auto-shutdown, budget), the `forest` (domains + trusts), the `machines`
