@@ -57,13 +57,18 @@ LDAP_APPLIED_FILTERS = {
         "(msDS-AllowedToActOnBehalfOfOtherIdentity=*)",
         "RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity) set",
     ),
+    # The built-in DnsAdmins group is empty by default; a non-empty membership is
+    # the injected artifact (a population account added to it — dnsadmins-privesc).
+    "dnsadmins-privesc": ("(&(cn=DnsAdmins)(member=*))", "DnsAdmins group has a member"),
 }
 
 # vuln id -> PowerShell one-shot check executed over WinRM (nxc/netexec winrm -X),
 # the twin of LDAP_APPLIED_FILTERS for vulns with no LDAP-visible artifact: the
-# five OS-level local-privesc vulns (workstation, no AD object at all) plus
-# writable-gpo/adminsdholder-acl, whose "applied" state lives in GroupPolicy/the
-# AD: PowerShell provider rather than a raw LDAP filter. Each script prints
+# OS-level local-privesc vulns (workstation, no AD object at all), writable-gpo/
+# adminsdholder-acl (GroupPolicy/AD: PowerShell provider rather than a raw LDAP
+# filter), and the DC-local registry/SYSVOL gaps (ntlm-downgrade, smb-signing-
+# disabled, gpp-cpassword) whose artifact is a registry value or a SYSVOL file.
+# Each script prints
 # exactly one line, "PF_CHECK:True" or "PF_CHECK:False" — parsed by
 # _winrm_check_result, ignoring nxc's own banner/auth noise around it. Scripts
 # for account-scoped checks (writable-gpo, adminsdholder-acl) carry the literal
@@ -120,6 +125,21 @@ WINRM_APPLIED_CHECKS = {
         '$acl = Get-Acl ("AD:\\CN=AdminSDHolder,CN=System," + $dn); '
         "$hasAce = [bool]($acl.Access | Where-Object { $_.IdentityReference -match '__ACCOUNT__' -and $_.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll }); "
         "Write-Output ('PF_CHECK:' + $hasAce)"
+    ),
+    # Registry/SYSVOL-visible gaps on the root DC (no LDAP object to filter on).
+    # Each matches exactly what the corresponding vuln inject-task writes.
+    "ntlm-downgrade": (
+        "$v = (Get-ItemProperty 'HKLM:\\System\\CurrentControlSet\\Control\\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue).LmCompatibilityLevel; "
+        "Write-Output ('PF_CHECK:' + [bool]($null -ne $v -and $v -le 2))"
+    ),
+    "smb-signing-disabled": (
+        "$v = (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters' -Name RequireSecuritySignature -ErrorAction SilentlyContinue).RequireSecuritySignature; "
+        "Write-Output ('PF_CHECK:' + [bool]($v -eq 0))"
+    ),
+    "gpp-cpassword": (
+        "$m = Get-ChildItem -Path 'C:\\Windows\\SYSVOL' -Recurse -Filter 'Groups.xml' -ErrorAction SilentlyContinue | "
+        "Select-String -Pattern 'cpassword=' -ErrorAction SilentlyContinue; "
+        "Write-Output ('PF_CHECK:' + [bool]($m))"
     ),
 }
 

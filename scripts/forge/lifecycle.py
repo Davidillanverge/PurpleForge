@@ -113,6 +113,21 @@ def verify_azure_teardown(lab_name: str) -> bool:
     return True  # ambiguous, not positive evidence of failure — flagged, not silently passed
 
 
+def _aws_existing_ids(aws_bin: str, region: str, describe: str, *extra: str, query: str) -> set[str]:
+    """Return the set of resource ids that currently exist for a `describe-*`
+    call (e.g. images/snapshots owned by self). Used to tell apart resources that
+    are truly gone from ARNs the Resource Groups Tagging API still lists due to
+    deletion lag. An errored CLI call returns an empty set (treat as unknown,
+    caller keeps the ARN rather than wrongly dropping a live resource)."""
+    r = subprocess.run(
+        [aws_bin, "ec2", describe, "--region", region, *extra, "--query", query, "--output", "text"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return set()
+    return set(r.stdout.split())
+
+
 def verify_aws_teardown(lab_name: str, region: str) -> bool:
     """AWS sibling of verify_azure_teardown. Returns True unless we have
     positive evidence that resources tagged lab=<lab_name> still exist in the
@@ -172,6 +187,26 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
             live_terminated = set(q.stdout.split())
 
     remaining = [arn for arn in remaining if arn.rsplit("/", 1)[-1] not in live_terminated]
+
+    # Deregistered AMIs and deleted EBS snapshots linger in the tagging API the
+    # same way terminated instances do. sweep_aws_clean_images runs BEFORE this
+    # and removes the lab's out-of-band clean-state images/snapshots, so an
+    # image/snapshot ARN still listed here is almost always tagging-API lag on a
+    # resource that is already gone. Drop the ones that no longer actually exist
+    # (list what remains and subtract) so a clean teardown doesn't false-FAIL.
+    img_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":image/" in arn]
+    snap_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":snapshot/" in arn]
+    gone: set[str] = set()
+    if img_ids:
+        existing = _aws_existing_ids(aws_bin, region, "describe-images",
+                                     "--owners", "self", query="Images[].ImageId")
+        gone |= set(img_ids) - existing
+    if snap_ids:
+        existing = _aws_existing_ids(aws_bin, region, "describe-snapshots",
+                                     "--owner-ids", "self", query="Snapshots[].SnapshotId")
+        gone |= set(snap_ids) - existing
+    remaining = [arn for arn in remaining if arn.rsplit("/", 1)[-1] not in gone]
+
     if remaining:
         print(
             f"WARNING: {len(remaining)} resource(s) tagged lab={lab_name} still exist in {region} after destroy:",

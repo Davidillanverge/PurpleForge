@@ -326,6 +326,31 @@ snapshot_clean() {
   echo "  clean-state AMI(s) requested — reset with: forge reset {{ spec_rel }}"
 }
 
+# ---- provisioning guard -----------------------------------------------------
+# Tag every lab instance pf:provisioning=true for the duration of the deploy.
+# The auto-shutdown Lambda skips instances carrying this tag, so a long first
+# deploy that crosses the daily cron time isn't stopped underneath Ansible
+# (AWS-DEPLOY-RUNBOOK symptom: hosts go UNREACHABLE mid site.yml, State=stopped).
+_lab_instance_ids() {
+  aws ec2 describe-instances \
+    --filters "Name=tag:lab,Values=$LAB" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true
+}
+mark_provisioning() {
+  local ids; ids="$(_lab_instance_ids)"
+  [ -z "$ids" ] && return 0
+  aws ec2 create-tags --resources $ids --tags "Key=pf:provisioning,Value=true" >/dev/null 2>&1 \
+    || warn "could not set pf:provisioning tag (auto-shutdown may fire mid-deploy)"
+  echo "  provisioning guard on (auto-shutdown will skip these instances until deploy completes)"
+}
+unmark_provisioning() {
+  local ids; ids="$(_lab_instance_ids)"
+  [ -z "$ids" ] && return 0
+  aws ec2 delete-tags --resources $ids --tags "Key=pf:provisioning" >/dev/null 2>&1 \
+    || warn "could not clear pf:provisioning tag — remove it by hand or auto-shutdown won't stop these"
+  echo "  provisioning guard off (auto-shutdown now manages these instances)"
+}
+
 main() {
   preflight
   ensure_secrets
@@ -335,10 +360,12 @@ main() {
   if [ "${1:-}" = "--sizes-only" ]; then log "done (--sizes-only)"; exit 0; fi
   tf_apply
   start_vms
+  mark_provisioning
   wg_up
   ansible_up
   run_site
   snapshot_clean
+  unmark_provisioning
   log "DEPLOY COMPLETE — $LAB"
   cat <<EOF
 

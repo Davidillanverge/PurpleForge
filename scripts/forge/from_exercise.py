@@ -56,6 +56,12 @@ OS_BY_ROLE = {
     "workstation": "windows-10-22h2",
 }
 
+# AWS publishes no stock client-Windows (10/11) AMI — only Windows Server — so a
+# client OS would fail the terraform precondition at deploy time unless the
+# operator supplies a BYOL AMI. On AWS, default the workstation to a stock Server
+# SKU so `from-exercise` labs deploy out of the box. See AWS-DEPLOY-RUNBOOK.md.
+_AWS_CLIENT_OS_FALLBACK = "windows-server-2022"
+
 _LAB_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
 _TECH_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
 
@@ -175,7 +181,21 @@ def _netbios_from_domain(domain: str) -> str:
     return label[:15]
 
 
-def _plan_machines(selected_entries: list[dict], domain: str) -> tuple[list[dict], list[str], bool]:
+def _os_for_role(role: str, provider: str) -> str:
+    """Per-role default OS, provider-aware.
+
+    On AWS the workstation falls back to a stock Server SKU because AWS publishes
+    no stock client-Windows AMI (a `windows-10-*`/`windows-11-*` machine would
+    fail the terraform precondition unless the operator supplies a BYOL AMI)."""
+    os_name = OS_BY_ROLE[role]
+    if provider == "aws" and os_name.startswith(("windows-10", "windows-11")):
+        return _AWS_CLIENT_OS_FALLBACK
+    return os_name
+
+
+def _plan_machines(
+    selected_entries: list[dict], domain: str, provider: str
+) -> tuple[list[dict], list[str], bool]:
     """Decide the smallest topology that can host the selected vulns.
 
     A DC is always present. A member-server is added (carrying the union of
@@ -192,19 +212,19 @@ def _plan_machines(selected_entries: list[dict], domain: str) -> tuple[list[dict
         if attack.get("target_role") == "workstation":
             needs_workstation = True
 
-    machines = [{"role": "domain-controller", "os": OS_BY_ROLE["domain-controller"], "domain": domain, "count": 1}]
+    machines = [{"role": "domain-controller", "os": _os_for_role("domain-controller", provider), "domain": domain, "count": 1}]
     if services:
         machines.append(
             {
                 "role": "member-server",
-                "os": OS_BY_ROLE["member-server"],
+                "os": _os_for_role("member-server", provider),
                 "domain": domain,
                 "services": sorted(services),
                 "count": 1,
             }
         )
     if needs_workstation:
-        machines.append({"role": "workstation", "os": OS_BY_ROLE["workstation"], "domain": domain, "count": 1})
+        machines.append({"role": "workstation", "os": _os_for_role("workstation", provider), "domain": domain, "count": 1})
     return machines, sorted(services), needs_workstation
 
 
@@ -232,7 +252,7 @@ def build_spec(
     vulnerable to exactly the exercise's techniques — not merely that we asked."""
     vuln_ids = sorted(selected)
     selected_entries = [catalog[v] for v in vuln_ids]
-    machines, _services, _ws = _plan_machines(selected_entries, domain)
+    machines, _services, _ws = _plan_machines(selected_entries, domain, provider)
 
     atomics = sorted(
         {
@@ -367,6 +387,17 @@ def cmd_from_exercise(args: argparse.Namespace) -> int:
         auto_shutdown=args.auto_shutdown,
         chain_mode=args.chain,
     )
+
+    # Note any provider-driven OS fallback so the operator isn't surprised that
+    # an exercise workstation landed on Windows Server.
+    if args.provider == "aws":
+        for m in spec["machines"]:
+            if m["role"] == "workstation" and m["os"] == _AWS_CLIENT_OS_FALLBACK:
+                print(
+                    f"  note: workstation OS set to {_AWS_CLIENT_OS_FALLBACK} — AWS has no "
+                    "stock client-Windows AMI. For a real client OS, set machines[].image_id "
+                    "to a BYOL AMI (see AWS-DEPLOY-RUNBOOK.md)."
+                )
 
     # Self-check: the authored spec must satisfy the lab-spec JSON Schema before
     # we write it (fail here, not three commands later in `lab-spec`).
