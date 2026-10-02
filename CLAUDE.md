@@ -59,9 +59,10 @@ Validación: `forge validate --run`. Desmontaje: `forge teardown`.
 > (`snapshot_clean`, tras hardening+vulns y ANTES de cualquier ataque): un
 > snapshot de disco por VM en Azure (`<lab>-<vm>-clean`) o `pf-clean` en Proxmox.
 > `forge reset <spec>` restaura ese estado (Azure: swap del disco OS desde el
-> snapshot; Proxmox: `qm rollback`) para reiniciar entre ejercicios. Los scripts
-> están renderizados pero, como `verify.yml`, aún no ejercitados contra un
-> despliegue real — trátalos con la misma cautela hasta validarlos en vivo.
+> snapshot; Proxmox: `qm rollback`) para reiniciar entre ejercicios. `deploy.sh`
+> y el paso de snapshot limpio ya se han ejercitado contra un despliegue real en
+> AWS (crea un AMI por host Windows); `forge reset` y `verify.yml` siguen
+> renderizados pero sin ejercitar en vivo — trátalos con esa cautela.
 
 ## Convenciones del repositorio
 

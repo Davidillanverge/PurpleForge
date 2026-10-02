@@ -16,17 +16,20 @@ inject:
   playbook: templates/ansible/vulns/mssql-weak-sa.yml
   reuses: "vendor/GOAD/ansible/roles/mssql (instalador de SQL Server 2019 Express + config.ini) para el aprovisionamiento base seguro en service-provisioning.yml; la inyección en sí (habilitar sa/mixed-mode/xp_cmdshell) es autoría de PurpleForge, vía SqlCmd -E reutilizando la cuenta de administrador de dominio ya sysadmin por ADDCURRENTUSERASSQLADMIN"
   params: { sa_password: "{{ vuln_mssql_sa_password }}" }
-# NOTE: the hardening.controls.<label> entry below is a conceptual/unverified
-# placeholder — no matching ansible-lockdown CIS rule was found for it during
-# the audit that produced catalog/defense/hardening/control-cis-rules.yml
-# (which only lists VERIFIED control->rule mappings; SQL Server hardening
-# isn't a Windows-OS CIS/STIG surface ansible-lockdown covers). The
-# reconciliation still treats it as 'bundled in this baseline' for
-# warn/exclude-control purposes, but defensive-controls cannot derive a
-# concrete skip_rule for it — only the baseline-level conflict is recorded.
+# NOTE: mssql_hardening is an APPLICATION-LAYER control (disable sa / Windows-auth
+# only / disable xp_cmdshell), NOT part of any Windows-OS CIS/STIG baseline — SQL
+# Server hardening is outside the surface ansible-lockdown covers, and there is no
+# entry for it in catalog/defense/hardening/control-cis-rules.yml. So this vuln is
+# deliberately NOT paired with `hardening.baseline`: claiming CIS/STIG neutralizes
+# a SQL-layer gap would be false, and it would make the reconciler record a
+# spurious baseline-level exclusion. The lab's PREVENT stack (CIS/STIG + pf_controls)
+# never touches SQL, so it can never silently neutralize this gap — no skip_rule is
+# needed. The proper automated coupling is a future pf_controls `mssql_hardening`
+# toggle (a SqlCmd task in defensive-controls + a FIXED_HARDENING_TOGGLES entry);
+# until then `mitigate.summary` is the operator action and this label records the
+# conceptual control that neutralized_by (invariant #2) requires.
 neutralized_by:
-  - hardening.controls.mssql_hardening   # etiqueta libre: deshabilitar sa / forzar solo autenticación Windows / deshabilitar xp_cmdshell
-  - hardening.baseline: [cis-l1, cis-l2, stig]
+  - hardening.controls.mssql_hardening   # application-layer: disable sa / Windows-auth only / disable xp_cmdshell (no CIS/STIG baseline delivers it)
 mitigate:
   summary: "Deshabilitar el login sa (o forzarle una contraseña fuerte + CHECK_POLICY=ON); usar solo autenticación Windows; deshabilitar xp_cmdshell vía sp_configure salvo necesidad explícita y auditada; auditar logins de sa."
 validate:

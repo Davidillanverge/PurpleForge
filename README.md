@@ -422,9 +422,10 @@ order, so hardening always lands before the gaps regardless of who runs it. The
 clean-state snapshot is taken as the *last* deploy step (after vulns, before any
 attack); `forge reset` restores it.
 
-> The snapshot/reset scripts are rendered from the documented Azure/Proxmox
-> procedures but, like `verify.yml`, have not yet been exercised against a live
-> deploy — treat the first run with that caution.
+> The **clean-state snapshot** step has now run against a live AWS deploy
+> (`snapshot_clean` created one AMI per Windows host). `forge reset` and
+> `verify.yml` are still rendered from the documented procedures but have not yet
+> been exercised live — treat their first run with that caution.
 
 ---
 
