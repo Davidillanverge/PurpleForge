@@ -116,6 +116,7 @@ from .render import (
     describe_vuln_credentials,
     render_ad_population,
     render_ansible,
+    render_aws_terraform,
     render_azure_terraform,
     render_backend_config,
     render_defensive_controls,
@@ -203,9 +204,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"    - {x['detail']} -> {x['action']}")
 
     provider = spec["lab"]["provider"]
-    if provider not in ("azure", "proxmox"):
+    if provider not in ("azure", "proxmox", "aws"):
         print(
-            f"FAIL: infra-{provider} is not implemented yet (Azure and Proxmox today; AWS is on the roadmap).",
+            f"FAIL: infra-{provider} is not implemented yet (Azure, Proxmox and AWS today).",
             file=sys.stderr,
         )
         return 1
@@ -223,6 +224,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     if provider == "proxmox":
         render_proxmox_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
+    elif provider == "aws":
+        render_aws_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
     else:
         render_azure_terraform(network_plan, machines, out_dir, admin_password, ansible_password, spec["lab"])
     theme = load_theme(spec["lab"]["theme"])

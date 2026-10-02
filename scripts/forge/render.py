@@ -196,6 +196,90 @@ def render_proxmox_terraform(
     )
 
 
+def render_aws_backend_config(lab_name: str, dst: Path) -> None:
+    """Writes backend.hcl for `terraform init -backend-config=backend.hcl`
+    (versions.tf declares a partial `backend "s3" {}` — CLAUDE.md invariant #4,
+    state must never default to local). One shared S3 bucket + DynamoDB lock
+    table holds every lab's state as a separate key (the AWS analogue of the
+    shared Azure storage account); the bucket name must be globally unique, so
+    the placeholder below WILL collide across PurpleForge installs — treat it
+    as a value to override after the one-time bootstrap, not a working default.
+    See .claude/skills/infra-aws/SKILL.md.
+    """
+    content = (
+        'bucket         = "purpleforge-tfstate"  # placeholder — S3 bucket names are global, override after bootstrap\n'
+        f'key            = "{lab_name}.tfstate"\n'
+        'region         = "us-east-1"  # the state bucket\'s region (not necessarily the lab\'s region)\n'
+        'dynamodb_table = "purpleforge-tfstate-lock"\n'
+        'encrypt        = true\n'
+    )
+    (dst / "backend.hcl").write_text(content, encoding="utf-8")
+
+
+def parse_auto_shutdown_cron(value: str) -> tuple[str, str]:
+    """ "20:00 Europe/Madrid" -> ("cron(0 20 * * ? *)", "Europe/Madrid") for
+    aws_scheduler_schedule. Unlike Azure (parse_auto_shutdown), EventBridge
+    Scheduler accepts the IANA zone name directly, so no Windows-timezone
+    translation is needed — the schema already enforces the "HH:MM Area/City"
+    pattern on lab.auto_shutdown."""
+    time_part, tz_part = value.split(" ", 1)
+    hh, mm = time_part.split(":")
+    return f"cron({int(mm)} {int(hh)} * * ? *)", tz_part
+
+
+def render_aws_terraform(
+    network_plan: dict, machines: list[dict], out_dir: Path, admin_password: str, ansible_password: str, lab: dict
+) -> None:
+    """Sibling of render_azure_terraform for the AWS provider. Same committed-
+    tfvars / gitignored-secrets-overlay split as Azure, and a remote S3 state
+    backend (backend.hcl, invariant #4). AWS has no resource-group or per-VM
+    shutdown schedule, so the Terraform layer tags everything lab/project (the
+    provider default_tags) and builds auto_shutdown from EventBridge Scheduler +
+    a Lambda (auto_shutdown.tf). AMIs resolve from SSM public parameters at
+    plan/apply time, so no account-specific ami-id is baked into the spec."""
+    src = TEMPLATES_DIR / "terraform" / "aws"
+    dst = out_dir / "terraform" / "aws"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+    shutdown_cron, shutdown_tz = parse_auto_shutdown_cron(lab["auto_shutdown"])
+    tfvars = {
+        "lab_name": lab["name"],
+        "region": lab["region"],
+        "auto_shutdown_cron": shutdown_cron,
+        "auto_shutdown_timezone": shutdown_tz,
+        "supernet": network_plan["supernet"],
+        "management_cidr": network_plan["management_subnet"],
+        "jumpbox_private_ip": network_plan["jumpbox_ip"],
+        "domains": {domain: {"subnet_cidr": info["subnet"]} for domain, info in network_plan["domains"].items()},
+        "machines": [
+            {
+                "name": m["name"],
+                "domain": m["domain"],
+                "role": m["role"],
+                "os": m["os"],
+                "ip": m["ip"],
+                # image_id on AWS holds an AMI id; most labs leave it null and
+                # resolve the stock Windows AMI via SSM (see windows.tf).
+                "image_id": m.get("image_id"),
+            }
+            for m in machines
+        ],
+        "admin_username": WINDOWS_ADMIN_USERNAME,
+        "jumpbox_username": WINDOWS_ADMIN_USERNAME,
+        "wireguard_port": 51820,
+        "wireguard_allowed_cidrs": ["0.0.0.0/0"],
+        "bastion_ssh_allowed_cidrs": [],
+    }
+    (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
+    (dst / "secrets.auto.tfvars.json").write_text(
+        json.dumps({"admin_password": admin_password, "ansible_password": ansible_password}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    render_aws_backend_config(lab["name"], dst)
+
+
 def render_ad_population(theme: dict, spec: dict, ansible_groups: dict[str, list[dict]], out_dir: Path) -> list[dict]:
     """Full replacement for BadBlood + render_ad_theming/render_badblood_overlay
     (both retired): computes one fully deterministic population plan per
@@ -403,7 +487,7 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         "domains_json": json.dumps(domains_ctx),
         "auto_shutdown": spec["lab"].get("auto_shutdown", ""),
     }
-    template_suffix = "-proxmox" if provider == "proxmox" else ""
+    template_suffix = {"proxmox": "-proxmox", "aws": "-aws"}.get(provider, "")
     env = jinja2.Environment(keep_trailing_newline=True)
     # reset.sh restores the clean-state snapshot deploy.sh takes as its last step
     # (CLAUDE.md deploy order) — run between exercises via `forge reset`.

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# PurpleForge AWS reset — {{ lab_name }}
+#
+# STATUS: placeholder. The clean-state snapshot/restore for AWS (an AMI or EBS
+# snapshot per VM taken as deploy.sh's last step, restored by swapping the root
+# volume) is not implemented yet — the AWS path is render/plan only. The
+# Azure/Proxmox reset.sh is the reference for what this will do.
+set -euo pipefail
+
+echo "=== PurpleForge AWS reset ({{ lab_name }}) — not yet implemented ==="
+echo "The AWS provider currently supports render + terraform plan only."
+exit 0

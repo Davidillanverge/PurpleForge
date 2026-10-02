@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# PurpleForge AWS deploy — {{ lab_name }} (region {{ region }})
+#
+# STATUS: render + `terraform plan` only. The AWS provider currently generates
+# and validates its Terraform layer; the full apply -> WireGuard tunnel ->
+# site.yml -> clean snapshot flow (the Azure/Proxmox deploy.sh equivalent) is
+# NOT implemented yet. This script deliberately stops before `terraform apply`
+# so `forge deploy` can never half-create billable AWS resources through an
+# unfinished path.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TF_DIR="$HERE/terraform/aws"
+
+echo "=== PurpleForge AWS ({{ lab_name }}) — render/plan only ==="
+echo "Terraform layer: $TF_DIR"
+echo
+echo "Remote state backend is a partial config (invariant #4): edit"
+echo "  terraform/aws/backend.hcl  (S3 bucket + DynamoDB lock table)"
+echo "then, with AWS credentials in the environment:"
+echo "  cd '$TF_DIR'"
+echo "  terraform init -backend-config=backend.hcl"
+echo "  terraform plan"
+echo
+echo "NOTE: terraform apply and the Ansible/WireGuard/snapshot phases are not yet"
+echo "wired for AWS. Use the Azure or Proxmox provider for a full live deploy."
+exit 0

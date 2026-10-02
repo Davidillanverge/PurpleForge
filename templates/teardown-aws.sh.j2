@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# PurpleForge AWS teardown — {{ lab_name }}
+#
+# STATUS: placeholder. The AWS deploy path is render/plan only (see
+# deploy-aws.sh), so there is nothing a full teardown must undo yet. Once apply
+# is wired, this will become the `terraform destroy` + verify_aws_teardown
+# (cost-zero check on everything tagged lab={{ lab_name }}) flow, mirroring the
+# Azure/Proxmox teardown.sh.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TF_DIR="$HERE/terraform/aws"
+
+echo "=== PurpleForge AWS teardown ({{ lab_name }}) — not yet implemented ==="
+echo "If you ran terraform manually in $TF_DIR, destroy with:"
+echo "  cd '$TF_DIR' && terraform destroy"
+echo "and confirm nothing tagged lab={{ lab_name }} remains in region {{ region }}."
+exit 0
