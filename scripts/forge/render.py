@@ -588,12 +588,33 @@ def render_ansible(
     template = jinja2.Template(
         (src / "inventory" / "hosts.yml.j2").read_text(encoding="utf-8"), keep_trailing_newline=True
     )
+    # DNS forwarder for the DC (GOAD's domain_controller role, xDnsServerForwarder).
+    # Azure's magic resolver 168.63.129.16 is WRONG on AWS — there the VPC resolver
+    # is the VPC CIDR base + 2 (e.g. 10.54.0.0/16 -> 10.54.0.2). Without this, a
+    # promoted DC forwards public DNS to an unreachable IP and every Install-Module
+    # from PSGallery fails "No match was found" (ActiveDirectoryDSC etc.). Proxmox
+    # keeps the old value — its lab bridge has no uplink, so the forwarder is moot
+    # (GOAD modules are pre-baked in the template there).
+    provider = spec["lab"]["provider"]
+    if provider == "aws":
+        octet = machines[0]["ip"].split(".")[1]  # lab addressing is always 10.<octet>.0.0/16
+        dns_server_forwarder = f"10.{octet}.0.2"
+    else:
+        dns_server_forwarder = "168.63.129.16"
+    # Primary NIC name GOAD's roles configure (xDnsServerAddress / rename). Azure &
+    # Proxmox images present it as "Ethernet"; EC2 Windows AMIs (ENA driver)
+    # enumerate the primary adapter as "Ethernet 3" — without this, GOAD's member
+    # -server DNS task fails "No MSFT_NetAdapter objects found with property 'Name'
+    # equal to 'Ethernet'".
+    domain_adapter = "Ethernet 3" if provider == "aws" else "Ethernet"
     rendered = template.render(
         lab_name=spec["lab"]["name"],
         ansible_password=ansible_password,
         groups=groups,
         local_admin_username=WINDOWS_ADMIN_USERNAME,
-        provider=spec["lab"]["provider"],
+        provider=provider,
+        dns_server_forwarder=dns_server_forwarder,
+        domain_adapter=domain_adapter,
     )
     (dst / "inventory" / "hosts.yml").write_text(rendered, encoding="utf-8")
     return groups

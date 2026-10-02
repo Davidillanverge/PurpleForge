@@ -239,7 +239,11 @@ for r in d.get("values",{}).get("root_module",{}).get("resources",[]):
   [ -n "$BASTION_IP" ] || die "no bastion_public_ip output — did apply finish?"
   [ -f ssh_keys/client_wg.key ] || wg genkey | tee ssh_keys/client_wg.key | wg pubkey > ssh_keys/client_wg.pub
   CLIENT_PUB="$(cat ssh_keys/client_wg.pub)"
-  local SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i ssh_keys/bastion.pem purpleforge@$BASTION_IP"
+  # SSH user is 'ubuntu' — the Canonical AMI's built-in default user, into whose
+  # authorized_keys EC2 injects the aws_key_pair. (Azure/Proxmox log in as
+  # 'purpleforge' because their bastion image is configured with that admin user;
+  # on AWS the stock Ubuntu AMI fixes it to 'ubuntu'.)
+  local SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i ssh_keys/bastion.pem ubuntu@$BASTION_IP"
   local i=0; until $SSH true 2>/dev/null; do i=$((i+1)); [ "$i" -ge 20 ] && die "bastion SSH never came up at $BASTION_IP (check bastion_ssh_allowed_cidrs includes your IP)"; sleep 15; done
   SERVER_PUB="$($SSH 'sudo cat /etc/wireguard/publickey')"
   $SSH "sudo wg set wg0 peer $CLIENT_PUB allowed-ips 10.250.250.2/32 && sudo wg-quick save wg0"

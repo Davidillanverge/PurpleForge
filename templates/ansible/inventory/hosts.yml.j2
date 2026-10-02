@@ -32,8 +32,8 @@ all:
     two_adapters: false
     nat_adapter: ""
     add_route: "no"
-    domain_adapter: "Ethernet"
-    dns_server_forwarder: "168.63.129.16"
+    domain_adapter: "{{ domain_adapter }}"
+    dns_server_forwarder: "{{ dns_server_forwarder }}"
     force_dns_server: "no"
     http_proxy: "no"
     ad_http_proxy: ""
