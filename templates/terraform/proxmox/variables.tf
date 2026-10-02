@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # Spec-derived variables (set in the committed, shareable terraform.tfvars.json
-# by scripts/forge.py — same values on any Proxmox host).
+# by scripts/forge/ — same values on any Proxmox host).
 # -----------------------------------------------------------------------------
 
 variable "lab_name" {
@@ -24,7 +24,7 @@ variable "jumpbox_private_ip" {
 }
 
 variable "domains" {
-  description = "domain -> {subnet CIDR, VLAN tag, gateway IP}. One /24 + one VLAN id per forest[] entry, assigned deterministically by scripts/forge.py so vulnerable subnets are L2-isolated on the lab bridge. gateway_ip is the bastion's on-subnet address for that domain (the subnet's .254): Windows hosts default-route to it, and deploy.sh brings it up as a VLAN sub-interface on the bastion that routes the domain."
+  description = "domain -> {subnet CIDR, VLAN tag, gateway IP}. One /24 + one VLAN id per forest[] entry, assigned deterministically by scripts/forge/ so vulnerable subnets are L2-isolated on the lab bridge. gateway_ip is the bastion's on-subnet address for that domain (the subnet's .254): Windows hosts default-route to it, and deploy.sh brings it up as a VLAN sub-interface on the bastion that routes the domain."
   type = map(object({
     subnet_cidr = string
     vlan_id     = number

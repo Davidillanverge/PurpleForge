@@ -21,7 +21,7 @@ terraform {
   # never local. Partial config on purpose — the actual bucket/key/table are
   # lab-specific and supplied at init time:
   #   terraform init -backend-config=backend.hcl
-  # scripts/forge.py generate writes backend.hcl next to this file from
+  # forge generate writes backend.hcl next to this file from
   # lab.name. One shared S3 bucket + DynamoDB lock table holds every lab's
   # state as a separate key (the AWS analogue of the shared Azure storage
   # account); the bucket name must be globally unique, so backend.hcl ships a

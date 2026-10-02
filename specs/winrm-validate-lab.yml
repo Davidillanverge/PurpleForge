@@ -1,7 +1,7 @@
 # PurpleForge — WinRM live-validation smoke test.
 #
 # PURPOSE: exercise the new automated WinRM validation path added to
-# forge.py (WINRM_APPLIED_CHECKS / _winrm_run / _winrm_check_result) against
+# forge (WINRM_APPLIED_CHECKS / _winrm_run / _winrm_check_result) against
 # a real workstation + DC. Covers exactly the 7 vulns that path handles:
 #   - the 5 Tier A OS-level local-privesc vulns (never smoke-tested live —
 #     see NON-AD-VULNS-ROADMAP.md item 3), all target_role: workstation

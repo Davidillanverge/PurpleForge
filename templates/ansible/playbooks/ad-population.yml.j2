@@ -23,7 +23,7 @@
   vars:
     domain_username: {{ p.domain_username }}
     # pf_admin_password + pf_pop_secrets come from the gitignored
-    # group_vars/all/secrets.yml (written by forge.py, or minted by deploy.sh on
+    # group_vars/all/secrets.yml (written by forge, or minted by deploy.sh on
     # a share that was never regenerated) — no strong secret is inlined here.
     domain_password: "{{ '{{ pf_admin_password }}' }}"
     # tojson on the whole list (not a per-item Jinja for-loop block emitting

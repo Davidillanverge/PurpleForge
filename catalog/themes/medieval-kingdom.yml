@@ -1,6 +1,6 @@
 # catalog/themes/medieval-kingdom.yml
 #
-# Consumed by scripts/forge.py's ad-theming rendering (see
+# Consumed by forge's ad-theming rendering (see
 # .claude/skills/ad-theming/SKILL.md): `vocabulary.houses` becomes
 # BadBlood's AD_OU_CreateStructure/3lettercodes.csv (department codes used
 # for Tier1/Tier2/Stage/People sub-OUs AND computer-name prefixes),

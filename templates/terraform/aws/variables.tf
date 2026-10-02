@@ -31,7 +31,7 @@ variable "domains" {
 }
 
 variable "machines" {
-  description = "Flattened machine instances with assigned name/domain/role/os/ip (from lab-manifest.json, named by scripts/forge.py during generate)."
+  description = "Flattened machine instances with assigned name/domain/role/os/ip (from lab-manifest.json, named by scripts/forge/ during generate)."
   type = list(object({
     name     = string
     domain   = string

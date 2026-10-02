@@ -26,7 +26,7 @@ skip_rule_vars_prefix_by_os:
   # the sequential "<prefix>cis_rule_N_N_N" scheme CIS roles use. NONE of
   # catalog/defense/hardening/control-cis-rules.yml's mappings apply here —
   # that file is CIS-only. No STIG skip_rule mapping has been verified yet, so
-  # scripts/forge.py's resolver honestly reports "cannot derive a STIG
+  # forge's resolver honestly reports "cannot derive a STIG
   # skip_rule" instead of guessing when baseline: stig excludes a control.
   windows-server-2019: wn19
   windows-server-2022: wn22

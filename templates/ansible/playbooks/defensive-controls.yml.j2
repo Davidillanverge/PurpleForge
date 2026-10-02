@@ -1,6 +1,6 @@
 {#
   PurpleForge — defensive-controls playbook (GENERATED, do not edit).
-  Rendered by scripts/forge.py generate. Order (CLAUDE.md): hardening baseline
+  Rendered by forge generate. Order (CLAUDE.md): hardening baseline
   first (so vuln-injection's gaps land in an already-hardened box), then EDR,
   then the concrete pf_controls toggles, then deception. See
   .claude/skills/defensive-controls/SKILL.md for why each ansible-lockdown
@@ -10,7 +10,7 @@
   ansible-lockdown documents `--tags`/`--skip-tags` at ansible-playbook
   invocation time as the actual level-selection mechanism (see
   vendor/ansible-lockdown/Windows-2022-CIS/README.md's "This is managed using
-  tags" section). `forge.py generate`'s own console output prints the exact
+  tags" section). `forge generate`'s own console output prints the exact
   --tags value each baseline needs; a future /deploy orchestrator should pass
   it through.
 #}

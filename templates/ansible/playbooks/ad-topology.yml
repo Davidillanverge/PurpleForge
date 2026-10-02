@@ -3,7 +3,7 @@
 # Every role invoked here is reused verbatim from vendor/GOAD/ansible/roles
 # (resolved via generated/<lab>/ansible/ansible.cfg's roles_path) — this file
 # only sequences them against the inventory groups that
-# scripts/forge.py generate produces from lab-manifest.json. Do not copy
+# forge generate produces from lab-manifest.json. Do not copy
 # GOAD's role *content* into templates/ansible/roles/; wrap, don't fork.
 #
 # Order matters: root domain DCs must exist before additional DCs/child
@@ -15,7 +15,7 @@
   pre_tasks:
     # Azure's azurerm_windows_virtual_machine rejects "Administrator" as
     # admin_username outright, so every VM's local admin is named
-    # local_admin_username (see scripts/forge.py's WINDOWS_ADMIN_USERNAME)
+    # local_admin_username (see forge's WINDOWS_ADMIN_USERNAME)
     # instead — verified against a real deploy that when win_domain (in the
     # domain_controller role below) creates a brand-new forest, the domain's
     # RID-500 "Administrator" account is seeded from THAT local account and

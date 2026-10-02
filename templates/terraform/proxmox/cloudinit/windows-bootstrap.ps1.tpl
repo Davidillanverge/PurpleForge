@@ -38,7 +38,7 @@ function Invoke-PfPhase($Name, [scriptblock]$Body) {
 # --- Local admin accounts --------------------------------------------------
 # purpleforge  : the domain-admin-to-be. The GOAD domain_controller role renames
 #                this local account to the real Administrator at DC promotion, so
-#                its LOGIN password must be admin_password (see forge.py
+#                its LOGIN password must be admin_password (see forge
 #                build_ansible_groups). cloudbase-init's user_account also sets
 #                this; re-asserting here is a harmless belt-and-braces in case a
 #                custom user-data drops cipassword.

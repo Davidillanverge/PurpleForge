@@ -69,7 +69,7 @@ resource "aws_instance" "bastion" {
   }
 
   # WireGuard tunnel subnet (10.250.250.0/24) is fixed and deliberately outside
-  # any lab's per-lab supernet (10.10-209.0.0/16, see scripts/forge.py
+  # any lab's per-lab supernet (10.10-209.0.0/16, see scripts/forge/
   # stable_octet) so it never collides with a lab's own addressing. The template
   # also sets up egress NAT for the whole VPC supernet so the private domain
   # subnets reach the internet through this host.
@@ -80,7 +80,7 @@ resource "aws_instance" "bastion" {
   })
 
   # Writes next to this module (generated/<lab>/terraform/aws/ssh_keys/), not
-  # several ../ up — depth-independent regardless of where forge.py copies the
+  # several ../ up — depth-independent regardless of where forge copies the
   # template tree.
   provisioner "local-exec" {
     command = "mkdir -p ${path.module}/ssh_keys && echo '${tls_private_key.bastion_ssh.private_key_pem}' > ${path.module}/ssh_keys/bastion.pem && chmod 600 ${path.module}/ssh_keys/bastion.pem"

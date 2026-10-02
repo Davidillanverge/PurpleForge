@@ -31,7 +31,7 @@ variable "domains" {
 }
 
 variable "machines" {
-  description = "Flattened machine instances with assigned name/domain/role/os/ip (from lab-manifest.json, named by scripts/forge.py during generate)."
+  description = "Flattened machine instances with assigned name/domain/role/os/ip (from lab-manifest.json, named by scripts/forge/ during generate)."
   type = list(object({
     name     = string
     domain   = string
@@ -130,6 +130,6 @@ variable "auto_shutdown_time" {
 }
 
 variable "auto_shutdown_timezone" {
-  description = "Legacy Windows timezone ID (e.g. \"Romance Standard Time\" for Europe/Madrid) required by azurerm_dev_test_global_vm_shutdown_schedule.timezone — verified against a real `terraform plan` (azurerm 3.117.1) that IANA names like \"Europe/Madrid\" are rejected outright, not just discouraged. scripts/forge.py's IANA_TO_WINDOWS_TIMEZONE map does the lab.auto_shutdown IANA-zone -> Windows-ID translation before this variable is set in terraform.tfvars.json."
+  description = "Legacy Windows timezone ID (e.g. \"Romance Standard Time\" for Europe/Madrid) required by azurerm_dev_test_global_vm_shutdown_schedule.timezone — verified against a real `terraform plan` (azurerm 3.117.1) that IANA names like \"Europe/Madrid\" are rejected outright, not just discouraged. forge's IANA_TO_WINDOWS_TIMEZONE map does the lab.auto_shutdown IANA-zone -> Windows-ID translation before this variable is set in terraform.tfvars.json."
   type        = string
 }

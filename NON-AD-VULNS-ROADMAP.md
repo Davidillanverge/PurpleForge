@@ -22,7 +22,7 @@ Authenticated-Users-writable gap:
 `requires_services` → `target_role` → default root DC. `semantic_checks` errors if
 no machine of the declared role exists. AD vulns unchanged (no `target_role` ⇒ root
 DC). Files: `catalog/vulnerabilities/<5 ids>.yml`, `templates/ansible/vulns/<5
-ids>.yml`, `scripts/forge.py`.
+ids>.yml`, `scripts/forge/`.
 
 **✅ WinRM local validation (2026-07-10):** `WINRM_APPLIED_CHECKS` auto-confirms
 `applied` for all 5 (plus writable-gpo/adminsdholder-acl) via `nxc winrm <ip> -X`

@@ -1,6 +1,6 @@
 {#
   PurpleForge — verify.yml (GENERATED, do not edit).
-  Rendered by scripts/forge.py generate. Run this separately AFTER site.yml,
+  Rendered by forge generate. Run this separately AFTER site.yml,
   not as part of it — this checks state, it doesn't change any (every task
   here is read-only: registry reads, Get-AD* queries, no Set-*/win_regedit
   writes). See README "Validating what actually got applied" for how to read
@@ -9,7 +9,7 @@
 
   UNTESTED AGAINST A REAL HOST: every check below reuses the exact registry
   path / AD property name from the task-file or role that sets it (see
-  scripts/forge.py's own comment above render_verify_playbook for the grep
+  forge's own comment above render_verify_playbook for the grep
   audit that confirmed this), but this repository has never had a live
   Windows VM to run it against. Syntax-checked, cross-referenced, not
   execution-proven.

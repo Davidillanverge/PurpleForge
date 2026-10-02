@@ -78,7 +78,7 @@
         "bastion_size": {
           "type": "string",
           "minLength": 1,
-          "description": "Cloud VM size for the WireGuard bastion, overriding the default (Azure: 'Standard_B1s'). Set it when the subscription's regional vCPU quota restricts the B-series (the #1 deploy blocker) — no need to touch templates. When absent, forge.py's default applies."
+          "description": "Cloud VM size for the WireGuard bastion, overriding the default (Azure: 'Standard_B1s'). Set it when the subscription's regional vCPU quota restricts the B-series (the #1 deploy blocker) — no need to touch templates. When absent, forge's default applies."
         }
       }
     },

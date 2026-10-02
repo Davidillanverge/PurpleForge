@@ -72,7 +72,7 @@ resource "azurerm_linux_virtual_machine" "bastion" {
   }
 
   # WireGuard tunnel subnet (10.250.250.0/24) is fixed and deliberately outside
-  # any lab's per-lab supernet (10.10-209.0.0/16, see scripts/forge.py
+  # any lab's per-lab supernet (10.10-209.0.0/16, see scripts/forge/
   # stable_octet) so it never collides with a lab's own addressing.
   custom_data = base64encode(templatefile("${path.module}/cloudinit/wireguard-bastion.yaml.tpl", {
     wireguard_port = var.wireguard_port
@@ -81,7 +81,7 @@ resource "azurerm_linux_virtual_machine" "bastion" {
   }))
 
   # Writes next to this module (generated/<lab>/terraform/azure/ssh_keys/),
-  # not several ../ up — depth-independent regardless of where forge.py
+  # not several ../ up — depth-independent regardless of where forge
   # generate copies this template tree.
   provisioner "local-exec" {
     command = "mkdir -p ${path.module}/ssh_keys && echo '${tls_private_key.bastion_ssh.private_key_pem}' > ${path.module}/ssh_keys/bastion.pem && chmod 600 ${path.module}/ssh_keys/bastion.pem"

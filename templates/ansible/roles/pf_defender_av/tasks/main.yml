@@ -4,10 +4,10 @@
 # into every Windows Server 2019+/10/11 image, no external console/backend
 # needed. Every other defense.edr[].product needs a backend this project does
 # not build (PREVENT/RESPOND only) and is reported as not-implemented instead
-# (scripts/forge.py:plan_edr) rather than silently no-op'd.
+# (forge.plan_edr) rather than silently no-op'd.
 #
 # This is a plain Ansible role (resolved via ansible.cfg's roles_path, never
-# rendered through scripts/forge.py's own Jinja step) — {{ }} below is
+# rendered through forge's own Jinja step) — {{ }} below is
 # ordinary Ansible templating, evaluated by ansible-playbook itself.
 #
 # pf_defender_av_mode (enabled|detect|prevent) picks the ASR/tamper defaults;

@@ -3,7 +3,7 @@
 # Directly reuses vendor/GOAD/ansible/roles/adcs_templates: its ADCSTemplate
 # PowerShell module + ready-made ESC1.json (a template with
 # ENROLLEE_SUPPLIES_SUBJECT + client-auth EKU, enrollable by Domain Users).
-# forge.py copies those two upstream artifacts into
+# forge copies those two upstream artifacts into
 # generated/<lab>/ansible/files/adcs/ (see .claude/skills/vuln-injection/SKILL.md);
 # here we only install the ESC1 template — not GOAD's full ESC1-6 sweep — so the
 # lab has exactly the one AD CS gap the spec asked for.

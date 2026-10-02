@@ -391,8 +391,8 @@ def generate_population_plan(
     groups, OUs, computers, memberships, ACL noise). `seed_offset` mirrors
     the existing per-domain badblood_seed trick (population.seed + domain
     index) so multi-domain labs don't draw identical populations twice.
-    `generate_password` is forge.py's own generate_password — injected
-    rather than imported, to keep this module dependency-free of forge.py."""
+    `generate_password` is forge's own generate_password — injected
+    rather than imported, to keep this module dependency-free of forge."""
     rng = random.Random(population["seed"] + seed_offset)
     vocab = theme["vocabulary"]
     domain_dn = _domain_dn(domain)

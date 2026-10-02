@@ -2,7 +2,7 @@
 # Vuln inject task-file: backup-operators-membership (T1078.002 / T1003.003)
 # {{ vuln_backupop_account }} is either a fresh synthetic account
 # (independent mode) or an existing real population object cast by
-# resolve_attack_chain() (scripts/forge.py) in ctf mode — either way this
+# resolve_attack_chain() (scripts/forge/) in ctf mode — either way this
 # task only resets its password, never identity fields (OU, description)
 # win_domain_user wasn't given; ad-population.yml already set those for
 # every population object. Adding it to the domain's built-in "Backup
