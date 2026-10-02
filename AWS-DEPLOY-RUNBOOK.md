@@ -4,11 +4,13 @@ Copy-pasteable checklist from `lab-spec.yml` to a live AWS lab, and the
 symptom→cause table for the gotchas a real deploy hits. The AWS sibling of
 `AZURE-DEPLOY-RUNBOOK.md`.
 
-> **Status:** the AWS provider's generated `deploy.sh` / `teardown.sh` /
-> `reset.sh` are rendered from the documented procedure but, like `verify.yml`,
-> have **not yet been exercised against a live AWS account** in this repo. Treat
-> the first live run with the skepticism the project applies elsewhere — this is
-> where the real bugs will surface (as they did on the Proxmox path).
+> **Status:** exercised end-to-end against a live AWS account on **2026-10-02**
+> (`specs/aws-parity-lab.yml`, eu-west-1: DC + member-server/ADCS + workstation,
+> 4 vulns). `site.yml` completed `failed=0`, the clean-state AMIs were taken, and
+> the vulns were validated over the tunnel (asreproast + dcsync-acl + adcs-esc1 +
+> unquoted-service-path). The first live run surfaced **five generator bugs**,
+> all now fixed in the deploy files and committed — see **Live-deploy bugs
+> found & fixed** below.
 
 The deploy is deterministic and runs itself: `forge deploy specs/<lab>.yml`
 (guardrail gate → the generated `deploy.sh`). The steps below are what that
@@ -85,6 +87,27 @@ forge reset specs/<lab>.yml        # swap every VM's root volume back to its cle
 ```
 
 ---
+
+## Live-deploy bugs found & fixed (2026-10-02, first live run)
+
+All five surfaced deploying `specs/aws-parity-lab.yml` end-to-end against a real
+account and are **fixed at source** in the deploy files (not worked around).
+Same "the first live deploy finds the real bugs" pattern as the Proxmox path.
+
+| # | Symptom | Root cause | Fix (file) | Commit |
+|---|---|---|---|---|
+| 1 | WireGuard step: `Permission denied (publickey)` → `bastion SSH never came up` | Deploy SSHed as `purpleforge@` (the Azure/Proxmox admin user), but the stock Canonical AMI's default user is `ubuntu` (where EC2 injects the key pair). | `templates/deploy-aws.sh.j2` (`wg_up` logs in as `ubuntu@`) | `8d00982` |
+| 2 | `Install-Module ActiveDirectoryDSC` → `No match was found` (every PSGallery install fails on the DC) | DNS forwarder hardcoded to `168.63.129.16` (Azure's magic resolver). On AWS that IP is unreachable, so a promoted DC can't resolve public names. **Not** a TLS/egress issue (raw IP egress worked). | `templates/ansible/inventory/hosts.yml.j2` + `render.py` — provider-aware: VPC resolver (CIDR base + 2, e.g. `10.54.0.2`) on AWS. | `8d00982` |
+| 3 | `member_server` DNS task → `No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet'` | Primary NIC hardcoded as `domain_adapter: "Ethernet"`, but EC2 Windows AMIs (ENA driver) name it **`Ethernet 3`**. | `templates/ansible/inventory/hosts.yml.j2` + `render.py` — provider-aware: `Ethernet 3` on AWS. | `8d00982` |
+| 4 | Clean snapshot creates a doubled-name AMI `aws-parity-lab-aws-parity-lab-bastion-clean` | `snapshot_clean` iterated every tagged instance incl. the bastion (whose Name tag already carries the lab prefix); the bastion is also disposable infra `reset` never restores. | `templates/deploy-aws.sh.j2` + `templates/reset-aws.sh.j2` — skip the bastion. | `8b25af5` |
+| 5 | `adcs-esc1` enroll fails `ept_s_not_registered` (CA RPC unreachable) — the ESC1 template is published but not exploitable over the tunnel | A member server's Windows firewall blocks inbound RPC (EPM 135 + dynamic DCOM) + SMB 445 by default (a DC opens them at promotion; a member server does not), so the CA enrollment interface is unreachable from the bastion subnet — the only path in (invariant #1). | `templates/ansible/vulns/adcs-esc1.yml` opens 135/445/dynamic to the lab supernet (`pf_supernet`, exposed via `render.py` + `hosts.yml.j2`). | `8b25af5` |
+
+Not a lab defect (environmental, documented for completeness): **adcs-esc1's final
+PKINIT-to-DA** is gated by `KB5014754` strong certificate binding on a patched
+2022 DC (cert has no SID → `Object SID mismatch`). The ESC1 enrollment primitive
+itself is proven (a Domain User enrolled a cert impersonating Administrator); the
+DC NTAuth cache refresh in `service-provisioning` works (otherwise PKINIT would
+fail earlier with `KDC_ERR_CLIENT_NOT_TRUSTED`).
 
 ## Symptom → cause table
 
