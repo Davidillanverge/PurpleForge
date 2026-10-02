@@ -1,0 +1,84 @@
+---
+# PurpleForge service provisioning: IIS FTP Server (Web-Ftp-Server), SECURE base.
+# Establishes what the machine IS — a working, locked-down FTP server — NOT a
+# vuln. Any FTP vuln selected for this host (ftp-anonymous-access,
+# ftp-write-webroot) reopens a specific gap afterwards, in vuln-injection, same
+# hardening-before-gaps order as every other service.
+#
+# Secure-by-default baseline:
+#   - Anonymous authentication OFF; basic authentication ON (credentials
+#     required). SSL left at the IIS default control policy (lab isolation is at
+#     the NSG, invariant #1) — the gap is auth/authorization, not transport.
+#   - Authorization grants only authenticated users READ (no write, no anonymous).
+#   - Site rooted at a dedicated C:\inetpub\ftproot (NOT the web root).
+# Idempotent: the site is only created when absent; Set/Clear/Add-WebConfiguration
+# converge; the health probe re-runs harmlessly.
+- name: "ftp-install | install the FTP server role (+ IIS mgmt tooling for WebAdministration)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Ftp-Server
+      - Web-Mgmt-Console
+      - Web-Scripting-Tools
+    state: present
+    include_management_tools: true
+  register: ftp_feature
+
+- name: "ftp-install | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: ftp_feature.reboot_required | default(false)
+
+- name: "ftp-install | create the dedicated FTP root directory"
+  ansible.windows.win_file:
+    path: C:\inetpub\ftproot
+    state: directory
+
+- name: "ftp-install | create a SECURE FTP site (anon off, basic on, authenticated read-only)"
+  ansible.windows.win_shell: |
+    Import-Module WebAdministration
+    if (-not (Get-Website -Name 'PFFtp' -ErrorAction SilentlyContinue)) {
+        New-WebFtpSite -Name 'PFFtp' -Port 21 -PhysicalPath 'C:\inetpub\ftproot' -Force | Out-Null
+    }
+    $site = "IIS:\Sites\PFFtp"
+    # auth: anonymous OFF, basic ON
+    Set-ItemProperty $site -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $false
+    Set-ItemProperty $site -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
+    # authorization: wipe any rule, then allow authenticated users READ only
+    Clear-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -ErrorAction SilentlyContinue
+    Add-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -Value @{accessType='Allow'; roles=''; users='*'; permissions='Read'} -ErrorAction SilentlyContinue
+  changed_when: true
+
+- name: "ftp-install | Firewall | allow FTP control channel (TCP 21)"
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for FTP (TCP-In)"
+    Ensure: present
+    Enabled: True
+    # NOT "Domain"-only — a freshly domain-joined cloud member-server's NIC can
+    # stay NetworkCategory=Public (NLA quirk, same live finding as mssql/iis).
+    # Isolation is enforced at the NSG/SG (deny-by-default), so opening the guest
+    # firewall on all profiles does not weaken anything.
+    Profile: "Domain, Private, Public"
+    Direction: "Inbound"
+    Localport: "21"
+    Protocol: "TCP"
+    Description: "Opens the FTP control-channel port"
+
+- name: "ftp-install | be sure the Microsoft FTP Service (FTPSVC) is started"
+  ansible.windows.win_service:
+    name: FTPSVC
+    start_mode: auto
+    state: started
+
+# --- Phase 1 "is it up" validation: the control channel must be listening.
+- name: "ftp-install | wait for port 21 to become open"
+  ansible.windows.win_wait_for:
+    port: 21
+    delay: 3
+    timeout: 60
+
+- name: "ftp-install | record baseline state"
+  ansible.builtin.debug:
+    msg: >-
+      IIS FTP server installed on {{ inventory_hostname }} — SECURE baseline:
+      anonymous off, basic auth required, authenticated read-only, rooted at
+      C:\inetpub\ftproot. Control channel (21) confirmed listening.

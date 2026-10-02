@@ -1,0 +1,42 @@
+---
+# Vuln inject task-file: ldap-anonymous-bind (T1087.002)
+# Runs on the primary root DC ({{ inventory_hostname }} — no requires_services /
+# target_role, so plan_vuln_injection defaults it to the DC). Sets the 7th
+# character of dSHeuristics to '2' on the Directory Service object in the
+# Configuration partition, which disables fLDAPBlockAnonOps and allows anonymous
+# LDAP operations beyond the RootDSE. The secure default is anonymous ops
+# blocked (the attribute unset / 7th char not '2') — this is the gap. Idempotent:
+# the desired string is computed from the current value and only written when it
+# differs, so re-runs are no-ops.
+- name: "ldap-anonymous-bind | read current dSHeuristics on the Directory Service object"
+  ansible.windows.win_shell: |
+    Import-Module ActiveDirectory
+    $configNC = (Get-ADRootDSE).configurationNamingContext
+    $dn = "CN=Directory Service,CN=Windows NT,CN=Services,$configNC"
+    $cur = (Get-ADObject -Identity $dn -Properties dSHeuristics).dSHeuristics
+    if ($null -eq $cur) { "" } else { $cur }
+  register: ldap_anon_before
+  changed_when: false
+
+- name: "ldap-anonymous-bind | enable anonymous LDAP ops (dSHeuristics 7th char = '2')"
+  ansible.windows.win_shell: |
+    Import-Module ActiveDirectory
+    $configNC = (Get-ADRootDSE).configurationNamingContext
+    $dn = "CN=Directory Service,CN=Windows NT,CN=Services,$configNC"
+    $cur = (Get-ADObject -Identity $dn -Properties dSHeuristics).dSHeuristics
+    if ($null -eq $cur) { $cur = "" }
+    # Right-pad to at least 7 characters, then force the 7th (index 6) to '2'.
+    # A 7-char value ("0000002") needs no 10th "tens" marker character.
+    $chars = $cur.PadRight(7, '0').ToCharArray()
+    $chars[6] = '2'
+    $desired = -join $chars
+    Set-ADObject -Identity $dn -Replace @{ dSHeuristics = $desired }
+  when: "ldap_anon_before.stdout_lines | default(['']) | map('trim') | join('') | regex_search('^.{6}2') is none"
+
+- name: "ldap-anonymous-bind | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      LDAP anonymous bind enabled on {{ inventory_hostname }}: dSHeuristics 7th
+      char = '2' on the Directory Service object -> an unauthenticated attacker
+      can bind anonymously and enumerate users/groups/SPNs/descriptions and the
+      password policy, feeding spraying and roasting target selection.

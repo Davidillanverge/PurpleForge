@@ -1,0 +1,27 @@
+---
+# Vuln inject task-file: seimpersonate-privilege (T1134.001)
+# PurpleForge-authored, OS-level local privesc (no AD artifact). Lands on a
+# member-server (target_role: member-server). Adds Authenticated Users
+# (well-known SID S-1-5-11, always resolvable) to the SeImpersonatePrivilege user
+# right, so any authenticated user with code execution can run a Potato attack to
+# SYSTEM. action: add preserves the default holders (SERVICE/LOCAL SERVICE/etc.).
+# Idempotent: win_user_right only reports changed when the SID is actually added.
+- name: "seimpersonate-privilege | grant SeImpersonatePrivilege to Authenticated Users"
+  ansible.windows.win_user_right:
+    name: SeImpersonatePrivilege
+    users:
+      - "S-1-5-11"   # NT AUTHORITY\Authenticated Users (well-known, locale-independent)
+    action: add
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "seimpersonate-privilege | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      SeImpersonate gap live on {{ inventory_hostname }}: Authenticated Users
+      (S-1-5-11) hold SeImpersonatePrivilege -> any authenticated user with code
+      execution runs a Potato attack (PrintSpoofer/JuicyPotato) to NT
+      AUTHORITY\SYSTEM.

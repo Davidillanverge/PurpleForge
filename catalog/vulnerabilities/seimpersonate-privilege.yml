@@ -1,0 +1,31 @@
+id: seimpersonate-privilege
+name: "SeImpersonatePrivilege concedido a Authenticated Users (potato -> SYSTEM)"
+severity: high
+attack:
+  mitre_attack: [T1134.001]
+  requires_services: []
+  target_role: member-server
+  intended_path: >
+    La asignación de derechos de usuario "Impersonate a client after
+    authentication" (SeImpersonatePrivilege) incluye a Authenticated Users en
+    lugar de restringirse a las cuentas de servicio por defecto. Cualquier
+    usuario autenticado con ejecución de código en el host (p. ej. tras una
+    webshell o un login interactivo) abusa de este privilegio con un ataque de
+    la familia Potato (JuicyPotato/PrintSpoofer/RoguePotato) para suplantar el
+    token de SYSTEM -> escalada local a NT AUTHORITY\SYSTEM.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/seimpersonate-privilege.yml
+  primitive: "SeImpersonatePrivilege con Authenticated Users (S-1-5-11) en la asignación de derechos de usuario"
+  params: {}
+neutralized_by:
+  - hardening.controls.restrict_seimpersonate_privilege   # etiqueta libre: restringir SeImpersonatePrivilege a Administrators/SERVICE/LOCAL SERVICE/NETWORK SERVICE
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Restringir el derecho 'Impersonate a client after authentication' (SeImpersonatePrivilege) a Administrators, SERVICE, LOCAL SERVICE y NETWORK SERVICE únicamente; aplicar las baselines CIS/STIG que fijan esta asignación de derechos; vigilar servicios que concedan este privilegio a cuentas interactivas."
+validate:
+  atomic: T1134.001
+  bloodhound_edge: null
+  local_check: "secedit /export /cfg <out>.inf muestra SeImpersonatePrivilege con el SID S-1-5-11 (Authenticated Users) en la lista; o whoami /priv en el contexto de un usuario estándar muestra SeImpersonatePrivilege"
+chain:
+  target_shape: none

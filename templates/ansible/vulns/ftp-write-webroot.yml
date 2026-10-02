@@ -1,0 +1,40 @@
+---
+# Vuln inject task-file: ftp-write-webroot (T1190, T1505.003)
+# service-provisioning.yml already installed FTP and IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [ftp, iis]). This task is the gap: repoint
+# the PFFtp site at the IIS web root, enable anonymous authentication WITH write
+# permission, and grant the anonymous account NTFS write on wwwroot -> an
+# unauthenticated client STORs an .aspx webshell over FTP and executes it over
+# HTTP. Idempotent: Set/Clear/Add-WebConfiguration converge; icacls re-grant is
+# a no-op once present.
+- name: "ftp-write-webroot | repoint the FTP site at the IIS web root + open anonymous write"
+  ansible.windows.win_shell: |
+    Import-Module WebAdministration
+    $site = "IIS:\Sites\PFFtp"
+    Set-ItemProperty $site -Name physicalPath -Value 'C:\inetpub\wwwroot'
+    Set-ItemProperty $site -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+    Clear-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -ErrorAction SilentlyContinue
+    Add-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -Value @{accessType='Allow'; roles=''; users='*'; permissions='Read, Write'} -ErrorAction SilentlyContinue
+  changed_when: true
+
+- name: "ftp-write-webroot | grant the anonymous account NTFS write on the web root"
+  ansible.windows.win_acl:
+    path: C:\inetpub\wwwroot
+    user: IUSR
+    rights: Modify
+    type: allow
+    state: present
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+
+- name: "ftp-write-webroot | restart the FTP service so the changes apply"
+  ansible.windows.win_service:
+    name: FTPSVC
+    state: restarted
+
+- name: "ftp-write-webroot | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      FTP write-to-webroot gap live on {{ inventory_hostname }}: PFFtp serves
+      C:\inetpub\wwwroot with anonymous write (FTP + NTFS) -> STOR an .aspx
+      webshell over FTP, then GET it over HTTP for RCE as the app pool identity.

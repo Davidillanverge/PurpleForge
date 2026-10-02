@@ -198,3 +198,43 @@
   when:
     - pf_controls_mssql_hardening | bool
     - inventory_hostname in pf_controls_mssql_hosts
+
+# iis_hardening: re-secure IIS web servers (remove WebDAV publishing + block the
+# PUT verb) so a lab WITHOUT iis-webdav-anonymous-write gets a genuinely hardened
+# web box. IIS web-server hardening is outside the Windows-OS surface
+# ansible-lockdown covers, so this is a real pf_controls toggle (not a CIS/STIG
+# rule) — same shape as mssql_hardening. Gated on hosts that actually run IIS
+# (pf_controls_iis_hosts is empty otherwise, so it no-ops). When
+# iis-webdav-anonymous-write is selected, the reconciliation forces this off
+# (on_conflict:exclude-control) so the gap stays open.
+- name: "pf_controls | iis_hardening | remove WebDAV publishing role"
+  ansible.windows.win_feature:
+    name: Web-DAV-Publishing
+    state: absent
+  register: pf_controls_iis_webdav
+  when:
+    - pf_controls_iis_hardening | bool
+    - inventory_hostname in pf_controls_iis_hosts
+
+- name: "pf_controls | iis_hardening | block the HTTP PUT verb via request filtering"
+  community.windows.win_iis_webconfigproperty:
+    path: "IIS:\\Sites\\Default Web Site"
+    filter: system.webServer/security/requestFiltering/verbs
+    name: "."
+    value: "+[verb='PUT',allowed='false']"
+  when:
+    - pf_controls_iis_hardening | bool
+    - inventory_hostname in pf_controls_iis_hosts
+
+- name: "pf_controls | iis_hardening | reset DefaultAppPool to least-priv ApplicationPoolIdentity"
+  community.windows.win_iis_webapppool:
+    name: DefaultAppPool
+    state: started
+    attributes:
+      processModel.identityType: ApplicationPoolIdentity
+  when:
+    - pf_controls_iis_hardening | bool
+    - inventory_hostname in pf_controls_iis_hosts
+  # Neutralizes iis-apppool-privileged-identity. Same toggle as the WebDAV
+  # removal: a lab WITHOUT an IIS vuln gets a hardened web box; when an IIS vuln
+  # is selected the reconciliation forces iis_hardening off so the gap stays open.

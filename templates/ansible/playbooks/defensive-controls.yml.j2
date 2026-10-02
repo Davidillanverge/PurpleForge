@@ -95,6 +95,15 @@
 {% else %}
     pf_controls_mssql_hosts: []
 {% endif %}
+    pf_controls_iis_hardening: {{ controls.iis_hardening }}
+{% if iis_hosts %}
+    pf_controls_iis_hosts:
+{% for h in iis_hosts %}
+      - "{{ h }}"
+{% endfor %}
+{% else %}
+    pf_controls_iis_hosts: []
+{% endif %}
 {% if controls.protected_users_group %}
     pf_controls_protected_users_group:
 {% for u in controls.protected_users_group %}

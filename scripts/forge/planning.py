@@ -47,6 +47,7 @@ FIXED_HARDENING_TOGGLES = {
     "disable_llmnr_nbtns_mdns",
     "ntlmv2_only",
     "mssql_hardening",
+    "iis_hardening",
 }
 
 # smb_signing/ldap_signing are enum-typed (disable|enable|enforce) in the
@@ -850,6 +851,16 @@ def build_vuln_vars(
         # target_shape: none — no population account cast; sa is a fixed SQL
         # login, not an AD object, so it never reuses cast_name/forced_password.
         return {"vuln_mssql_sa_password": VULN_WEAK_PASSWORD}
+    if vid == "sysvol-script-creds":
+        return {
+            "vuln_sysvol_account": cast_name or "svc-mapdrive",
+            "vuln_sysvol_password": forced_password or generate_password(rng=rng),
+        }
+    if vid == "autologon-credentials":
+        return {
+            "vuln_autologon_account": cast_name or "kiosk-user",
+            "vuln_autologon_password": forced_password or generate_password(rng=rng),
+        }
     # machine-account-quota is domain-level (target_shape: none) — no per-vuln
     # account vars; the playbook only reads domain_username/domain_password.
     # adcs-esc1 and any future service-scoped vuln need no extra vars beyond the
@@ -941,12 +952,15 @@ def plan_vuln_injection(
 
 def plan_service_provisioning(machines: list[dict]) -> dict[str, list[str]]:
     """machines[].services -> {service: [host names]} for services this generator
-    actually provisions: `mssql` (secure base install) and `adcs` (an Enterprise
+    actually provisions: `mssql` (secure base install), `adcs` (an Enterprise
     Root CA, reusing GOAD's adcs role — this is what makes adcs-esc1 usable: the
-    vuln publishes its ESC1 template to this CA). `iis`/`sccm` remain
-    declared-but-unconsumed (Tier B backlog, NON-AD-VULNS-ROADMAP.md)."""
+    vuln publishes its ESC1 template to this CA), and `iis` (a secure Web-Server
+    baseline that confirms it serves HTTP 200 before any web vuln/app lands —
+    NON-AD-VULNS-ROADMAP.md Phase 1), and `ftp` (a secure IIS FTP site — anonymous
+    off, auth required, read-only — that FTP vulns reopen). `sccm` remains
+    declared-but-unconsumed."""
     plan = {}
-    for svc in ("mssql", "adcs"):
+    for svc in ("mssql", "adcs", "iis", "ftp"):
         hosts = [m["name"] for m in machines if svc in m.get("services", [])]
         if hosts:
             plan[svc] = hosts

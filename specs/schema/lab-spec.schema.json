@@ -159,7 +159,7 @@
           "description": "Only meaningful on member-server; enables prerequisites for some catalog vulnerabilities (e.g. adcs-esc1 requires adcs).",
           "items": {
             "type": "string",
-            "enum": ["adcs", "mssql", "iis", "sccm"]
+            "enum": ["adcs", "mssql", "iis", "ftp", "sccm"]
           },
           "uniqueItems": true
         },
@@ -274,6 +274,10 @@
                 "mssql_hardening": {
                   "type": "boolean",
                   "description": "Application-layer MSSQL control (PurpleForge pf_controls, not a CIS/STIG rule): disables the sa login and xp_cmdshell on hosts running MSSQL. Neutralizes catalog/vulnerabilities/mssql-weak-sa.yml; forced off by reconciliation when that vuln is selected. No-op on labs without an MSSQL host."
+                },
+                "iis_hardening": {
+                  "type": "boolean",
+                  "description": "Application-layer IIS control (PurpleForge pf_controls, not a CIS/STIG rule): removes the WebDAV publishing role and blocks the HTTP PUT verb on hosts running IIS. Neutralizes catalog/vulnerabilities/iis-webdav-anonymous-write.yml; forced off by reconciliation when that vuln is selected. No-op on labs without an IIS host."
                 }
               }
             },

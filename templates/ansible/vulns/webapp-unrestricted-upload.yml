@@ -1,0 +1,68 @@
+---
+# Vuln inject task-file: webapp-unrestricted-upload (T1190, T1505.003)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]). This task deploys a deliberately
+# vulnerable ASP.NET web app ON TOP of that hardened server: /app/upload.aspx
+# saves any uploaded file, with no extension/content/destination validation, into
+# a web-executable directory -> an attacker uploads an .aspx webshell and GETs it
+# for RCE. The IIS baseline does not ship ASP.NET, so we enable it here (the app
+# needs it). Idempotent: win_feature/win_copy/win_acl converge on re-runs.
+- name: "webapp-unrestricted-upload | enable ASP.NET 4.5 (the baseline IIS has only static content)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Asp-Net45
+      - Web-Net-Ext45
+    state: present
+    include_management_tools: true
+  register: aspnet_feature
+
+- name: "webapp-unrestricted-upload | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: aspnet_feature.reboot_required | default(false)
+
+- name: "webapp-unrestricted-upload | create the web app directory under wwwroot"
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\app
+    state: directory
+
+- name: "webapp-unrestricted-upload | let the IIS worker write into the upload dir (the gap)"
+  ansible.windows.win_acl:
+    path: C:\inetpub\wwwroot\app
+    user: IIS_IUSRS
+    rights: Modify
+    type: allow
+    state: present
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+
+- name: "webapp-unrestricted-upload | deploy the vulnerable upload page"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\app\upload.aspx
+    content: |
+      <%@ Page Language="C#" %>
+      <script runat="server">
+      // DELIBERATELY VULNERABLE (PurpleForge lab): no extension / content-type /
+      // destination validation, saved into a web-executable directory.
+      void Page_Load(object sender, EventArgs e) {
+          if (Request.Files.Count > 0 && Request.Files[0].ContentLength > 0) {
+              var f = Request.Files[0];
+              var name = System.IO.Path.GetFileName(f.FileName);
+              f.SaveAs(Server.MapPath("~/app/" + name));
+              Response.Write("UPLOAD_OK:" + name);
+          } else {
+              Response.Write("PF upload endpoint ready");
+          }
+      }
+      </script>
+      <html><body>
+      <form method="post" enctype="multipart/form-data">
+      <input type="file" name="f" /><input type="submit" value="Upload" />
+      </form>
+      </body></html>
+
+- name: "webapp-unrestricted-upload | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Web app upload gap live on {{ inventory_hostname }}: /app/upload.aspx saves
+      uploaded files unvalidated into an executable dir -> upload an .aspx
+      webshell and GET it for RCE as the app pool identity.

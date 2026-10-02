@@ -22,6 +22,7 @@ defaults:
       disable_llmnr_nbtns_mdns: true
       ntlmv2_only: true
       mssql_hardening: true
+      iis_hardening: true
       protected_users_group: []
     intentional_gaps_auto: true
   deception:

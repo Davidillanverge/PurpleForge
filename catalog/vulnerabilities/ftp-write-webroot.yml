@@ -1,0 +1,30 @@
+id: ftp-write-webroot
+name: "FTP con escritura anónima sobre el web root de IIS (webshell)"
+severity: critical
+attack:
+  mitre_attack: [T1190, T1505.003]
+  requires_services: [ftp, iis]
+  intended_path: >
+    El sitio FTP se reconfigura para servir el web root de IIS
+    (C:\inetpub\wwwroot) con autenticación anónima y permiso de ESCRITURA, y la
+    cuenta anónima recibe permisos NTFS de escritura sobre esa carpeta. Un
+    atacante no autenticado sube (STOR) un webshell .aspx por FTP y luego lo
+    solicita por HTTP a IIS -> el worker de IIS lo ejecuta, dando ejecución
+    remota de código. Combina el servicio FTP y el servicio web en una cadena
+    FTP-write -> HTTP-exec.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/ftp-write-webroot.yml
+  primitive: "sitio FTP PFFtp apuntando a C:\\inetpub\\wwwroot con anónimo + escritura (FTP y NTFS)"
+  reuses: "FTP e IIS base los instala service-provisioning.yml de forma segura; esta inyección reapunta la raíz FTP al web root y abre la escritura anónima, encadenando los dos servicios"
+  params: {}
+neutralized_by:
+  - hardening.controls.ftp_write_webroot_disabled   # etiqueta libre: FTP sin escritura anónima y raíz FTP separada del web root; misconfig de servicio, sin regla CIS/STIG directa -> sin hardening.baseline
+mitigate:
+  summary: "Nunca permitir escritura anónima en FTP; mantener la raíz FTP separada de cualquier directorio servido/ejecutable por IIS; quitar permisos NTFS de escritura a la cuenta anónima; exigir autenticación (FTPS) y autorización de mínimo privilegio; quitar handler mappings de ejecución en directorios de subida."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "STOR anónimo de un fichero por FTP a <ip>:21 tiene éxito y luego GET http://<ip>/<fichero> lo devuelve servido por IIS (escritura anónima al web root confirmada; con un .aspx = RCE)"
+chain:
+  target_shape: none

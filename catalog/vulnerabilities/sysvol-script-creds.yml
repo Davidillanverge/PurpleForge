@@ -1,0 +1,31 @@
+id: sysvol-script-creds
+name: "Credenciales en claro en un script de logon en SYSVOL"
+severity: high
+attack:
+  mitre_attack: [T1552.001]
+  requires_services: []
+  intended_path: >
+    Un script de logon alojado en el recurso SYSVOL/NETLOGON del dominio
+    (\\<dominio>\SYSVOL\<dominio>\scripts\mapdrives.bat) contiene una
+    credencial en claro (un `net use ... /user:<cuenta> <password>`). SYSVOL
+    es legible por cualquier usuario autenticado del dominio, así que un
+    atacante con una cuenta cualquiera lista los scripts, lee la contraseña y
+    la reutiliza -> movimiento lateral / acceso a la cuenta de servicio
+    embebida sin necesidad de crackear nada.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/sysvol-script-creds.yml
+  primitive: "script de logon con credencial en claro en SYSVOL\\<dominio>\\scripts"
+  params:
+    account: "{{ vuln_sysvol_account }}"
+    password: "{{ vuln_sysvol_password }}"
+neutralized_by:
+  - hardening.controls.sysvol_script_credential_audit   # etiqueta libre: purgar credenciales en claro de scripts en SYSVOL/NETLOGON; no hay regla CIS/STIG que elimine un secreto de un script, así que NO se empareja con hardening.baseline
+mitigate:
+  summary: "No almacenar credenciales en claro en scripts de SYSVOL/NETLOGON; usar gMSA/cuentas de servicio gestionadas o GPO Preferences con almacén seguro; auditar periódicamente el contenido de SYSVOL en busca de secretos; restringir quién puede escribir en scripts del dominio."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "nxc smb <dc_ip> -u <user> -p <pass> --share SYSVOL -M spider_plus (o Select-String -Path C:\\Windows\\SYSVOL\\sysvol\\<dominio>\\scripts\\*.bat -Pattern 'net use') revela la credencial en claro"
+chain:
+  target_shape: account

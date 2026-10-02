@@ -1,0 +1,23 @@
+---
+# Vuln inject task-file: spooler-on-dc (T1187)
+# Runs on the primary root DC ({{ inventory_hostname }}). Ensures the Print
+# Spooler service is enabled (StartType=Automatic) and running, so the MS-RPRN
+# "PrinterBug" coercion works against the DC. Hardened DCs disable Spooler (STIG),
+# so this is the gap. Idempotent: win_service only reports changed on a real flip.
+- name: "spooler-on-dc | enable and start the Print Spooler service"
+  ansible.windows.win_service:
+    name: Spooler
+    start_mode: auto
+    state: started
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "spooler-on-dc | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Print Spooler gap live on {{ inventory_hostname }}: Spooler is Automatic +
+      Running on the DC -> MS-RPRN (PrinterBug) coerces the DC machine account to
+      authenticate, relayable (ntlmrelayx) to LDAP/ADCS for domain takeover.

@@ -62,6 +62,8 @@ VULN_CREDENTIAL_VARS = {
     "readable-gmsa": ("vuln_gmsa_reader_account", "vuln_gmsa_reader_password"),
     "esc4-template-acl": ("vuln_esc4_account", "vuln_esc4_password"),
     "mssql-weak-sa": (None, "vuln_mssql_sa_password"),  # sa is a fixed SQL login, not a cast AD account
+    "sysvol-script-creds": ("vuln_sysvol_account", "vuln_sysvol_password"),
+    "autologon-credentials": ("vuln_autologon_account", "vuln_autologon_password"),
 }
 
 

@@ -8,6 +8,8 @@ Also holds `ad-inventory`, the post-deploy live-domain query (LDAP + DCSync).
 from __future__ import annotations
 
 import argparse
+import ftplib
+import io
 import json
 import re
 import shutil
@@ -140,6 +142,36 @@ WINRM_APPLIED_CHECKS = {
         "$m = Get-ChildItem -Path 'C:\\Windows\\SYSVOL' -Recurse -Filter 'Groups.xml' -ErrorAction SilentlyContinue | "
         "Select-String -Pattern 'cpassword=' -ErrorAction SilentlyContinue; "
         "Write-Output ('PF_CHECK:' + [bool]($m))"
+    ),
+    "sysvol-script-creds": (
+        "$m = Get-ChildItem -Path 'C:\\Windows\\SYSVOL\\sysvol' -Recurse -Filter 'mapdrives.bat' -ErrorAction SilentlyContinue | "
+        "Select-String -Pattern '__ACCOUNT__' -ErrorAction SilentlyContinue; "
+        "Write-Output ('PF_CHECK:' + [bool]($m))"
+    ),
+    "autologon-credentials": (
+        "$w = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'; "
+        "$a = (Get-ItemProperty $w -Name AutoAdminLogon -ErrorAction SilentlyContinue).AutoAdminLogon; "
+        "$p = (Get-ItemProperty $w -Name DefaultPassword -ErrorAction SilentlyContinue).DefaultPassword; "
+        "Write-Output ('PF_CHECK:' + [bool]($a -eq '1' -and $p))"
+    ),
+    "iis-apppool-privileged-identity": (
+        "Import-Module WebAdministration; "
+        "$id = (Get-ItemProperty 'IIS:\\AppPools\\DefaultAppPool' -Name processModel.identityType -ErrorAction SilentlyContinue).Value; "
+        "Write-Output ('PF_CHECK:' + [bool](\"$id\" -match 'LocalSystem'))"
+    ),
+    "ldap-signing-not-required": (
+        "$v = (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters' -Name LDAPServerIntegrity -ErrorAction SilentlyContinue).LDAPServerIntegrity; "
+        "Write-Output ('PF_CHECK:' + [bool]($null -ne $v -and $v -ne 2))"
+    ),
+    "seimpersonate-privilege": (
+        "secedit /export /cfg C:\\Windows\\Temp\\pf_ur.inf /quiet | Out-Null; "
+        "$l = Select-String -Path C:\\Windows\\Temp\\pf_ur.inf -Pattern 'SeImpersonatePrivilege' -ErrorAction SilentlyContinue; "
+        "Remove-Item C:\\Windows\\Temp\\pf_ur.inf -ErrorAction SilentlyContinue; "
+        "Write-Output ('PF_CHECK:' + [bool]($l -and $l.Line -match 'S-1-5-11'))"
+    ),
+    "spooler-on-dc": (
+        "$s = Get-Service Spooler -ErrorAction SilentlyContinue; "
+        "Write-Output ('PF_CHECK:' + [bool]($s -and $s.Status -eq 'Running'))"
     ),
 }
 
@@ -306,6 +338,113 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                         exploitable="NO",
                         evidence="sa auth or xp_cmdshell execution failed — see nxc output; a control may have neutralized it.",
                     )
+        elif vid == "ldap-anonymous-bind":
+            # A null bind (empty creds) that returns directory objects proves BOTH
+            # applied (dSHeuristics 7th char = '2' lets anonymous ops through) AND
+            # exploitable (unauthenticated enumeration works). Read-only — safe to
+            # auto-confirm, same treatment as the roast checks.
+            if not dc_ip:
+                row.update(applied="PENDING", exploitable="PENDING", evidence=f"no DC IP for domain {domain!r}.")
+            else:
+                out = _nxc_run([nxc, "ldap", dc_ip, "-u", "", "-p", "", "--query", "(objectClass=domain)", ""])
+                if out is None:
+                    row.update(
+                        applied="PENDING",
+                        exploitable="PENDING",
+                        evidence="nxc did not run (missing/timeout) — retry the command below.",
+                    )
+                elif _nxc_query_nonempty(out):
+                    row.update(
+                        applied="YES",
+                        exploitable="YES",
+                        evidence="nxc bound anonymously (empty creds) and read directory objects.",
+                    )
+                else:
+                    row.update(
+                        applied="NO",
+                        exploitable="NO",
+                        evidence="anonymous LDAP bind/query returned nothing — anonymous ops appear blocked (gap not applied or neutralized).",
+                    )
+        elif vid == "iis-webdav-anonymous-write":
+            # PUT a harmless text probe over the tunnel, then GET it back. A 201/200
+            # PUT whose marker reads back proves BOTH applied (WebDAV + anonymous
+            # authoring rule present) AND exploitable (unauthenticated write works).
+            # The probe is plain text, never executable code, and runs after the
+            # clean snapshot — `forge reset` restores the pristine state.
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                ok, evidence = _webdav_put_get(target_ip)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
+        elif vid == "webapp-unrestricted-upload":
+            # POST a plain-text probe through the app's upload endpoint, then GET
+            # it back. UPLOAD_OK + read-back proves BOTH applied (vulnerable app
+            # deployed) AND exploitable (unrestricted write). Safe: text, not a
+            # webshell; after the clean snapshot.
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                ok, evidence = _webapp_upload_probe(target_ip)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
+        elif vid == "webapp-sql-injection":
+            # GET the app's search endpoint with a UNION payload that echoes a
+            # marker. The marker back proves the injected SQL ran (applied AND
+            # exploitable). Read-only SELECT — safe to auto-confirm.
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                ok, evidence = _webapp_sqli_probe(target_ip)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
+        elif vid in ("ftp-anonymous-access", "ftp-write-webroot"):
+            # Anonymous FTP checks over the tunnel (ftplib). ftp-anonymous-access:
+            # anon login succeeds. ftp-write-webroot: anon STOR + HTTP GET-back.
+            # Both prove applied AND exploitable; read-only / text probe, safe.
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                probe = _ftp_anon_probe if vid == "ftp-anonymous-access" else _ftp_webroot_probe
+                ok, evidence = probe(target_ip)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
         else:
             row.update(
                 applied="REQUIRES-HUMAN",
@@ -328,6 +467,202 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
             )
 
     return confirmed, findings
+
+
+WEBDAV_PROBE_NAME = "pf_webdav_probe.txt"
+WEBDAV_PROBE_MARKER = "PF-WEBDAV-PROBE"
+
+
+def _webdav_put_get(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm anonymous WebDAV write on IIS: PUT a plain-text probe, then GET it
+    back. Returns (True, …) if the write took and reads back, (False, …) if the
+    server rejected it (anonymous write blocked / WebDAV absent — gap not applied
+    or neutralized), or (None, …) if the check couldn't run (no curl/unreachable)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    url = f"http://{host_ip}/{WEBDAV_PROBE_NAME}"
+    try:
+        put = subprocess.run(
+            [curl, "-s", "-m", "15", "-o", "/dev/null", "-w", "%{http_code}", "-X", "PUT", "--data", WEBDAV_PROBE_MARKER, url],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None, f"PUT to {url} did not complete (timeout/unreachable) — retry the command below."
+    code = (put.stdout or "").strip()
+    if code not in ("200", "201", "204"):
+        return False, f"anonymous PUT to {url} returned HTTP {code or '(none)'} — write refused (WebDAV absent, or iis_hardening neutralized it)."
+    try:
+        get = subprocess.run(
+            [curl, "-s", "-m", "15", url],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return True, f"anonymous PUT to {url} returned HTTP {code} (write accepted); GET-back did not complete but the write itself proves the gap."
+    if WEBDAV_PROBE_MARKER in (get.stdout or ""):
+        return True, f"anonymous PUT returned HTTP {code} and the probe reads back at {url} — unauthenticated WebDAV write confirmed."
+    return True, f"anonymous PUT returned HTTP {code} (write accepted); GET-back did not echo the marker — write still confirms the gap."
+
+
+WEBAPP_UPLOAD_PROBE_NAME = "pf_upload_probe.txt"
+WEBAPP_UPLOAD_MARKER = "PF-UPLOAD-PROBE"
+
+
+def _webapp_upload_probe(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm the unrestricted-upload web app: POST a plain-text probe through
+    /app/upload.aspx, then GET it back from the web-executable dir. Returns
+    (True, …) if the upload took and reads back, (False, …) if the app rejected
+    it (validation present / app absent — gap not applied or neutralized), or
+    (None, …) if the check couldn't run. The probe is plain text, never a
+    webshell, and runs after the clean snapshot (`forge reset` restores it)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    upload_url = f"http://{host_ip}/app/upload.aspx"
+    get_url = f"http://{host_ip}/app/{WEBAPP_UPLOAD_PROBE_NAME}"
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write(WEBAPP_UPLOAD_MARKER)
+            tmp = fh.name
+        try:
+            up = subprocess.run(
+                [curl, "-s", "-m", "15", "-F", f"f=@{tmp};filename={WEBAPP_UPLOAD_PROBE_NAME}", upload_url],
+                capture_output=True,
+                text=True,
+                timeout=25,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None, f"POST to {upload_url} did not complete (timeout/unreachable) — retry the command below."
+    finally:
+        if tmp:
+            try:
+                Path(tmp).unlink()
+            except OSError:
+                pass
+    if "UPLOAD_OK" not in (up.stdout or ""):
+        return False, f"upload to {upload_url} did not return UPLOAD_OK — app absent or validation in place (webapp_upload_validation may have neutralized it)."
+    try:
+        get = subprocess.run([curl, "-s", "-m", "15", get_url], capture_output=True, text=True, timeout=25)
+    except (subprocess.TimeoutExpired, OSError):
+        return True, f"upload to {upload_url} returned UPLOAD_OK; GET-back did not complete but the accepted upload proves the gap."
+    if WEBAPP_UPLOAD_MARKER in (get.stdout or ""):
+        return True, f"upload returned UPLOAD_OK and the probe reads back at {get_url} — unrestricted upload confirmed (a .aspx would be RCE)."
+    return True, "upload returned UPLOAD_OK; GET-back did not echo the marker, but the accepted upload confirms the gap."
+
+
+FTP_PROBE_NAME = "pf_ftp_probe.txt"
+FTP_PROBE_MARKER = "PF-FTP-PROBE"
+
+
+def _ftp_anon_probe(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm anonymous FTP: connect and log in anonymously. Success proves BOTH
+    applied (anonymous auth enabled) AND exploitable (unauthenticated access,
+    e.g. to the cleartext-credential file in the root). Read-only. Returns
+    (True/False/None, evidence)."""
+    try:
+        ftp = ftplib.FTP(timeout=15)
+        ftp.connect(host_ip, 21)
+    except OSError as e:
+        return None, f"could not reach FTP {host_ip}:21 ({e}) — retry the command below."
+    try:
+        ftp.login()  # anonymous
+    except ftplib.error_perm:
+        try:
+            ftp.close()
+        except OSError:
+            pass
+        return False, f"anonymous FTP login refused at {host_ip}:21 — anonymous auth disabled (gap not applied or neutralized)."
+    except ftplib.all_errors as e:
+        return None, f"FTP anonymous login did not complete at {host_ip}:21 ({e}) — retry the command below."
+    try:
+        names = ftp.nlst()
+    except ftplib.all_errors:
+        names = []
+    finally:
+        try:
+            ftp.close()
+        except OSError:
+            pass
+    listing = ", ".join(names[:5]) if names else "empty"
+    return True, f"anonymous FTP login succeeded at {host_ip}:21 (root listing: {listing})."
+
+
+def _ftp_webroot_probe(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm anonymous FTP write to the IIS web root: STOR a plain-text probe
+    anonymously, then GET it over HTTP. Served back proves BOTH applied (FTP root
+    = web root, anonymous write) AND exploitable (FTP-write -> HTTP-exec chain).
+    Probe is plain text, never a webshell; after the clean snapshot. Returns
+    (True/False/None, evidence)."""
+    try:
+        ftp = ftplib.FTP(timeout=15)
+        ftp.connect(host_ip, 21)
+        ftp.login()  # anonymous
+    except ftplib.error_perm:
+        return False, f"anonymous FTP login refused at {host_ip}:21 — anonymous write disabled (gap not applied or neutralized)."
+    except ftplib.all_errors as e:
+        return None, f"could not reach/log in to FTP {host_ip}:21 ({e}) — retry the command below."
+    try:
+        ftp.storbinary(f"STOR {FTP_PROBE_NAME}", io.BytesIO(FTP_PROBE_MARKER.encode()))
+    except ftplib.all_errors as e:
+        try:
+            ftp.close()
+        except OSError:
+            pass
+        return False, f"anonymous STOR refused at {host_ip}:21 ({e}) — no anonymous write (gap not applied or neutralized)."
+    finally:
+        try:
+            ftp.close()
+        except OSError:
+            pass
+    curl = shutil.which("curl")
+    if not curl:
+        return True, f"anonymous FTP STOR of {FTP_PROBE_NAME} succeeded; install curl to also confirm HTTP exec, but the write alone proves the gap."
+    try:
+        get = subprocess.run(
+            [curl, "-s", "-m", "15", f"http://{host_ip}/{FTP_PROBE_NAME}"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return True, "anonymous FTP STOR succeeded; HTTP GET-back did not complete but the write confirms the gap."
+    if FTP_PROBE_MARKER in (get.stdout or ""):
+        return True, f"anonymous FTP STOR succeeded AND the file is served by IIS at http://{host_ip}/{FTP_PROBE_NAME} — FTP-write -> HTTP-exec confirmed (a .aspx would be RCE)."
+    return True, "anonymous FTP STOR succeeded; IIS did not serve it back, but the anonymous write confirms the gap."
+
+
+WEBAPP_SQLI_MARKER = "PF-SQLI-OK"
+
+
+def _webapp_sqli_probe(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm the SQL-injection web app: GET /app/search.aspx with a UNION payload
+    that echoes a known marker. The marker in the response proves the injected SQL
+    executed (BOTH applied — vulnerable app deployed — AND exploitable). Read-only
+    SELECT, no state change. Returns (True/False/None, evidence)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    url = f"http://{host_ip}/app/search.aspx"
+    payload = f"zzz' UNION SELECT '{WEBAPP_SQLI_MARKER}'-- -"
+    try:
+        r = subprocess.run(
+            [curl, "-s", "-m", "15", "-G", "--data-urlencode", f"name={payload}", url],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None, f"GET to {url} did not complete (timeout/unreachable) — retry the command below."
+    if r.returncode != 0:
+        return None, f"could not reach {url} (curl rc={r.returncode}) — retry the command below."
+    if WEBAPP_SQLI_MARKER in (r.stdout or ""):
+        return True, f"injected UNION payload echoed {WEBAPP_SQLI_MARKER} from {url} — SQL injection confirmed."
+    return False, f"{url} responded but the injected UNION did not execute — app absent or queries parameterized (webapp_sql_parameterization may have neutralized it)."
 
 
 def _nxc_run(cmd: list[str]) -> str | None:
@@ -404,6 +739,34 @@ def _live_command(
         return f"nxc winrm {target_ip or '<host-ip>'} -u {admin_user} -p '<PASS>' -X \"{script}\""
     if vid == "mssql-weak-sa":
         return f"nxc mssql {target_ip or '<host-ip>'} -u sa -p '{password or '<sa-pass>'}' --local-auth -x whoami"
+    if vid == "ldap-anonymous-bind":
+        return f'nxc ldap {dc_ip} -u "" -p "" --query "(objectClass=domain)" ""  # anonymous bind must return objects'
+    if vid == "iis-webdav-anonymous-write":
+        ip = target_ip or "<host-ip>"
+        return (
+            f"curl -s -X PUT --data {WEBDAV_PROBE_MARKER} http://{ip}/{WEBDAV_PROBE_NAME} "
+            f"&& curl -s http://{ip}/{WEBDAV_PROBE_NAME}  # 201 then the marker = anonymous write works"
+        )
+    if vid == "webapp-unrestricted-upload":
+        ip = target_ip or "<host-ip>"
+        return (
+            f"curl -s -F 'f=@shell.aspx;filename={WEBAPP_UPLOAD_PROBE_NAME}' http://{ip}/app/upload.aspx "
+            f"&& curl -s http://{ip}/app/{WEBAPP_UPLOAD_PROBE_NAME}  # UPLOAD_OK then marker = unrestricted upload (use a .aspx for RCE)"
+        )
+    if vid == "webapp-sql-injection":
+        ip = target_ip or "<host-ip>"
+        return (
+            f"curl -s -G --data-urlencode \"name=zzz' UNION SELECT '{WEBAPP_SQLI_MARKER}'-- -\" "
+            f"http://{ip}/app/search.aspx  # response contains {WEBAPP_SQLI_MARKER} = SQLi works"
+        )
+    if vid == "ftp-anonymous-access":
+        return f"nxc ftp {target_ip or '<host-ip>'} -u anonymous -p ''  # anonymous login succeeds + lists the root (grab backup_creds.txt)"
+    if vid == "ftp-write-webroot":
+        ip = target_ip or "<host-ip>"
+        return (
+            f"curl -s -T shell.aspx ftp://{ip}/{FTP_PROBE_NAME} --user anonymous: "
+            f"&& curl -s http://{ip}/{FTP_PROBE_NAME}  # anonymous STOR then HTTP GET = FTP-write -> HTTP-exec (use a .aspx for RCE)"
+        )
     return f"bloodhound-python -d {domain} -u {admin_user} -p '<PASS>' -dc {dc_ip} -c All  # then inspect the {vid} edge in BloodHound"
 
 

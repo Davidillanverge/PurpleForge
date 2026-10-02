@@ -1,0 +1,112 @@
+---
+# PurpleForge service provisioning: IIS (Web-Server role), SECURE base install.
+# This establishes what the machine IS — a working web server — NOT a vuln. Any
+# web misconfig vuln selected for this host (WebDAV/PUT/app-pool abuse) or web
+# APPLICATION with associated flaws lands afterwards, in the vuln-injection /
+# application phase — same hardening-before-gaps order as every other service.
+#
+# Secure-by-default baseline (Phase 1, NON-AD-VULNS-ROADMAP.md):
+#   - Only the Web-Server role + management console/scripting. WebDAV is NOT
+#     installed (Web-DAV-Publishing left absent — a later vuln can add it).
+#   - Directory browsing OFF, anonymous auth serves ONLY a static health page.
+#   - App pool runs as the least-privilege ApplicationPoolIdentity (IIS default,
+#     asserted explicitly so a later app-pool-identity vuln is a visible change).
+#   - Request filtering at defaults (double-encoding, high-bit chars blocked).
+# Idempotent: win_feature / win_iis_* modules converge; the health probe at the
+# end re-runs harmlessly.
+
+- name: "iis-install | install the Web-Server role (+ mgmt console & scripting)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Server
+      - Web-Mgmt-Console
+      - Web-Scripting-Tools
+    state: present
+    include_management_tools: true
+  register: iis_feature
+
+- name: "iis-install | ensure WebDAV publishing is NOT installed (secure baseline)"
+  ansible.windows.win_feature:
+    name: Web-DAV-Publishing
+    state: absent
+  # A deliberately-vulnerable WebDAV config is a Phase-2 vuln (inject reopens the
+  # gap); the base server must not ship it. Absent is the secure default anyway —
+  # asserted so the baseline is explicit and a later vuln is a clear delta.
+
+- name: "iis-install | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: iis_feature.reboot_required | default(false)
+
+- name: "iis-install | disable directory browsing on the Default Web Site (secure default)"
+  community.windows.win_iis_webconfigproperty:
+    path: "IIS:\\Sites\\Default Web Site"
+    filter: system.webServer/directoryBrowse
+    name: enabled
+    value: "false"
+
+- name: "iis-install | assert the DefaultAppPool runs as least-priv ApplicationPoolIdentity"
+  community.windows.win_iis_webapppool:
+    name: DefaultAppPool
+    state: started
+    attributes:
+      processModel.identityType: ApplicationPoolIdentity
+  # IIS's own default, asserted so a Phase-2 vuln that switches this to a
+  # privileged identity (LocalSystem/NetworkService -> potato chain) is a
+  # visible, named change against a known-good baseline.
+
+- name: "iis-install | write a static health page served by anonymous auth"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\health.html
+    content: |
+      <!doctype html><html><head><title>PurpleForge IIS</title></head>
+      <body>PurpleForge IIS baseline OK on {{ inventory_hostname }}.</body></html>
+  # Gives the "is it up" probe below (and forge validate's service-health check)
+  # a deterministic 200 that does not depend on IIS's default welcome page.
+
+- name: "iis-install | Firewall | allow HTTP (TCP 80) through the firewall"
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for IIS HTTP (TCP-In)"
+    Ensure: present
+    Enabled: True
+    # NOT "Domain"-only: a freshly domain-joined cloud member-server's NIC can
+    # stay NetworkCategory=Public (NLA misclassification) so a Domain-only rule
+    # silently never applies — same live finding as mssql-install.yml. Isolation
+    # is enforced at the NSG/SG layer (deny-by-default, reachable only from the
+    # management subnet), so opening the guest firewall on all profiles does not
+    # weaken anything.
+    Profile: "Domain, Private, Public"
+    Direction: "Inbound"
+    Localport: "80"
+    Protocol: "TCP"
+    Description: "Opens the IIS HTTP listener port"
+
+- name: "iis-install | be sure the W3SVC (World Wide Web Publishing) service is started"
+  ansible.windows.win_service:
+    name: W3SVC
+    state: started
+
+# --- Phase 1 "is it up" validation: install is not done until IIS actually serves.
+- name: "iis-install | wait for port 80 to become open"
+  ansible.windows.win_wait_for:
+    port: 80
+    delay: 3
+    timeout: 60
+
+- name: "iis-install | confirm the health page returns HTTP 200"
+  ansible.windows.win_uri:
+    url: http://localhost/health.html
+    method: GET
+    status_code: 200
+    return_content: false
+  register: iis_health
+  retries: 5
+  delay: 3
+  until: iis_health.status_code is defined and iis_health.status_code == 200
+
+- name: "iis-install | record baseline state"
+  ansible.builtin.debug:
+    msg: >-
+      IIS Web-Server installed on {{ inventory_hostname }} — SECURE baseline:
+      WebDAV absent, directory browsing off, DefaultAppPool as
+      ApplicationPoolIdentity. Health page returns HTTP 200 (service confirmed up).

@@ -1,0 +1,65 @@
+---
+# Vuln inject task-file: iis-webdav-anonymous-write (T1190, T1505.003)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]): WebDAV absent, anonymous auth
+# read-only. This task is the actual gap — install the WebDAV role, enable it on
+# the Default Web Site, and author a rule granting anonymous WRITE to wwwroot so
+# an unauthenticated PUT can drop an .aspx webshell. Idempotent: win_feature and
+# the win_iis_webconfigproperty / appcmd settings converge on re-runs.
+- name: "iis-webdav-anonymous-write | install the WebDAV publishing role"
+  ansible.windows.win_feature:
+    name: Web-DAV-Publishing
+    state: present
+    include_management_tools: true
+  register: webdav_feature
+
+- name: "iis-webdav-anonymous-write | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: webdav_feature.reboot_required | default(false)
+
+- name: "iis-webdav-anonymous-write | enable WebDAV on the Default Web Site"
+  community.windows.win_iis_webconfigproperty:
+    path: "IIS:\\Sites\\Default Web Site"
+    filter: system.webServer/webdav/authoring
+    name: enabled
+    value: "true"
+
+- name: "iis-webdav-anonymous-write | allow the HTTP PUT verb through request filtering"
+  community.windows.win_iis_webconfigproperty:
+    path: "IIS:\\Sites\\Default Web Site"
+    filter: system.webServer/security/requestFiltering/verbs
+    name: "."
+    value: ""
+  # Default IIS request filtering does not block PUT, but assert an explicit
+  # empty deny-list so the gap does not depend on image defaults.
+
+- name: "iis-webdav-anonymous-write | author rule: anonymous read/write/source on wwwroot"
+  ansible.windows.win_shell: >-
+    & "$env:windir\system32\inetsrv\appcmd.exe" set config "Default Web Site"
+    /section:system.webServer/webdav/authoringRules
+    /+"[users='*',path='*',access='Read, Write, Source']"
+    /commit:apphost
+  register: webdav_rule
+  changed_when: "'applied configuration changes' in (webdav_rule.stdout | lower) or webdav_rule.rc == 0"
+  failed_when: webdav_rule.rc != 0 and 'cannot add duplicate' not in (webdav_rule.stdout | lower)
+  # idempotent: appcmd returns a "cannot add duplicate collection entry" error
+  # on re-run once the rule exists — treated as success, not a failure.
+
+- name: "iis-webdav-anonymous-write | ensure anonymous authentication stays enabled"
+  community.windows.win_iis_webconfigproperty:
+    path: "IIS:\\Sites\\Default Web Site"
+    filter: system.webServer/security/authentication/anonymousAuthentication
+    name: enabled
+    value: "true"
+
+- name: "iis-webdav-anonymous-write | restart IIS so the WebDAV module loads"
+  ansible.windows.win_shell: iisreset /restart
+  changed_when: true
+
+- name: "iis-webdav-anonymous-write | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      IIS WebDAV anonymous-write gap live on {{ inventory_hostname }}: WebDAV
+      installed + enabled with an anonymous Read/Write/Source authoring rule on
+      the Default Web Site -> an unauthenticated attacker PUTs an .aspx webshell
+      and GETs it for RCE as the app pool identity.

@@ -1,11 +1,12 @@
 {#
   PurpleForge — service-provisioning playbook for {{ lab_name }} (GENERATED,
   do not edit). Installs the infra services machines[].services declares —
-  today only `mssql` is wired (iis/sccm remain declared-but-unconsumed, Tier B
-  backlog — see NON-AD-VULNS-ROADMAP.md). Reuses vendor/GOAD's mssql role's
-  install mechanics, trimmed to a SECURE base install (sa disabled,
-  Windows-auth only, xp_cmdshell off) — any vuln that requires_services this
-  host lands afterwards, in vuln-injection, same hardening-before-gaps order.
+  `mssql`, `adcs` and `iis` are wired (sccm remains declared-but-unconsumed —
+  see NON-AD-VULNS-ROADMAP.md). Each installs a SECURE base (mssql: sa disabled,
+  Windows-auth only, xp_cmdshell off; iis: WebDAV absent, dir browsing off,
+  least-priv app pool, confirmed serving HTTP 200) — any vuln that
+  requires_services this host, or web app with associated flaws, lands
+  afterwards in vuln-injection, same hardening-before-gaps order.
 
   Deploy order (CLAUDE.md / site.yml.j2): runs after ad-topology (the
   member-server is already domain-joined) and before ad-population/hardening
@@ -30,6 +31,22 @@
   tasks:
     - name: "adcs-install | provision"
       ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/adcs-install.yml"
+{% endfor %}
+{% for m in iis_hosts %}
+- name: "PurpleForge | service-provisioning | iis -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  tasks:
+    - name: "iis-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/iis-install.yml"
+{% endfor %}
+{% for m in ftp_hosts %}
+- name: "PurpleForge | service-provisioning | ftp -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  tasks:
+    - name: "ftp-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/ftp-install.yml"
 {% endfor %}
 {% if adcs_hosts %}
 # The EnterpriseRootCA install publishes its cert to AD's NTAuth store, but the

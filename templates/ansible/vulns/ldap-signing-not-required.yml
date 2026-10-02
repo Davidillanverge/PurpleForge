@@ -1,0 +1,24 @@
+---
+# Vuln inject task-file: ldap-signing-not-required (T1557.001)
+# Runs on the primary root DC ({{ inventory_hostname }}). Sets LDAPServerIntegrity
+# to 1 (signing negotiated, NOT required) — the exact inverse of the ldap_signing
+# hardening control (which sets it to 2) and of CIS 2.3.11.8, so this is the clean
+# reconciliation case. Idempotent: win_regedit only reports changed on a real flip.
+- name: "ldap-signing-not-required | do not require LDAP server signing (LDAPServerIntegrity=1)"
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters
+    name: LDAPServerIntegrity
+    data: 1
+    type: dword
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "ldap-signing-not-required | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      LDAP-signing gap live on {{ inventory_hostname }}: LDAPServerIntegrity=1
+      (signing not required) -> coerced/captured NTLM auth can be relayed
+      (ntlmrelayx) to the DC's LDAP for privileged actions (RBCD, shadow creds).

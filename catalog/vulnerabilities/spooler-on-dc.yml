@@ -1,0 +1,30 @@
+id: spooler-on-dc
+name: "Servicio Print Spooler activo en el controlador de dominio (coerción MS-RPRN)"
+severity: high
+attack:
+  mitre_attack: [T1187]
+  requires_services: []
+  intended_path: >
+    El servicio Print Spooler está habilitado y en ejecución en el controlador
+    de dominio. Un atacante autenticado invoca el método RpcRemoteFindFirst
+    PrinterChangeNotification (MS-RPRN, "PrinterBug") contra el spooler del DC
+    para coaccionarlo a autenticarse contra un host controlado por el atacante.
+    Esa autenticación de la cuenta de máquina del DC se retransmite (ntlmrelayx)
+    contra otro servicio -p. ej. LDAP para configurar RBCD, o ADCS ESC8- lo que
+    conduce a la toma del dominio. El spooler no debería ejecutarse en un DC.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/spooler-on-dc.yml
+  primitive: "servicio Spooler con StartType=Automatic y en ejecución en el DC"
+  params: {}
+neutralized_by:
+  - hardening.controls.disable_print_spooler_on_dc   # etiqueta libre: deshabilitar y detener el servicio Spooler en los DCs
+  - hardening.baseline: [stig]
+mitigate:
+  summary: "Deshabilitar y detener el servicio Print Spooler en todos los controladores de dominio (y en cualquier servidor que no imprima); aplicar la baseline STIG que lo exige; donde el spooler sea imprescindible, restringir RpcRemoteFindFirstPrinterChangeNotification vía GPO (RegisterSpoolerRemoteRpcEndPoint)."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "(Get-Service Spooler).Status = 'Running' y (Get-Service Spooler).StartType = 'Automatic' en el DC"
+chain:
+  target_shape: none

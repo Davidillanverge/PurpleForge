@@ -1,0 +1,31 @@
+id: webapp-sql-injection
+name: "Aplicación web ASP.NET con inyección SQL contra MSSQL (web -> BD)"
+severity: critical
+attack:
+  mitre_attack: [T1190]
+  requires_services: [iis, mssql]
+  intended_path: >
+    Una aplicación web ASP.NET desplegada en IIS (/app/search.aspx) construye su
+    consulta concatenando directamente el parámetro de la query string, sin
+    parametrizar, contra la base de datos MSSQL local (autenticación integrada
+    con el login del app pool). Un atacante inyecta SQL por el parámetro `name`
+    (p. ej. `' UNION SELECT ...-- -`) para saltarse la lógica, exfiltrar datos
+    de otras tablas/bases o, si el login tuviera privilegios y xp_cmdshell
+    estuviese activo (ver mssql-weak-sa), escalar a ejecución de comandos ->
+    compromiso de la capa de datos desde la web, sin credenciales.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/webapp-sql-injection.yml
+  primitive: "app ASP.NET /app/search.aspx con consulta concatenada (sin parametrizar) sobre la BD PFApp"
+  reuses: "IIS y MSSQL base los instala service-provisioning.yml de forma segura (mssql en Windows-auth, sa deshabilitada); esta inyección aprovisiona la BD/tabla/login del app pool y despliega la app vulnerable encima — integrada, sin necesidad de Mixed Mode ni de mssql-weak-sa"
+  params: {}
+neutralized_by:
+  - hardening.controls.webapp_sql_parameterization   # etiqueta libre: usar consultas parametrizadas / ORM; es un fallo de código, no hay regla CIS/STIG que lo cubra, así que NO se empareja con hardening.baseline
+mitigate:
+  summary: "Usar siempre consultas parametrizadas (SqlParameter) o un ORM; aplicar mínimo privilegio al login del app pool (solo la BD/vistas necesarias, nunca sysadmin); validar/escapar la entrada por allowlist; mantener xp_cmdshell deshabilitado y sa off (mssql-weak-sa)."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "GET http://<ip>/app/search.aspx?name=zzz' UNION SELECT 'PF-SQLI-OK'-- -  devuelve 'PF-SQLI-OK' en la respuesta (la UNION inyectada se ejecutó)"
+chain:
+  target_shape: none

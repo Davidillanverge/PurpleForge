@@ -3,6 +3,44 @@
 Tracks extending PurpleForge from AD-only to **OS-level** and **application**
 vulns. Status: ✅ done · 🟡 partial · ⬜ pending.
 
+## Sequenced delivery plan (agreed 2026-10-02)
+
+Agreed phase order for the current round. Separates **services** (the
+platform/daemon that runs — IIS, MSSQL, SCCM) from **applications** (what gets
+deployed on top and carries its own flaws). Telemetry (SWG/EDR/SIEM) is
+**deferred** this round — it would reverse invariant #2 (adds the DETECT pillar);
+recorded as a proposal only, no implementation planned here.
+
+- **Phase 1 — Services: install + VALIDATE they work (no vulns yet).** Each
+  `machines[].services` entry installs SECURELY and passes an "is up" check
+  before any gap is injected. MSSQL is the proven template. **Starting with IIS**
+  (secure web server baseline); SCCM stays declared-but-unconsumed unless pulled
+  in. Hooks: `plan_service_provisioning` (planning.py), `render_service_provisioning`
+  (render.py), `service-provisioning.yml.j2`, `templates/ansible/services/<svc>-install.yml`.
+- **Phase 2 — Vulns, two fronts in parallel.**
+  - *2A · service-backed:* IIS misconfig (WebDAV/PUT/app-pool→potato), MSSQL
+    linked-server chain, lax SMB shares. Reuse service-provisioning: secure base →
+    inject reopens the gap (same pattern as `mssql-weak-sa`).
+  - *2B · no service needed (starts immediately):* new AD/ADCS (ESC2/3/8, SID
+    history, LDAP anon bind…), misconfig (SYSVOL creds, insecure DNS updates, OU
+    ACLs…), OS privesc (`SeImpersonate`→potato, stored creds, COM hijacking…).
+    Reuses the existing `attack.target_role` + task-file + reconciliation pattern.
+- **Phase 3 — Applications with associated vulns.** App(s) deployed on IIS that
+  carry their own flaws (SQLi web→DB→RCE against the MSSQL host, unvalidated
+  upload, auth bypass). Decision pending: own toggleable app (recommended) vs.
+  vendored vulnerable app; adds an **HTTP** validation path to `validate.py`.
+- **Phase 4 — Later: CVEs + Linux.**
+  - *CVEs:* needs an image/patch-level decision first — a patch-level CVE can't
+    survive a fully-patched+hardened box, which fights hardening-before-vulns.
+    Schema impact: `attack.cve` + version/patch pin; content guardrail (no
+    wormable/destructive without guards).
+  - *Tier C Linux:* new lab class — Linux in the `os` enum, infra beyond GOAD's
+    reuse, CIS-Linux baseline, SSH validation path. Largest track, done last.
+
+Every vuln across all phases still ships `mitigate` + `neutralized_by` + valid
+`mitre_attack`, no `detect` block (invariant #2), lands on an already-hardened
+box, and injects deterministically + idempotently (invariant #5).
+
 ## Tier A — OS-level local privilege escalation (Windows) ✅
 
 Landed (branch `agentic-system`, 2026-07-09). Five catalog vulns + inject

@@ -1,0 +1,31 @@
+id: ldap-anonymous-bind
+name: "Enlace LDAP anónimo habilitado en el controlador de dominio"
+severity: medium
+attack:
+  mitre_attack: [T1087.002]
+  requires_services: []
+  intended_path: >
+    El 7.º carácter del atributo dSHeuristics del objeto Directory Service
+    (CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,...) se
+    pone a '2' (fLDAPBlockAnonOps desactivado), habilitando operaciones LDAP
+    anónimas más allá del RootDSE. Un atacante sin credenciales se enlaza de
+    forma anónima al DC y enumera usuarios, grupos, SPNs, descripciones y la
+    política de contraseñas del dominio -> reconocimiento previo a la
+    autenticación que alimenta password-spraying, AS-REP/kerberoasting y la
+    selección de objetivos, sin dejar un logon con credenciales.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/ldap-anonymous-bind.yml
+  primitive: "dSHeuristics[7]=2 en el objeto Directory Service (enlace LDAP anónimo)"
+  params: {}
+neutralized_by:
+  - hardening.controls.ldap_anonymous_disabled   # etiqueta libre: restablecer dSHeuristics (sin el 7.º carácter '2') para bloquear operaciones anónimas
+  - hardening.baseline: [cis-l1, cis-l2, stig]
+mitigate:
+  summary: "Restablecer dSHeuristics para que el 7.º carácter no sea '2' (bloquear operaciones LDAP anónimas, que es el valor por defecto); mantener 'Pre-Windows 2000 Compatible Access' vacío; auditar enlaces anónimos. Las baselines CIS/STIG endurecen este valor."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "nxc ldap <dc_ip> -u '' -p '' --query '(objectClass=user)' 'sAMAccountName' devuelve objetos (enlace anónimo); o Get-ADObject 'CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,<dn>' -Properties dSHeuristics muestra un 7.º carácter '2'"
+chain:
+  target_shape: none

@@ -1,0 +1,27 @@
+---
+# Vuln inject task-file: sysvol-script-creds (T1552.001)
+# Runs on the primary root DC ({{ inventory_hostname }} — no requires_services /
+# target_role, so it defaults to the DC, which is where SYSVOL lives). Drops a
+# logon script into the domain's SYSVOL\scripts share containing a cleartext
+# credential. SYSVOL is world-readable by any authenticated domain user, so this
+# is the gap. Idempotent: win_copy only reports changed when the content differs.
+- name: "sysvol-script-creds | ensure the domain scripts folder exists in SYSVOL"
+  ansible.windows.win_file:
+    path: "C:\\Windows\\SYSVOL\\sysvol\\{{ domain }}\\scripts"
+    state: directory
+
+- name: "sysvol-script-creds | drop a logon script with a cleartext credential"
+  ansible.windows.win_copy:
+    dest: "C:\\Windows\\SYSVOL\\sysvol\\{{ domain }}\\scripts\\mapdrives.bat"
+    content: |
+      @echo off
+      REM Map the finance share at logon (legacy deployment script).
+      net use F: \\{{ inventory_hostname }}\finance /user:{{ domain }}\{{ vuln_sysvol_account }} {{ vuln_sysvol_password }} /persistent:yes
+
+- name: "sysvol-script-creds | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      SYSVOL cleartext-credential gap live on {{ inventory_hostname }}: a logon
+      script under SYSVOL\{{ domain }}\scripts embeds a `net use` with the
+      cleartext password of {{ vuln_sysvol_account }} -> any authenticated user
+      reads the share, lifts the credential and reuses it.

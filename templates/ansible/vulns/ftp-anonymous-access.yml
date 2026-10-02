@@ -1,0 +1,44 @@
+---
+# Vuln inject task-file: ftp-anonymous-access (T1552.001)
+# service-provisioning.yml already installed the IIS FTP server SECURELY on this
+# host ({{ inventory_hostname }}, services: [ftp]): anonymous off, basic auth
+# required, read-only. This task is the gap: enable anonymous authentication on
+# the PFFtp site and drop a cleartext-credential backup file in the FTP root, so
+# any unauthenticated client can connect and download it. Idempotent:
+# Set-ItemProperty converges and win_copy only changes on content drift.
+- name: "ftp-anonymous-access | enable anonymous authentication on the FTP site"
+  ansible.windows.win_shell: |
+    Import-Module WebAdministration
+    Set-ItemProperty "IIS:\Sites\PFFtp" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+  changed_when: true
+
+- name: "ftp-anonymous-access | drop a cleartext-credential backup file in the FTP root"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\ftproot\backup_creds.txt
+    content: |
+      # Legacy backup job credentials (do not delete)
+      host=mssql.corp.local
+      user=svc-backup
+      password=Backup#Winter24
+
+- name: "ftp-anonymous-access | ensure the anonymous user can read the FTP root"
+  ansible.windows.win_acl:
+    path: C:\inetpub\ftproot
+    user: IUSR
+    rights: ReadAndExecute
+    type: allow
+    state: present
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+
+- name: "ftp-anonymous-access | restart the FTP service so the auth change applies"
+  ansible.windows.win_service:
+    name: FTPSVC
+    state: restarted
+
+- name: "ftp-anonymous-access | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      FTP anonymous-access gap live on {{ inventory_hostname }}: anonymous auth
+      enabled on PFFtp and a cleartext-credential backup file sits in the FTP
+      root -> an unauthenticated client connects and downloads the credential.

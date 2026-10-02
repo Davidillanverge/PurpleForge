@@ -1,0 +1,31 @@
+id: ldap-signing-not-required
+name: "El DC no requiere firma LDAP - relay NTLM sobre LDAP"
+severity: high
+attack:
+  mitre_attack: [T1557.001]
+  requires_services: []
+  intended_path: >
+    El controlador de dominio tiene LDAPServerIntegrity=1 (firma LDAP no
+    requerida, solo negociada) en lugar de 2. Un atacante que captura o
+    coacciona una autenticación NTLM (PetitPotam, PrinterBug, LLMNR/NBT-NS
+    poisoning) la retransmite con ntlmrelayx contra el servicio LDAP/LDAPS del
+    DC y realiza acciones privilegiadas como la víctima (p. ej. configurar RBCD
+    sobre un equipo, añadir credenciales shadow) sin conocer su contraseña.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/ldap-signing-not-required.yml
+  primitive: "custom — win_regedit sobre LDAPServerIntegrity (inverso exacto del control ldap_signing)"
+  params: { ldap_server_integrity: 1 }
+neutralized_by:
+  # Real, host-CIS-backed control: requiring LDAP server signing
+  # (LDAPServerIntegrity=2, CIS 2.3.11.8 level 1) cierra esto directamente. Es
+  # el inverso exacto del control ldap_signing — ver control-cis-rules.yml.
+  - hardening.controls.ldap_signing
+mitigate:
+  summary: "Requerir firma LDAP en el DC (LDAPServerIntegrity=2) y, a ser posible, LDAP channel binding; deshabilitar NTLM donde sea posible; segmentar la red para impedir el relay."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters' -Name LDAPServerIntegrity muestra 1 (no 2)"
+chain:
+  target_shape: none

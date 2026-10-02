@@ -1,0 +1,27 @@
+---
+# Vuln inject task-file: iis-apppool-privileged-identity (T1078)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]) with the DefaultAppPool running as
+# the least-privilege ApplicationPoolIdentity. This task is the gap: raise the
+# app pool identity to LocalSystem, so any code execution in the web app inherits
+# NT AUTHORITY\SYSTEM directly. Idempotent: win_iis_webapppool converges and only
+# restarts the pool when the identity actually changed.
+- name: "iis-apppool-privileged-identity | set DefaultAppPool identity to LocalSystem"
+  community.windows.win_iis_webapppool:
+    name: DefaultAppPool
+    state: started
+    attributes:
+      processModel.identityType: LocalSystem
+  register: apppool_identity
+
+- name: "iis-apppool-privileged-identity | recycle the app pool so the new identity takes effect"
+  ansible.windows.win_shell: "& \"$env:windir\\system32\\inetsrv\\appcmd.exe\" recycle apppool /apppool.name:DefaultAppPool"
+  when: apppool_identity is changed
+  changed_when: true
+
+- name: "iis-apppool-privileged-identity | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      IIS app-pool privilege gap live on {{ inventory_hostname }}: DefaultAppPool
+      runs as LocalSystem -> any code execution in the web app (e.g. an uploaded
+      webshell) runs as NT AUTHORITY\SYSTEM, no further local escalation needed.

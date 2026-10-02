@@ -1,0 +1,35 @@
+id: iis-apppool-privileged-identity
+name: "App pool de IIS corriendo como LocalSystem (identidad sobreprivilegiada)"
+severity: high
+attack:
+  mitre_attack: [T1078]
+  requires_services: [iis]
+  intended_path: >
+    service-provisioning instaló IIS de forma SEGURA con el DefaultAppPool
+    corriendo como la identidad de mínimo privilegio ApplicationPoolIdentity.
+    Esta inyección reabre el gap: cambia processModel.identityType del
+    DefaultAppPool a LocalSystem. Cualquier ejecución de código dentro de la
+    aplicación web (p. ej. tras una subida de webshell) hereda entonces el
+    contexto NT AUTHORITY\SYSTEM directamente -> compromiso total del host
+    sin necesidad de una escalada local adicional.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/iis-apppool-privileged-identity.yml
+  primitive: "DefaultAppPool con processModel.identityType = LocalSystem"
+  reuses: "El servidor IIS base (DefaultAppPool como ApplicationPoolIdentity) lo instala service-provisioning.yml; esta inyección solo eleva la identidad del app pool, misma relación base-segura -> gap que el resto de vulns de servicio"
+  params: {}
+# NOTE: neutralized by the SAME real pf_controls iis_hardening toggle as
+# iis-webdav-anonymous-write — iis_hardening also resets the DefaultAppPool to
+# ApplicationPoolIdentity. When either IIS vuln is selected the reconciliation
+# forces iis_hardening off (on_conflict:exclude-control) so the gap stays open,
+# while a lab WITHOUT an IIS vuln gets a genuinely hardened web box.
+neutralized_by:
+  - hardening.controls.iis_hardening   # pf_controls toggle: resets DefaultAppPool to least-priv ApplicationPoolIdentity on IIS hosts
+mitigate:
+  summary: "Ejecutar los app pools con la identidad de mínimo privilegio ApplicationPoolIdentity (o una cuenta de servicio dedicada sin privilegios), nunca LocalSystem/NetworkService; aislar aplicaciones en app pools separados; aplicar el principio de mínimo privilegio a la cuenta del worker w3wp."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "Import-Module WebAdministration; (Get-ItemProperty 'IIS:\\AppPools\\DefaultAppPool' -Name processModel.identityType).Value = 'LocalSystem' (3)"
+chain:
+  target_shape: none

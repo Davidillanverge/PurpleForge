@@ -1,0 +1,31 @@
+id: ftp-anonymous-access
+name: "FTP con acceso anónimo que expone ficheros con credenciales"
+severity: high
+attack:
+  mitre_attack: [T1552.001]
+  requires_services: [ftp]
+  intended_path: >
+    service-provisioning instaló el servidor FTP de IIS de forma SEGURA
+    (anónimo deshabilitado, autenticación básica requerida, solo lectura). Esta
+    inyección reabre el gap: habilita la autenticación anónima en el sitio FTP,
+    de modo que cualquiera puede conectarse sin credenciales y listar/descargar
+    el contenido de la raíz FTP, que incluye un fichero de respaldo con
+    credenciales en claro. Un atacante no autenticado se conecta por FTP, lista
+    los ficheros, descarga el backup y reutiliza la credencial expuesta ->
+    acceso con credenciales válidas sin fuerza bruta.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/ftp-anonymous-access.yml
+  primitive: "autenticación anónima habilitada en el sitio FTP PFFtp + fichero de credenciales en la raíz FTP"
+  reuses: "El servidor FTP base lo instala service-provisioning.yml de forma segura; esta inyección solo reabre el acceso anónimo y deja un fichero sensible legible"
+  params: {}
+neutralized_by:
+  - hardening.controls.ftp_anonymous_disabled   # etiqueta libre: deshabilitar la autenticación anónima en FTP y no almacenar secretos en la raíz; misconfig de servicio, sin regla CIS/STIG directa -> sin hardening.baseline
+mitigate:
+  summary: "Deshabilitar la autenticación anónima en FTP (exigir autenticación básica/Windows, idealmente sobre FTPS); no almacenar ficheros con secretos en la raíz FTP; aplicar reglas de autorización de mínimo privilegio; auditar el contenido del sitio FTP."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "Un login FTP anónimo (user 'anonymous', password vacío) contra <ip>:21 tiene éxito y permite RETR del fichero de credenciales de la raíz; o nxc ftp <ip> -u anonymous -p ''"
+chain:
+  target_shape: none

@@ -1,0 +1,77 @@
+---
+# Vuln inject task-file: webapp-sql-injection (T1190)
+# service-provisioning.yml already installed IIS and MSSQL SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis, mssql]): mssql is Windows-auth only,
+# sa disabled. This task provisions the app's own database + a least-plumbing
+# login for the IIS app pool identity (integrated auth — NO Mixed Mode, NO sa, so
+# this is independent of mssql-weak-sa), then deploys a deliberately vulnerable
+# ASP.NET page whose query is built by string concatenation. SqlCmd -E runs as
+# the domain admin (sysadmin via ADDCURRENTUSERASSQLADMIN). Idempotent: every
+# statement is guarded by IF [NOT] EXISTS and win_copy/win_feature converge.
+- name: "webapp-sql-injection | enable ASP.NET 4.5 (the baseline IIS has only static content)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Asp-Net45
+      - Web-Net-Ext45
+    state: present
+    include_management_tools: true
+  register: aspnet_feature
+
+- name: "webapp-sql-injection | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: aspnet_feature.reboot_required | default(false)
+
+- name: "webapp-sql-injection | create the web app directory under wwwroot"
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\app
+    state: directory
+
+- name: "webapp-sql-injection | provision the app database, seed data, and app-pool login"
+  ansible.windows.win_shell: |
+    SqlCmd -E -b -Q "IF DB_ID('PFApp') IS NULL CREATE DATABASE PFApp"
+    SqlCmd -E -b -d PFApp -Q "IF OBJECT_ID('dbo.Users') IS NULL CREATE TABLE dbo.Users (id INT IDENTITY PRIMARY KEY, username NVARCHAR(50), password NVARCHAR(50))"
+    SqlCmd -E -b -d PFApp -Q "IF NOT EXISTS (SELECT 1 FROM dbo.Users) INSERT INTO dbo.Users (username,password) VALUES ('alice','Summer2024!'),('bob','Password1'),('admin','S3cretApp!')"
+    SqlCmd -E -b -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name='IIS APPPOOL\DefaultAppPool') CREATE LOGIN [IIS APPPOOL\DefaultAppPool] FROM WINDOWS"
+    SqlCmd -E -b -d PFApp -Q "IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name='IIS APPPOOL\DefaultAppPool') CREATE USER [IIS APPPOOL\DefaultAppPool] FOR LOGIN [IIS APPPOOL\DefaultAppPool]"
+    SqlCmd -E -b -d PFApp -Q "ALTER ROLE db_datareader ADD MEMBER [IIS APPPOOL\DefaultAppPool]"
+  register: sqli_provision
+  changed_when: false
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "webapp-sql-injection | deploy the vulnerable search page"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\app\search.aspx
+    content: |
+      <%@ Page Language="C#" %>
+      <%@ Import Namespace="System.Data.SqlClient" %>
+      <script runat="server">
+      // DELIBERATELY VULNERABLE (PurpleForge lab): the query is built by string
+      // concatenation of untrusted input — no SqlParameter, no validation.
+      void Page_Load(object sender, EventArgs e) {
+          string name = Request.QueryString["name"] ?? "";
+          string sql = "SELECT username FROM dbo.Users WHERE username = '" + name + "'";
+          try {
+              using (var cn = new SqlConnection("Server=localhost;Database=PFApp;Integrated Security=SSPI;")) {
+                  cn.Open();
+                  using (var cmd = new SqlCommand(sql, cn))
+                  using (var rd = cmd.ExecuteReader()) {
+                      while (rd.Read()) { Response.Write("ROW:" + rd[0].ToString() + "\n"); }
+                  }
+              }
+          } catch (Exception ex) { Response.Write("ERR:" + ex.Message); }
+      }
+      </script>
+      <html><body>
+      <form method="get"><input type="text" name="name" /><input type="submit" value="Search" /></form>
+      </body></html>
+
+- name: "webapp-sql-injection | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Web app SQLi gap live on {{ inventory_hostname }}: /app/search.aspx
+      concatenates the `name` parameter into its SQL against PFApp -> inject via
+      `name` (UNION/boolean) to bypass logic and exfiltrate data from the DB.
