@@ -82,6 +82,7 @@ pip install -e ".[dev]"
 The full deterministic lifecycle for an existing spec:
 
 ```bash
+forge from-exercise <layer.json>          # (optional) author specs/<lab>.yml from a BAS exercise's ATT&CK layer
 forge lab-spec  specs/<lab>.yml           # validate + reconcile -> lab-manifest.json
 forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/reset/teardown scripts
 forge guardrail specs/<lab>.yml           # PASS/FAIL the CLAUDE.md invariants before any spend
@@ -116,15 +117,35 @@ no committed golden specs to keep in sync.
 A lab is one YAML file in `specs/`. From description to a deploy-ready lab:
 
 ```
-  natural language ──/new-lab──▶ specs/<lab>.yml ──forge generate──▶ generated/<lab>/ ──forge deploy──▶ live lab
-        (AI, optional)             (hand-editable)      (deterministic, no AI)            (deterministic, no AI)
+     natural language   ──/new-lab────────▶ ┐
+  (AI, optional)                             │
+     BAS exercise layer ──forge from-exercise▶ specs/<lab>.yml ──forge generate──▶ generated/<lab>/ ──forge deploy──▶ live lab
+  (ATT&CK technique list)                    │  (hand-editable)    (deterministic, no AI)            (deterministic, no AI)
+     by hand (copy an example) ────────────▶ ┘
 ```
 
-1. **Author the spec.** Write `specs/<lab>.yml` by hand from an example, or let
-   the `/new-lab` skill turn a description into a validated spec:
-   ```bash
-   /new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
-   ```
+1. **Author the spec.** Three fronts, all producing the same hand-editable
+   `specs/<lab>.yml`:
+   - **By hand** from an example.
+   - **`/new-lab`** — turn a description into a validated spec:
+     ```bash
+     /new-lab "2 medieval domains, ESC1 + Kerberoasting, Azure, Defender AV + CIS L1"
+     ```
+   - **`forge from-exercise`** — the inverse direction: hand it the ATT&CK
+     technique list a Breach & Attack Simulation exercise produced (an ATT&CK
+     Navigator layer JSON) and it selects the catalog vulnerabilities that
+     reproduce those techniques, so the lab is *provably vulnerable to the attack
+     that was designed first*:
+     ```bash
+     forge from-exercise specs/example-exercise.json --name apt-demo --provider azure
+     ```
+     It routes required services (e.g. ADCS → a member-server) and
+     workstation-local-privesc vulns onto the right hosts, forces every selected
+     gap open (`intentional_gaps_auto` + `on_conflict: exclude-control`), and
+     reports any technique with no catalog coverage (a runtime-only TTP, or a
+     precondition no catalog vuln builds yet) rather than dropping it silently.
+     See [`specs/README.md`](specs/README.md) for the input format and flags.
+
    The spec declares: the `lab` (name, theme, provider, region, isolation,
    auto-shutdown, budget), the `forest` (domains + trusts), the `machines`
    (roles, OS, services), the `population` (count, density, **seed**), the
@@ -269,7 +290,7 @@ pyproject.toml                # packaging; the `forge` console script
 
 .claude/
   agents/                     # lab-designer, catalog-author, deploy-operator, purple-validator
-  commands/                   # /new-lab /deploy /validate /destroy
+  commands/                   # /new-lab /lab-from-exercise /deploy /validate /destroy
   skills/                     # lab-spec, network-topology, infra-azure/proxmox/aws, ad-topology,
                               #   ad-theming, vuln-injection, defensive-controls, purple-validation, ...
 
