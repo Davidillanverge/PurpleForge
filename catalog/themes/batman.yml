@@ -1,0 +1,79 @@
+# catalog/themes/batman.yml — see medieval-kingdom.yml's header comment
+# for how `vocabulary`/`extra_groups`/`honey_account_naming` are consumed.
+id: batman
+name: "Gotham City"
+description: >
+  A city of rival institutions, gangs and vigilantes standing in for
+  BadBlood's corporate departments — same non-literal, flavor-only use of a
+  well-known setting already established in this repo's avengers and
+  the-simpsons themes.
+
+vocabulary:
+  houses:                    # -> 3lettercodes.csv (code,description); "orgs" here
+    - { code: WAY, name: "Wayne Enterprises" }
+    - { code: GCP, name: "Gotham City Police Department" }
+    - { code: ARK, name: "Arkham Asylum" }
+    - { code: WYF, name: "Wayne Foundation" }
+    - { code: LEX, name: "LexCorp Gotham Branch" }
+    - { code: OWL, name: "Court of Owls" }
+    - { code: ACE, name: "Ace Chemicals" }
+    - { code: GCH, name: "Gotham City Hall" }
+
+  given_names_male:
+    - Bruce
+    - Alfred
+    - James
+    - Harvey
+    - Lucius
+    - Edward
+    - Oswald
+    - Jack
+    - Jonathan
+    - Victor
+    - Dick
+    - Jason
+    - Tim
+    - Damian
+    - Thomas
+    - Carmine
+    - Basil
+
+  given_names_female:
+    - Selina
+    - Barbara
+    - Pamela
+    - Harleen
+    - Talia
+    - Kate
+    - Renee
+    - Vicki
+    - Sofia
+    - Kathy
+
+  family_names:
+    - Wayne
+    - Gordon
+    - Dent
+    - Fox
+    - Nashton
+    - Cobblepot
+    - Kyle
+    - Isley
+    - Quinzel
+    - alGhul
+    - Crane
+    - Nigma
+    - Pennyworth
+    - Falcone
+    - Grayson
+    - Todd
+    - Drake
+    - Karlo
+
+extra_groups:
+  - { name: "Court of Owls", description: "Secret oversight tier — highly privileged, Domain Admins-adjacent" }
+  - { name: "GCPD Major Crimes Unit", description: "Security tier" }
+  - { name: "Wayne Enterprises Board", description: "Audit/oversight tier" }
+  - { name: "Arkham Inmates", description: "Infiltrated faction — isolated, low-trust accounts" }
+
+honey_account_naming: "gcpd.officer.{n}"
