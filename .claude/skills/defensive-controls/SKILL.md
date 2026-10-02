@@ -88,7 +88,7 @@ mark `backend_required: true`.
    ```
 2. **Literal backslash (`KINGDOM\da-treasury` from `protected_users_group`) in a
    double-quoted YAML scalar breaks the parse.** Fixed by routing every free-form
-   string through `forge.py:yaml_scalar` (json.dumps quoting).
+   string through `forge.yaml_scalar` (json.dumps quoting).
 3. **Empty Python lists render as nothing → parse as `None`, not `[]`** →
    `... | length` raises at runtime. Fixed with `{% if %}...{% else %} []{% endif
    %}` around every list-valued var. Catch by generating `defense.profile: none`
@@ -100,7 +100,7 @@ mark `backend_required: true`.
    other Defender control is unaffected.
 
 ```bash
-python3 scripts/forge.py generate specs/<lab>.yml
+forge generate specs/<lab>.yml
 python3 -c "import yaml; yaml.safe_load(open('generated/<lab>/ansible/playbooks/defensive-controls.yml'))"
 cd generated/<lab>/ansible && ansible-playbook --syntax-check -i inventory/hosts.yml playbooks/defensive-controls.yml
 ```

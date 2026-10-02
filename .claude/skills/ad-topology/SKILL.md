@@ -40,10 +40,10 @@ for `external`/`forest`/`shortcut` between separate forests; don't run it for
 
 ## Host naming and per-host vars
 
-`forge.py generate` names each machine `dc01`/`mbr01`/`ws01`, domain-slug-prefixed
+`forge generate` names each machine `dc01`/`mbr01`/`ws01`, domain-slug-prefixed
 (`kingdom-dc01`) when >1 domain. GOAD roles are inconsistent about var keys
 (`domain_controller`/`child_domain` read `domain`; `domain_controller_slave`
-reads `domain_name`) — forge.py sets both to the same value. `source_dc` for
+reads `domain_name`) — forge sets both to the same value. `source_dc` for
 `child_domain` must be the parent DC's FQDN (`<root-dc>.<parent-domain>`), not the
 inventory alias. `dns_domain` is set to the *inventory hostname* of the domain's
 root DC (GOAD reads `hostvars[dns_domain].ansible_host` — a host reference,

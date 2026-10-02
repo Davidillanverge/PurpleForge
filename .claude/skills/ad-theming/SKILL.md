@@ -20,7 +20,7 @@ description: >
 ## Not BadBlood anymore
 
 Earlier versions wrapped `vendor/BadBlood` unmodified. Its randomness only
-happens on the live Windows host at Ansible-runtime, so `forge.py` could never
+happens on the live Windows host at Ansible-runtime, so `forge` could never
 know usernames/passwords/OU placement ahead of a deploy. Replaced by
 `scripts/population.py` — a **deliberate, user-confirmed departure from the
 "wrap upstream" principle, scoped only to BadBlood**. GOAD/Vulnerable-AD/
@@ -36,7 +36,7 @@ realism, not exceed it: 3%/97% service/person split, flat-random OU placement,
 one deliberate change: **every user's password is generated and recorded** (the
 whole point — document the full domain, passwords included, before deploy).
 
-`render_ad_population()` (`forge.py`) calls it once per populatable domain (root
+`render_ad_population()` (`forge`) calls it once per populatable domain (root
 + child DCs, per-domain seed offset), then renders `ad-population.yml.j2` — one
 play per domain that APPLIES the precomputed plan via `community.windows`
 (`win_domain_ou/_user/_group/_group_membership/_computer`) + small
@@ -72,7 +72,7 @@ is adding one YAML file. No job-title/manager fields (BadBlood didn't set them).
 ## Population sizing
 
 `population.users` = direct user count. `GroupCount`/`ComputerCount` scale by
-`population.density` (`forge.py:compute_population_counts`): `sparse` ×0.15/×0.3,
+`population.density` (`forge.compute_population_counts`): `sparse` ×0.15/×0.3,
 `realistic` ×0.2/×0.4, `messy` ×0.3/×0.5. Multi-domain: `users` split evenly
 across populatable domains (no per-domain override in the schema).
 `population.include_noise_acls` (default `true`) toggles random `GenericAll`
@@ -81,7 +81,7 @@ grants — set `false` for cleaner signal, e.g. `attack_chain.mode: ctf`.
 ## Testing (structural — no live DC)
 
 ```bash
-python3 scripts/forge.py generate specs/<lab>.yml
+forge generate specs/<lab>.yml
 python3 -c "
 import json; m=json.load(open('generated/<lab>/lab-manifest.json'))
 for p in m['population_plans']: print(p['domain'], len(p['users']),'users', len(p['groups']),'groups', len(p['ous']),'OUs')
@@ -90,5 +90,5 @@ cd generated/<lab>/ansible && ansible-playbook --syntax-check playbooks/ad-popul
 ```
 
 Live: confirm `ad-population.yml` created the exact graph
-(`Get-ADUser`/`Get-ADGroupMember` spot checks) — `forge.py ad-inventory` does
+(`Get-ADUser`/`Get-ADGroupMember` spot checks) — `forge ad-inventory` does
 this comparison automatically.

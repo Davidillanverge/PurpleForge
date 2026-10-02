@@ -13,7 +13,7 @@ description: >
 
 ## When to use
 
-- `/generate`, when `lab.provider` is `proxmox`. `forge.py`'s
+- `/generate`, when `lab.provider` is `proxmox`. `forge`'s
   `render_proxmox_terraform()` copies `templates/terraform/proxmox/` verbatim to
   `generated/<lab>/` + writes `terraform.tfvars.json` (spec-derived) +
   `secrets.auto.tfvars.json` (gitignored). It does NOT bake host specifics.

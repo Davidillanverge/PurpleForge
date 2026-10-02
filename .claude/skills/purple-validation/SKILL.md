@@ -34,7 +34,7 @@ Detection coverage is out of scope; this harness ships no detection pipeline.
 **1. Build the checklist (deterministic)**
 
 ```bash
-python3 scripts/forge.py validate specs/<lab>.yml
+forge validate specs/<lab>.yml
 ```
 
 Writes `validation-plan.{json,md}` (per vuln: the applied signature + the
@@ -42,7 +42,7 @@ exploitability check) + `validation-results.template.json` to fill.
 
 **2. Confirm live (over the tunnel)** — the hardening baseline usually enforces
 **LDAP signing**, so plain-LDAP tools (`impacket-dacledit`, bare `ldap3`,
-`forge.py ad-inventory`) fail `strongerAuthRequired`. Use a signing-aware client,
+`forge ad-inventory`) fail `strongerAuthRequired`. Use a signing-aware client,
 **`nxc`/netexec**:
 
 - **Applied**: `nxc ldap <dc> -u <user> -p <pass> --query "(<filter>)" "<attrs>"`;
@@ -55,7 +55,7 @@ exploitability check) + `validation-results.template.json` to fill.
 **3. Write the report (deterministic)**
 
 ```bash
-python3 scripts/forge.py validate specs/<lab>.yml --results <filled>.json
+forge validate specs/<lab>.yml --results <filled>.json
 ```
 
 Writes `validation-report.md` (+`.json`): per vuln Applied + Exploitable with
@@ -67,5 +67,5 @@ applied-but-not-exploitable.
 `validation-report.md` is intermediate; `purple-validator` folds it + the
 manifest into `lab-report.md`. Don't fire attacks before the clean snapshot.
 
-Phases 1 and 3 are deterministic in `forge.py` and tested. Phase 2 (live nxc
+Phases 1 and 3 are deterministic in `forge` and tested. Phase 2 (live nxc
 queries/exploits) is run by the agent.

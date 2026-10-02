@@ -22,14 +22,15 @@ description: >
 
 ## What it does
 
-All deterministic logic is in `scripts/forge.py`. **Never reimplement it by hand
-or eyeball the YAML** — always shell out; it's the single source of truth.
+All deterministic logic is in the `scripts/forge/` package (run it as `forge`,
+the installed console script, or `python3 -m forge`). **Never reimplement it by
+hand or eyeball the YAML** — always shell out; it's the single source of truth.
 
 ```bash
 # validate + resolve + reconcile + write lab-manifest.json
-python3 scripts/forge.py lab-spec specs/<name>.yml
+forge lab-spec specs/<name>.yml
 # validate only, no manifest (for /new-lab before confirmation)
-python3 scripts/forge.py lab-spec specs/<name>.yml --check-only
+forge lab-spec specs/<name>.yml --check-only
 ```
 
 Exit 0 = valid. Exit 1 = schema/semantic/reconciliation (`on_conflict: fail`)

@@ -13,7 +13,7 @@ description: >
 
 ## When to use
 
-- `/generate`, when `lab.provider` is `aws`. `forge.py`'s
+- `/generate`, when `lab.provider` is `aws`. `forge`'s
   `render_aws_terraform()` copies `templates/terraform/aws/` verbatim to
   `generated/<lab>/terraform/aws/` + writes `terraform.tfvars.json` (spec-derived,
   shareable) + `secrets.auto.tfvars.json` (gitignored) + `backend.hcl`. One root
@@ -76,7 +76,7 @@ description: >
 
 ## `terraform.tfvars.json` + remote state
 
-`forge.py generate <lab>` writes `terraform.tfvars.json` (`lab_name`, `region`,
+`forge generate <lab>` writes `terraform.tfvars.json` (`lab_name`, `region`,
 network_plan fields, flattened `machines`, the EventBridge cron +
 **IANA timezone directly** — no Windows-tz translation Azure needs) +
 `secrets.auto.tfvars.json` (gitignored) + `backend.hcl`. `versions.tf` declares

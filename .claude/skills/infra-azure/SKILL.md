@@ -25,7 +25,7 @@ description: >
 | `windows.tf` | infra-azure | Windows VMs, private-only NICs, WinRM bootstrap |
 | `outputs.tf`, `variables.tf` | shared | whoever adds a resource owns its output; one flat var set |
 
-New input → add the variable once in `variables.tf` and wire `forge.py`'s
+New input → add the variable once in `variables.tf` and wire `forge`'s
 `terraform.tfvars.json` emission. Don't duplicate a resource across files.
 
 ## What `windows.tf` generates
@@ -86,7 +86,7 @@ subnet network-topology defined (infra-azure never makes subnets).
 
 ## `terraform.tfvars.json` + remote state
 
-`forge.py generate <lab>` reads `lab-manifest.json` and writes
+`forge generate <lab>` reads `lab-manifest.json` and writes
 `terraform.tfvars.json` (`lab_name`, `location`, network_plan fields, flattened
 `machines`, generated `admin_password`/`ansible_password` — gitignored) + a
 `backend.hcl`. `versions.tf` declares a partial `backend "azurerm" {}` (invariant

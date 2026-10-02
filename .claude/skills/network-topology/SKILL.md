@@ -28,7 +28,7 @@ network layer entirely.
 ## What it generates (Azure — `templates/terraform/azure/{network,bastion}.tf`)
 
 - **One VNet** = `network_plan.supernet` (`/16`, deterministic from `lab.name`,
-  see `forge.py:stable_octet`).
+  see `forge.stable_octet`).
 - **One management subnet** (`/24`) with only the WireGuard bastion. Its NSG:
   one `deny-all-inbound` baseline + narrow allows from `bastion.tf` — WireGuard
   UDP from `wireguard_allowed_cidrs` (defaults to internet: that's the VPN's job)
