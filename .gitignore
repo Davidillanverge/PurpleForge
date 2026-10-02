@@ -1,6 +1,6 @@
 # PurpleForge — generated lab artifacts are the RESULT of running the harness,
 # not part of it: everything under generated/<lab>/ is derived and fully
-# reproducible from specs/<lab>.yml via `forge.py generate`. It is never
+# reproducible from specs/<lab>.yml via `forge generate`. It is never
 # versioned — regenerate it, don't commit it.
 generated/
 
