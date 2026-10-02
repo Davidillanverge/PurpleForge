@@ -113,6 +113,56 @@ def verify_azure_teardown(lab_name: str) -> bool:
     return True  # ambiguous, not positive evidence of failure — flagged, not silently passed
 
 
+def verify_aws_teardown(lab_name: str, region: str) -> bool:
+    """AWS sibling of verify_azure_teardown. Returns True unless we have
+    positive evidence that resources tagged lab=<lab_name> still exist in the
+    region. Uses the Resource Groups Tagging API (`aws resourcegroupstaggingapi
+    get-resources`), which spans every taggable service the lab creates — EC2
+    instances/EIPs/ENIs/subnets/VPC, the auto_shutdown Lambda + schedule — so a
+    single call confirms the cost-bearing resources are gone. An ambiguous CLI
+    error (e.g. auth) is reported as "could not verify", never silently treated
+    as success. NOTE: IAM roles are global (not region-scoped or returned here);
+    terraform destroy removes them, and they bear no cost, so they are not part
+    of this cost-zero check."""
+    aws_bin = shutil.which("aws")
+    if not aws_bin:
+        print("warning: aws CLI not found; cannot verify teardown — check the AWS console manually.", file=sys.stderr)
+        return True
+
+    result = subprocess.run(
+        [
+            aws_bin, "resourcegroupstaggingapi", "get-resources",
+            "--region", region,
+            "--tag-filters", f"Key=lab,Values={lab_name}",
+            "--query", "ResourceTagMappingList[].ResourceARN",
+            "--output", "text",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(
+            f"warning: could not confirm lab '{lab_name}' is gone (aws CLI error, possibly auth-related):\n"
+            f"  {result.stderr.strip()}\n"
+            f"  Check the AWS console (region {region}) manually before assuming teardown is complete.",
+            file=sys.stderr,
+        )
+        return True  # ambiguous, not positive evidence of failure
+
+    remaining = result.stdout.split()
+    if remaining:
+        print(
+            f"WARNING: {len(remaining)} resource(s) tagged lab={lab_name} still exist in {region} after destroy:",
+            file=sys.stderr,
+        )
+        for arn in remaining:
+            print(f"    {arn}", file=sys.stderr)
+        return False
+
+    print(f"  verified: no resources tagged lab='{lab_name}' remain in {region} — no leftover AWS cost from this lab.")
+    return True
+
+
 def _run_self(subcommand: list[str]) -> int:
     """Invoke this same forge CLI as a subprocess (reuse a full command, e.g. the
     guardrail gate, without refactoring it into a callable that fakes argparse).
@@ -152,7 +202,10 @@ def cmd_deploy(args: argparse.Namespace) -> int:
             )
             return 1
 
-    print(f"\n=== DEPLOY {lab_name} — this creates BILLABLE Azure resources ===")
+    billable = {"azure": "Azure", "aws": "AWS", "proxmox": "Proxmox (on-prem)"}.get(
+        spec["lab"].get("provider", ""), spec["lab"].get("provider", "")
+    )
+    print(f"\n=== DEPLOY {lab_name} — this creates BILLABLE {billable} resources ===")
     print(f"    running {deploy_sh.relative_to(REPO_ROOT) if deploy_sh.is_relative_to(REPO_ROOT) else deploy_sh}")
     extra = ["--sizes-only"] if args.sizes_only else []
     return subprocess.run(["bash", str(deploy_sh), *extra]).returncode
@@ -217,7 +270,11 @@ def cmd_destroy(args: argparse.Namespace) -> int:
     if not spec_path.exists():
         print(f"error: spec file not found: {spec_path}", file=sys.stderr)
         return 2
-    lab_name = load_yaml(spec_path)["lab"]["name"]
+    spec = load_yaml(spec_path)
+    lab_name = spec["lab"]["name"]
+    # AWS teardown verification is region-scoped (tagging API). Honour a PF_REGION
+    # override the same way deploy-aws.sh does, else the spec's region.
+    aws_region = os.environ.get("PF_REGION") or os.environ.get("AWS_DEFAULT_REGION") or spec["lab"].get("region", "")
 
     lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
     tf_root = lab_dir / "terraform"
@@ -270,6 +327,9 @@ def cmd_destroy(args: argparse.Namespace) -> int:
 
         if provider == "azure":
             if not verify_azure_teardown(lab_name):
+                overall_ok = False
+        elif provider == "aws":
+            if not verify_aws_teardown(lab_name, aws_region):
                 overall_ok = False
         else:
             print(f"  note: no post-destroy verification implemented for provider '{provider}' yet.")
