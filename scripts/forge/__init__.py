@@ -45,12 +45,6 @@ from .catalog import (
     load_vulnerability_schema,
     resolve_defense,
 )
-from .from_exercise import (
-    build_spec,
-    cmd_from_exercise,
-    load_navigator_layer,
-    match_techniques,
-)
 from .core import (
     CONTROL_CIS_RULES_PATH,
     DEFENSE_PROFILES_DIR,
@@ -73,6 +67,12 @@ from .core import (
     load_yaml,
     stable_octet,
     yaml_scalar,
+)
+from .from_exercise import (
+    build_spec,
+    cmd_from_exercise,
+    load_navigator_layer,
+    match_techniques,
 )
 from .lifecycle import (
     clean_snapshot_name,

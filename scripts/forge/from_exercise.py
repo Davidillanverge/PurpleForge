@@ -119,7 +119,6 @@ def match_techniques(
 
     exact_only suppresses the parent<->sub roll-up, matching verbatim ids only.
     """
-    layer_set = set(layer_ids)
     index_keys = set(index)
     selected: dict[str, dict] = {}
     matched_layer: set[str] = set()
