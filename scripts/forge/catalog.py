@@ -65,6 +65,18 @@ def load_hardening_baseline(baseline_id: str) -> dict:
     return load_yaml(HARDENING_DIR / f"{baseline_id}.yml")
 
 
+def build_technique_index(catalog: dict[str, dict]) -> dict[str, list[str]]:
+    """Reverse index ATT&CK-technique-id -> sorted list of catalog vuln ids that
+    carry it in attack.mitre_attack. Computed from the loaded catalog (never a
+    hand-maintained file), so adding a vuln extends the index for free. Used by
+    from_exercise to pick the vulns that reproduce a BAS exercise's techniques."""
+    index: dict[str, set[str]] = {}
+    for vid, entry in catalog.items():
+        for tech in entry.get("attack", {}).get("mitre_attack", []):
+            index.setdefault(tech, set()).add(vid)
+    return {tech: sorted(vids) for tech, vids in sorted(index.items())}
+
+
 def load_control_cis_rules() -> dict:
     if not CONTROL_CIS_RULES_PATH.exists():
         return {}

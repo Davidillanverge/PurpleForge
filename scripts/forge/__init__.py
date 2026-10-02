@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 from .catalog import (
+    build_technique_index,
     load_control_cis_rules,
     load_defense_profile,
     load_hardening_baseline,
@@ -43,6 +44,12 @@ from .catalog import (
     load_vuln_catalog,
     load_vulnerability_schema,
     resolve_defense,
+)
+from .from_exercise import (
+    build_spec,
+    cmd_from_exercise,
+    load_navigator_layer,
+    match_techniques,
 )
 from .core import (
     CONTROL_CIS_RULES_PATH,
@@ -557,6 +564,37 @@ def main() -> int:
     p_guardrail.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_guardrail.set_defaults(func=cmd_guardrail)
 
+    p_from_exercise = sub.add_parser(
+        "from-exercise",
+        help="Author specs/<lab>.yml from a BAS exercise's ATT&CK Navigator layer: select the catalog vulns that reproduce its techniques and emit a spec whose intentional gaps are provably those techniques (then run lab-spec/generate as usual).",
+    )
+    p_from_exercise.add_argument("layer", help="Path to an ATT&CK Navigator layer JSON (from bas-purple-team-exercise)")
+    p_from_exercise.add_argument("--out", help="Output spec path (default: specs/<lab.name>.yml)")
+    p_from_exercise.add_argument("--name", help="Lab name (default: derived from the layer's 'name', else 'exercise-lab')")
+    p_from_exercise.add_argument("--theme", default="corporate", help="catalog/themes/<theme> (default: corporate)")
+    p_from_exercise.add_argument("--provider", default="azure", choices=["aws", "azure", "proxmox"], help="default: azure")
+    p_from_exercise.add_argument("--region", default="eastus", help="default: eastus")
+    p_from_exercise.add_argument("--domain", default="corp.local", help="single forest domain FQDN (default: corp.local)")
+    p_from_exercise.add_argument("--users", type=int, default=25, help="population size (default: 25)")
+    p_from_exercise.add_argument("--seed", type=int, default=1337, help="population seed (default: 1337)")
+    p_from_exercise.add_argument(
+        "--density", default="realistic", choices=["sparse", "realistic", "messy"], help="default: realistic"
+    )
+    p_from_exercise.add_argument("--budget", type=float, default=30, help="budget_alert_usd (default: 30)")
+    p_from_exercise.add_argument(
+        "--auto-shutdown", default="20:00 Europe/Madrid", help="auto_shutdown (default: '20:00 Europe/Madrid')"
+    )
+    p_from_exercise.add_argument(
+        "--chain", default="independent", choices=["independent", "ctf"], help="attack_chain.mode (default: independent)"
+    )
+    p_from_exercise.add_argument(
+        "--exact-only",
+        action="store_true",
+        help="Match techniques verbatim only; suppress parent<->sub-technique roll-up",
+    )
+    p_from_exercise.add_argument("--force", action="store_true", help="Overwrite the output spec if it already exists")
+    p_from_exercise.set_defaults(func=cmd_from_exercise)
+
     args = parser.parse_args()
     return args.func(args)
 
@@ -568,8 +606,10 @@ __all__ = [
     "WINDOWS_ADMIN_USERNAME", "WINRM_AUTOMATION_USERNAME", "SpecError", "deep_merge", "generate_password",
     "load_schema", "load_yaml", "stable_octet", "yaml_scalar",
     # catalog
-    "load_control_cis_rules", "load_defense_profile", "load_hardening_baseline", "load_theme", "load_theme_schema",
-    "load_vuln_catalog", "load_vulnerability_schema", "resolve_defense",
+    "build_technique_index", "load_control_cis_rules", "load_defense_profile", "load_hardening_baseline",
+    "load_theme", "load_theme_schema", "load_vuln_catalog", "load_vulnerability_schema", "resolve_defense",
+    # from_exercise
+    "build_spec", "cmd_from_exercise", "load_navigator_layer", "match_techniques",
     # planning
     "BASELINE_LEVELS", "BROKEN_UPSTREAM_CIS_RULES", "ENUM_HARDENING_TOGGLES", "FIXED_HARDENING_TOGGLES",
     "HOURLY_RATE_USD", "IANA_TO_WINDOWS_TIMEZONE", "VULN_WEAK_PASSWORD", "VULN_WEAK_PASSWORD_3",
