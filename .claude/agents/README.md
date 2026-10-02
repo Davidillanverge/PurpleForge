@@ -70,6 +70,10 @@ Ver `mcp/README.md`.
 
 ## Aún sin construir
 
-Ingeniería de detección (SIEM + telemetría + Sigma) e `infra-aws` (hoy Azure +
-Proxmox). El harness cubre PREVENT/RESPOND; la validación NO es una matriz de
-detección.
+Ingeniería de detección (SIEM + telemetría + Sigma). El harness cubre
+PREVENT/RESPOND; la validación NO es una matriz de detección.
+
+`infra-aws` existe a nivel de render + `terraform plan` + scripts de
+deploy/teardown/reset, pero aún NO se ha ejercitado contra una cuenta AWS real
+(mismo estado que `verify.yml`) — trátalo con la misma cautela hasta el primer
+despliegue en vivo.

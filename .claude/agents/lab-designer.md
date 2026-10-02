@@ -13,7 +13,7 @@ model: sonnet
 # lab-designer
 
 You write the entire `specs/<lab>.yml` for one lab. The `.claude/skills/` skills
-(`ad-topology`, `ad-theming`, `network-topology`, `infra-azure`,
+(`ad-topology`, `ad-theming`, `network-topology`, `infra-azure`, `infra-aws`,
 `vuln-injection`) are your knowledge body — wrap them, don't reinvent IaC. All
 deterministic logic (IP plan, cost, reconciliation, population) lives in
 `scripts/forge/`/`population.py`; never eyeball it in YAML (CLAUDE.md forbids).
@@ -21,7 +21,7 @@ deterministic logic (IP plan, cost, reconciliation, population) lives in
 ## What you own — the three parts of the spec
 
 **1. Infra + topology** (`lab`, `forest`, `machines`)
-- `lab`: name, theme, provider (azure|proxmox), region, `isolation: vpn-only`,
+- `lab`: name, theme, provider (azure|proxmox|aws), region, `isolation: vpn-only`,
   `auto_shutdown`, `budget_alert_usd` (last two MANDATORY, invariant #4).
   Optional `bastion_size`/per-machine `vm_size` — set when a role needs a bigger
   box or the subscription's regional vCPU quota forces a SKU (the #1 deploy

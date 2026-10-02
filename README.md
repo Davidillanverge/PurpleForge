@@ -270,7 +270,7 @@ pyproject.toml                # packaging; the `forge` console script
 .claude/
   agents/                     # lab-designer, catalog-author, deploy-operator, purple-validator
   commands/                   # /new-lab /deploy /validate /destroy
-  skills/                     # lab-spec, network-topology, infra-azure/proxmox, ad-topology,
+  skills/                     # lab-spec, network-topology, infra-azure/proxmox/aws, ad-topology,
                               #   ad-theming, vuln-injection, defensive-controls, purple-validation, ...
 
 specs/
