@@ -150,6 +150,28 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
         return True  # ambiguous, not positive evidence of failure
 
     remaining = result.stdout.split()
+
+    # Terminated (and shutting-down) EC2 instances keep their tags and linger in
+    # the tagging API for up to ~1h after terminate before AWS purges them, but
+    # they bear NO cost — a stopped/running one would. Drop them so a successful
+    # teardown doesn't report a false "still exist". One describe-instances call
+    # resolves every instance ARN's state.
+    inst_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":instance/" in arn]
+    live_terminated = set()
+    if inst_ids:
+        q = subprocess.run(
+            [
+                aws_bin, "ec2", "describe-instances", "--region", region,
+                "--instance-ids", *inst_ids,
+                "--filters", "Name=instance-state-name,Values=terminated,shutting-down",
+                "--query", "Reservations[].Instances[].InstanceId", "--output", "text",
+            ],
+            capture_output=True, text=True,
+        )
+        if q.returncode == 0:
+            live_terminated = set(q.stdout.split())
+
+    remaining = [arn for arn in remaining if arn.rsplit("/", 1)[-1] not in live_terminated]
     if remaining:
         print(
             f"WARNING: {len(remaining)} resource(s) tagged lab={lab_name} still exist in {region} after destroy:",
@@ -159,8 +181,44 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
             print(f"    {arn}", file=sys.stderr)
         return False
 
-    print(f"  verified: no resources tagged lab='{lab_name}' remain in {region} — no leftover AWS cost from this lab.")
+    print(f"  verified: no billable resources tagged lab='{lab_name}' remain in {region} — no leftover AWS cost from this lab.")
     return True
+
+
+def sweep_aws_clean_images(lab_name: str, region: str) -> None:
+    """Deregister the clean-state AMIs (and delete their backing EBS snapshots)
+    this lab's deploy.sh created out of band — they are NOT in Terraform state,
+    so `terraform destroy` leaves them. Run as part of `forge destroy` BEFORE
+    verify_aws_teardown, so a destroy of a snapshotted lab verifies clean in one
+    pass (the generated teardown.sh also sweeps, idempotently, as belt-and-braces).
+    Best-effort: a sweep failure is warned, not fatal."""
+    aws_bin = shutil.which("aws")
+    if not aws_bin:
+        return
+    imgs = subprocess.run(
+        [
+            aws_bin, "ec2", "describe-images", "--region", region, "--owners", "self",
+            "--filters", f"Name=tag:lab,Values={lab_name}",
+            "--query", "Images[].ImageId", "--output", "text",
+        ],
+        capture_output=True, text=True,
+    )
+    if imgs.returncode != 0:
+        return
+    for ami in imgs.stdout.split():
+        snaps = subprocess.run(
+            [
+                aws_bin, "ec2", "describe-images", "--region", region, "--image-ids", ami,
+                "--query", "Images[].BlockDeviceMappings[].Ebs.SnapshotId", "--output", "text",
+            ],
+            capture_output=True, text=True,
+        )
+        print(f"  deregister clean-state AMI {ami}")
+        subprocess.run([aws_bin, "ec2", "deregister-image", "--region", region, "--image-id", ami],
+                       capture_output=True, text=True)
+        for snap in (snaps.stdout.split() if snaps.returncode == 0 else []):
+            subprocess.run([aws_bin, "ec2", "delete-snapshot", "--region", region, "--snapshot-id", snap],
+                           capture_output=True, text=True)
 
 
 def _run_self(subcommand: list[str]) -> int:
@@ -329,6 +387,11 @@ def cmd_destroy(args: argparse.Namespace) -> int:
             if not verify_azure_teardown(lab_name):
                 overall_ok = False
         elif provider == "aws":
+            # Sweep the out-of-band clean-state AMIs/snapshots BEFORE verifying,
+            # so a snapshotted lab verifies clean in a single destroy pass
+            # (otherwise verify counts them as leftovers and the teardown.sh
+            # retry loop re-runs a no-op destroy).
+            sweep_aws_clean_images(lab_name, aws_region)
             if not verify_aws_teardown(lab_name, aws_region):
                 overall_ok = False
         else:

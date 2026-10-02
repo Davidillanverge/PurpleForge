@@ -8,9 +8,9 @@ symptom→cause table for the gotchas a real deploy hits. The AWS sibling of
 > (`specs/aws-parity-lab.yml`, eu-west-1: DC + member-server/ADCS + workstation,
 > 4 vulns). `site.yml` completed `failed=0`, the clean-state AMIs were taken, and
 > the vulns were validated over the tunnel (asreproast + dcsync-acl + adcs-esc1 +
-> unquoted-service-path). The first live run surfaced **five generator bugs**,
-> all now fixed in the deploy files and committed — see **Live-deploy bugs
-> found & fixed** below.
+> unquoted-service-path), and it was torn down to a verified cost-zero. The live
+> run + teardown surfaced **six generator bugs**, all now fixed in the deploy
+> files and committed — see **Live-deploy bugs found & fixed** below.
 
 The deploy is deterministic and runs itself: `forge deploy specs/<lab>.yml`
 (guardrail gate → the generated `deploy.sh`). The steps below are what that
@@ -101,6 +101,7 @@ Same "the first live deploy finds the real bugs" pattern as the Proxmox path.
 | 3 | `member_server` DNS task → `No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet'` | Primary NIC hardcoded as `domain_adapter: "Ethernet"`, but EC2 Windows AMIs (ENA driver) name it **`Ethernet 3`**. | `templates/ansible/inventory/hosts.yml.j2` + `render.py` — provider-aware: `Ethernet 3` on AWS. | `8d00982` |
 | 4 | Clean snapshot creates a doubled-name AMI `aws-parity-lab-aws-parity-lab-bastion-clean` | `snapshot_clean` iterated every tagged instance incl. the bastion (whose Name tag already carries the lab prefix); the bastion is also disposable infra `reset` never restores. | `templates/deploy-aws.sh.j2` + `templates/reset-aws.sh.j2` — skip the bastion. | `8b25af5` |
 | 5 | `adcs-esc1` enroll fails `ept_s_not_registered` (CA RPC unreachable) — the ESC1 template is published but not exploitable over the tunnel | A member server's Windows firewall blocks inbound RPC (EPM 135 + dynamic DCOM) + SMB 445 by default (a DC opens them at promotion; a member server does not), so the CA enrollment interface is unreachable from the bastion subnet — the only path in (invariant #1). | `templates/ansible/vulns/adcs-esc1.yml` opens 135/445/dynamic to the lab supernet (`pf_supernet`, exposed via `render.py` + `hosts.yml.j2`). | `8b25af5` |
+| 6 | Teardown reports a false `FAIL: ... N resource(s) tagged lab=... still exist` (then `teardown.sh` retries a no-op destroy 3×) although the lab is actually cost-zero | `verify_aws_teardown` ran inside `forge destroy`, **before** `teardown.sh`'s AMI sweep, and counted (a) the out-of-band clean-state AMIs/snapshots not yet swept and (b) just-terminated instances, which keep their tags and linger in the tagging API ~1h but bear no cost. | `lifecycle.py`: `forge destroy` now sweeps the clean-state AMIs/snapshots (`sweep_aws_clean_images`) before verifying, and `verify_aws_teardown` drops terminated/shutting-down instances. | `<this commit>` |
 
 Not a lab defect (environmental, documented for completeness): **adcs-esc1's final
 PKINIT-to-DA** is gated by `KB5014754` strong certificate binding on a patched
