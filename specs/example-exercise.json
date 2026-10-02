@@ -1,0 +1,16 @@
+{
+  "name": "example-exercise",
+  "versions": { "attack": "14", "navigator": "4.9.0", "layer": "4.5" },
+  "domain": "enterprise-attack",
+  "description": "Example ATT&CK Navigator layer for `forge from-exercise`. A hand-written stand-in for the output of a BAS exercise (bas-purple-team-exercise). Mixes techniques the PurpleForge catalog can build (they become the lab's intentional gaps) with runtime-only TTPs it cannot (reported as uncovered, never silently dropped). Only `techniqueID` matters; colors/scores/comments are ignored.",
+  "techniques": [
+    { "techniqueID": "T1566.001", "comment": "Initial access: spearphishing attachment — runtime TTP, no lab gap to build (expect: uncovered)" },
+    { "techniqueID": "T1059.001", "comment": "Execution: PowerShell — runtime TTP (expect: uncovered)" },
+    { "techniqueID": "T1558.003", "comment": "Kerberoasting — maps to kerberoasting / unconstrained-delegation" },
+    { "techniqueID": "T1552.006", "comment": "GPP cpassword in SYSVOL — maps to gpp-cpassword" },
+    { "techniqueID": "T1649",     "comment": "Steal/forge AD CS certificate — maps to adcs-esc1 / esc4-template-acl (forces services:[adcs])" },
+    { "techniqueID": "T1484.001", "comment": "GPO modification — maps to writable-gpo" },
+    { "techniqueID": "T1003.006", "comment": "DCSync — maps to dcsync-acl" },
+    { "techniqueID": "T1071.001", "comment": "C2 over HTTPS — runtime TTP (expect: uncovered)" }
+  ]
+}
