@@ -1,0 +1,96 @@
+---
+# Vuln inject task-file: iis-webdav-weak-creds (T1190, T1505.003, T1078)
+# service-provisioning.yml installed IIS SECURELY (no WebDAV) on this host
+# ({{ inventory_hostname }}, services: [iis]). This task reopens the gap: install
+# WebDAV authoring, enable Basic auth, create a local account with a WEAK password,
+# and an authoring rule granting that user write on the web root -> an attacker
+# authenticates with the weak creds and PUTs an .aspx webshell. Anonymous WebDAV
+# authoring is blocked by IIS (always 401), so this is the realistic weak-creds
+# variant. Idempotent: win_user / Set/Add-WebConfigurationProperty converge.
+- name: "iis-webdav-weak-creds | install the WebDAV publishing role"
+  ansible.windows.win_feature:
+    name: Web-DAV-Publishing
+    state: present
+    include_management_tools: true
+  register: webdav_feature
+
+- name: "iis-webdav-weak-creds | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: webdav_feature.reboot_required | default(false)
+
+- name: "iis-webdav-weak-creds | unlock the config sections (locked at apphost by default)"
+  ansible.windows.win_shell: >-
+    & "$env:windir\system32\inetsrv\appcmd.exe" unlock config /section:system.webServer/webdav/authoring;
+    & "$env:windir\system32\inetsrv\appcmd.exe" unlock config /section:system.webServer/webdav/authoringRules;
+    & "$env:windir\system32\inetsrv\appcmd.exe" unlock config /section:system.webServer/security/authentication/basicAuthentication
+  changed_when: false
+  # A fresh Web-DAV-Publishing install locks the webdav sections
+  # (overrideModeDefault="Deny") at applicationHost.config, and basicAuthentication
+  # is locked by default too — a site-level set against them fails with "This
+  # configuration section cannot be used at this path" until unlocked. appcmd
+  # unlock is idempotent.
+
+- name: "iis-webdav-weak-creds | create the local WebDAV account with a WEAK password"
+  ansible.windows.win_user:
+    name: "{{ vuln_webdav_user }}"
+    password: "{{ vuln_webdav_password }}"
+    password_never_expires: true
+    state: present
+    groups: []
+
+- name: "iis-webdav-weak-creds | enable Basic authentication on the site"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    Set-WebConfigurationProperty -PSPath 'IIS:\Sites\Default Web Site'
+    -Filter 'system.webServer/security/authentication/basicAuthentication' -Name enabled -Value $true
+  changed_when: false
+
+- name: "iis-webdav-weak-creds | enable WebDAV authoring on the Default Web Site"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    Set-WebConfigurationProperty -PSPath 'IIS:\Sites\Default Web Site'
+    -Filter 'system.webServer/webdav/authoring' -Name enabled -Value $true
+  changed_when: false
+
+- name: "iis-webdav-weak-creds | ensure the HTTP PUT verb is not denied by request filtering"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    $p = 'IIS:\Sites\Default Web Site';
+    $f = 'system.webServer/security/requestFiltering/verbs';
+    if (Get-WebConfiguration -PSPath $p -Filter "$f/add[@verb='PUT']") {
+    Remove-WebConfigurationProperty -PSPath $p -Filter $f -Name '.' -AtElement @{verb='PUT'} }
+  changed_when: false
+
+- name: "iis-webdav-weak-creds | author rule: {{ vuln_webdav_user }} read/write/source on wwwroot"
+  ansible.windows.win_shell: >-
+    & "$env:windir\system32\inetsrv\appcmd.exe" set config "Default Web Site"
+    /section:system.webServer/webdav/authoringRules
+    /+"[users='{{ vuln_webdav_user }}',path='*',access='Read, Write, Source']"
+    /commit:apphost
+  register: webdav_rule
+  changed_when: "webdav_rule.rc == 0"
+  failed_when: webdav_rule.rc != 0 and 'cannot add duplicate' not in (webdav_rule.stdout | lower)
+  # idempotent: appcmd returns "cannot add duplicate collection entry" once the
+  # rule exists — treated as success.
+
+- name: "iis-webdav-weak-creds | grant the WebDAV account NTFS write on the web root"
+  ansible.windows.win_acl:
+    path: C:\inetpub\wwwroot
+    user: "{{ vuln_webdav_user }}"
+    rights: Modify
+    type: allow
+    state: present
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+
+- name: "iis-webdav-weak-creds | restart IIS so WebDAV + Basic auth load"
+  ansible.windows.win_shell: iisreset /restart
+  changed_when: true
+
+- name: "iis-webdav-weak-creds | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      IIS WebDAV weak-creds gap live on {{ inventory_hostname }}: WebDAV authoring
+      on, Basic auth on, local account {{ vuln_webdav_user }} with a weak password
+      granted write to wwwroot -> authenticate and PUT an .aspx webshell, then GET
+      it for RCE as the app pool identity.

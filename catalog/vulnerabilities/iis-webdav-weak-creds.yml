@@ -1,0 +1,35 @@
+id: iis-webdav-weak-creds
+name: "WebDAV en IIS con autoría por credenciales débiles (subida de webshell)"
+severity: critical
+attack:
+  mitre_attack: [T1190, T1505.003, T1078]
+  requires_services: [iis]
+  intended_path: >
+    service-provisioning instaló IIS de forma SEGURA (sin WebDAV). Esta inyección
+    reabre el gap: instala WebDAV, habilita la autoría, activa autenticación
+    Basic y crea una cuenta local con contraseña DÉBIL, con una regla de autoría
+    que le concede escritura sobre el web root. Un atacante adivina/fuerza la
+    credencial débil, autentica por Basic y sube (PUT) un webshell .aspx por
+    WebDAV, luego lo solicita por HTTP -> el worker de IIS lo ejecuta con la
+    identidad del app pool, dando ejecución remota de código.
+    NOTA: la autoría WebDAV ANÓNIMA no es viable en IIS stock (devuelve 401
+    independientemente del ACL), por eso el gap realista es WebDAV + credenciales
+    débiles, el hallazgo WebDAV clásico en pentest.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/iis-webdav-weak-creds.yml
+  primitive: "WebDAV autoría + Basic auth + cuenta local con password débil con regla de autoría de escritura sobre wwwroot"
+  reuses: "El servidor IIS base lo instala service-provisioning.yml de forma segura (sin WebDAV); esta inyección instala y abre WebDAV con una credencial débil"
+  params:
+    user: "{{ vuln_webdav_user }}"
+    password: "{{ vuln_webdav_password }}"
+neutralized_by:
+  - hardening.controls.iis_hardening   # pf_controls toggle: remove WebDAV + block the PUT verb on IIS hosts
+mitigate:
+  summary: "Desinstalar el rol WebDAV salvo necesidad explícita; si se requiere, exigir credenciales fuertes y únicas (no cuentas locales débiles), deshabilitar el método PUT donde no se use, restringir por ACL las carpetas de autoría y separarlas de directorios ejecutables, y servir solo sobre HTTPS; ejecutar el app pool con mínimo privilegio."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "curl -T shell.aspx http://<ip>/pf_webdav_probe.txt --user <user>:<password> devuelve 201/200 (escritura autenticada con credencial débil) y luego GET http://<ip>/pf_webdav_probe.txt la devuelve (con un .aspx = RCE)"
+chain:
+  target_shape: none

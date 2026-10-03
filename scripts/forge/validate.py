@@ -374,12 +374,12 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                         exploitable="NO",
                         evidence="anonymous LDAP bind/query returned nothing — anonymous ops appear blocked (gap not applied or neutralized).",
                     )
-        elif vid == "iis-webdav-anonymous-write":
-            # PUT a harmless text probe over the tunnel, then GET it back. A 201/200
-            # PUT whose marker reads back proves BOTH applied (WebDAV + anonymous
-            # authoring rule present) AND exploitable (unauthenticated write works).
-            # The probe is plain text, never executable code, and runs after the
-            # clean snapshot — `forge reset` restores the pristine state.
+        elif vid == "iis-webdav-weak-creds":
+            # PUT a harmless text probe over the tunnel, authenticated with the weak
+            # creds the inject created, then GET it back (anonymous read). A 201/200
+            # PUT whose marker reads back proves BOTH applied (WebDAV + authoring
+            # rule) AND exploitable (weak-creds write works). The probe is plain
+            # text, never a webshell; runs after the clean snapshot.
             target_ip = host.get("ip")
             if not target_ip:
                 row.update(
@@ -388,7 +388,7 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                     evidence=f"no IP for host {r['run_on']!r} in the manifest.",
                 )
             else:
-                ok, evidence = _webdav_put_get(target_ip)
+                ok, evidence = _webdav_put_get(target_ip, r.get("account"), r.get("password"))
                 if ok is True:
                     row.update(applied="YES", exploitable="YES", evidence=evidence)
                 elif ok is False:
@@ -518,18 +518,23 @@ WEBDAV_PROBE_NAME = "pf_webdav_probe.txt"
 WEBDAV_PROBE_MARKER = "PF-WEBDAV-PROBE"
 
 
-def _webdav_put_get(host_ip: str) -> tuple[bool | None, str]:
-    """Confirm anonymous WebDAV write on IIS: PUT a plain-text probe, then GET it
-    back. Returns (True, …) if the write took and reads back, (False, …) if the
-    server rejected it (anonymous write blocked / WebDAV absent — gap not applied
-    or neutralized), or (None, …) if the check couldn't run (no curl/unreachable)."""
+def _webdav_put_get(host_ip: str, user: str | None, password: str | None) -> tuple[bool | None, str]:
+    """Confirm WebDAV write on IIS using the weak creds: PUT a plain-text probe
+    authenticated as user:password, then GET it back (anonymous read). Returns
+    (True, …) if the authenticated write took and reads back, (False, …) if the
+    server rejected it (WebDAV absent / creds wrong / iis_hardening neutralized),
+    or (None, …) if the check couldn't run. Anonymous WebDAV authoring is blocked
+    by IIS, so this uses the weak account the inject created."""
     curl = shutil.which("curl")
     if not curl:
         return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    if not user or not password:
+        return None, "no WebDAV user/password in the manifest — can't auto-auth; command left for you below."
     url = f"http://{host_ip}/{WEBDAV_PROBE_NAME}"
     try:
         put = subprocess.run(
-            [curl, "-s", "-m", "15", "-o", "/dev/null", "-w", "%{http_code}", "-X", "PUT", "--data", WEBDAV_PROBE_MARKER, url],
+            [curl, "-s", "-m", "15", "-o", "/dev/null", "-w", "%{http_code}", "--user", f"{user}:{password}",
+             "-X", "PUT", "--data", WEBDAV_PROBE_MARKER, url],
             capture_output=True,
             text=True,
             timeout=25,
@@ -538,19 +543,14 @@ def _webdav_put_get(host_ip: str) -> tuple[bool | None, str]:
         return None, f"PUT to {url} did not complete (timeout/unreachable) — retry the command below."
     code = (put.stdout or "").strip()
     if code not in ("200", "201", "204"):
-        return False, f"anonymous PUT to {url} returned HTTP {code or '(none)'} — write refused (WebDAV absent, or iis_hardening neutralized it)."
+        return False, f"authenticated PUT ({user}) to {url} returned HTTP {code or '(none)'} — write refused (WebDAV absent, creds wrong, or iis_hardening neutralized it)."
     try:
-        get = subprocess.run(
-            [curl, "-s", "-m", "15", url],
-            capture_output=True,
-            text=True,
-            timeout=25,
-        )
+        get = subprocess.run([curl, "-s", "-m", "15", url], capture_output=True, text=True, timeout=25)
     except (subprocess.TimeoutExpired, OSError):
-        return True, f"anonymous PUT to {url} returned HTTP {code} (write accepted); GET-back did not complete but the write itself proves the gap."
+        return True, f"authenticated PUT ({user}) to {url} returned HTTP {code} (write accepted); GET-back did not complete but the write proves the gap."
     if WEBDAV_PROBE_MARKER in (get.stdout or ""):
-        return True, f"anonymous PUT returned HTTP {code} and the probe reads back at {url} — unauthenticated WebDAV write confirmed."
-    return True, f"anonymous PUT returned HTTP {code} (write accepted); GET-back did not echo the marker — write still confirms the gap."
+        return True, f"weak-creds PUT ({user}) returned HTTP {code} and the probe reads back at {url} — authenticated WebDAV write confirmed (a .aspx would be RCE)."
+    return True, f"weak-creds PUT ({user}) returned HTTP {code} (write accepted); GET-back did not echo the marker — write still confirms the gap."
 
 
 WEBAPP_UPLOAD_PROBE_NAME = "pf_upload_probe.txt"
@@ -846,11 +846,12 @@ def _live_command(
         return f"nxc mssql {target_ip or '<host-ip>'} -u sa -p '{password or '<sa-pass>'}' --local-auth -x whoami"
     if vid == "ldap-anonymous-bind":
         return f'nxc ldap {dc_ip} -u "" -p "" --query "(objectClass=domain)" ""  # anonymous bind must return objects'
-    if vid == "iis-webdav-anonymous-write":
+    if vid == "iis-webdav-weak-creds":
         ip = target_ip or "<host-ip>"
+        up = f"{account or 'webdav'}:{password or '<weak-pass>'}"
         return (
-            f"curl -s -X PUT --data {WEBDAV_PROBE_MARKER} http://{ip}/{WEBDAV_PROBE_NAME} "
-            f"&& curl -s http://{ip}/{WEBDAV_PROBE_NAME}  # 201 then the marker = anonymous write works"
+            f"curl -s -X PUT --user {up} --data {WEBDAV_PROBE_MARKER} http://{ip}/{WEBDAV_PROBE_NAME} "
+            f"&& curl -s http://{ip}/{WEBDAV_PROBE_NAME}  # 201 then the marker = weak-creds WebDAV write works"
         )
     if vid == "webapp-unrestricted-upload":
         ip = target_ip or "<host-ip>"

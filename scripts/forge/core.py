@@ -64,6 +64,7 @@ VULN_CREDENTIAL_VARS = {
     "mssql-weak-sa": (None, "vuln_mssql_sa_password"),  # sa is a fixed SQL login, not a cast AD account
     "sysvol-script-creds": ("vuln_sysvol_account", "vuln_sysvol_password"),
     "autologon-credentials": ("vuln_autologon_account", "vuln_autologon_password"),
+    "iis-webdav-weak-creds": ("vuln_webdav_user", "vuln_webdav_password"),
 }
 
 

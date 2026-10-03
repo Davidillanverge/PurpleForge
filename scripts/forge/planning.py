@@ -884,6 +884,13 @@ def build_vuln_vars(
             "vuln_autologon_account": cast_name or "kiosk-user",
             "vuln_autologon_password": forced_password or generate_password(rng=rng),
         }
+    if vid == "iis-webdav-weak-creds":
+        # A deliberately WEAK, known password (the vuln is that it's guessable) —
+        # VULN_WEAK_PASSWORD is deterministic, so validate can reuse it to auth.
+        return {
+            "vuln_webdav_user": "webdav",
+            "vuln_webdav_password": forced_password or VULN_WEAK_PASSWORD,
+        }
     # machine-account-quota is domain-level (target_shape: none) — no per-vuln
     # account vars; the playbook only reads domain_username/domain_password.
     # adcs-esc1 and any future service-scoped vuln need no extra vars beyond the

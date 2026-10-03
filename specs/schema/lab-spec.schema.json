@@ -286,7 +286,7 @@
                 },
                 "iis_hardening": {
                   "type": "boolean",
-                  "description": "Application-layer IIS control (PurpleForge pf_controls, not a CIS/STIG rule): removes the WebDAV publishing role and blocks the HTTP PUT verb on hosts running IIS. Neutralizes catalog/vulnerabilities/iis-webdav-anonymous-write.yml; forced off by reconciliation when that vuln is selected. No-op on labs without an IIS host."
+                  "description": "Application-layer IIS control (PurpleForge pf_controls, not a CIS/STIG rule): removes the WebDAV publishing role and blocks the HTTP PUT verb on hosts running IIS. Neutralizes catalog/vulnerabilities/iis-webdav-weak-creds.yml; forced off by reconciliation when that vuln is selected. No-op on labs without an IIS host."
                 }
               }
             },

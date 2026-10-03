@@ -19,7 +19,7 @@ inject:
   reuses: "El servidor IIS base (DefaultAppPool como ApplicationPoolIdentity) lo instala service-provisioning.yml; esta inyección solo eleva la identidad del app pool, misma relación base-segura -> gap que el resto de vulns de servicio"
   params: {}
 # NOTE: neutralized by the SAME real pf_controls iis_hardening toggle as
-# iis-webdav-anonymous-write — iis_hardening also resets the DefaultAppPool to
+# iis-webdav-weak-creds — iis_hardening also resets the DefaultAppPool to
 # ApplicationPoolIdentity. When either IIS vuln is selected the reconciliation
 # forces iis_hardening off (on_conflict:exclude-control) so the gap stays open,
 # while a lab WITHOUT an IIS vuln gets a genuinely hardened web box.

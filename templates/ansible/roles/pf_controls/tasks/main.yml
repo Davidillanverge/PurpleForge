@@ -200,12 +200,12 @@
     - inventory_hostname in pf_controls_mssql_hosts
 
 # iis_hardening: re-secure IIS web servers (remove WebDAV publishing + block the
-# PUT verb) so a lab WITHOUT iis-webdav-anonymous-write gets a genuinely hardened
+# PUT verb) so a lab WITHOUT iis-webdav-weak-creds gets a genuinely hardened
 # web box. IIS web-server hardening is outside the Windows-OS surface
 # ansible-lockdown covers, so this is a real pf_controls toggle (not a CIS/STIG
 # rule) — same shape as mssql_hardening. Gated on hosts that actually run IIS
 # (pf_controls_iis_hosts is empty otherwise, so it no-ops). When
-# iis-webdav-anonymous-write is selected, the reconciliation forces this off
+# iis-webdav-weak-creds is selected, the reconciliation forces this off
 # (on_conflict:exclude-control) so the gap stays open.
 - name: "pf_controls | iis_hardening | remove WebDAV publishing role"
   ansible.windows.win_feature:
