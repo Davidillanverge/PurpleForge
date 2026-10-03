@@ -5,7 +5,7 @@
 # read-only. This task is the actual gap — install the WebDAV role, enable it on
 # the Default Web Site, and author a rule granting anonymous WRITE to wwwroot so
 # an unauthenticated PUT can drop an .aspx webshell. Idempotent: win_feature and
-# the win_iis_webconfigproperty / appcmd settings converge on re-runs.
+# the Set-WebConfigurationProperty / appcmd settings converge on re-runs.
 - name: "iis-webdav-anonymous-write | install the WebDAV publishing role"
   ansible.windows.win_feature:
     name: Web-DAV-Publishing
@@ -18,20 +18,22 @@
   when: webdav_feature.reboot_required | default(false)
 
 - name: "iis-webdav-anonymous-write | enable WebDAV on the Default Web Site"
-  community.windows.win_iis_webconfigproperty:
-    path: "IIS:\\Sites\\Default Web Site"
-    filter: system.webServer/webdav/authoring
-    name: enabled
-    value: "true"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    Set-WebConfigurationProperty -PSPath 'IIS:\Sites\Default Web Site'
+    -Filter 'system.webServer/webdav/authoring' -Name enabled -Value $true
+  changed_when: false
 
-- name: "iis-webdav-anonymous-write | allow the HTTP PUT verb through request filtering"
-  community.windows.win_iis_webconfigproperty:
-    path: "IIS:\\Sites\\Default Web Site"
-    filter: system.webServer/security/requestFiltering/verbs
-    name: "."
-    value: ""
-  # Default IIS request filtering does not block PUT, but assert an explicit
-  # empty deny-list so the gap does not depend on image defaults.
+- name: "iis-webdav-anonymous-write | ensure the HTTP PUT verb is not denied by request filtering"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    $p = 'IIS:\Sites\Default Web Site';
+    $f = 'system.webServer/security/requestFiltering/verbs';
+    if (Get-WebConfiguration -PSPath $p -Filter "$f/add[@verb='PUT']") {
+    Remove-WebConfigurationProperty -PSPath $p -Filter $f -Name '.' -AtElement @{verb='PUT'} }
+  changed_when: false
+  # Default IIS request filtering does not block PUT; this removes any explicit
+  # PUT deny (e.g. one left by iis_hardening) so the gap does not depend on it.
 
 - name: "iis-webdav-anonymous-write | author rule: anonymous read/write/source on wwwroot"
   ansible.windows.win_shell: >-
@@ -46,11 +48,11 @@
   # on re-run once the rule exists — treated as success, not a failure.
 
 - name: "iis-webdav-anonymous-write | ensure anonymous authentication stays enabled"
-  community.windows.win_iis_webconfigproperty:
-    path: "IIS:\\Sites\\Default Web Site"
-    filter: system.webServer/security/authentication/anonymousAuthentication
-    name: enabled
-    value: "true"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    Set-WebConfigurationProperty -PSPath 'IIS:\Sites\Default Web Site'
+    -Filter 'system.webServer/security/authentication/anonymousAuthentication' -Name enabled -Value $true
+  changed_when: false
 
 - name: "iis-webdav-anonymous-write | restart IIS so the WebDAV module loads"
   ansible.windows.win_shell: iisreset /restart

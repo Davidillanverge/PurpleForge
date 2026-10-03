@@ -217,11 +217,13 @@
     - inventory_hostname in pf_controls_iis_hosts
 
 - name: "pf_controls | iis_hardening | block the HTTP PUT verb via request filtering"
-  community.windows.win_iis_webconfigproperty:
-    path: "IIS:\\Sites\\Default Web Site"
-    filter: system.webServer/security/requestFiltering/verbs
-    name: "."
-    value: "+[verb='PUT',allowed='false']"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    $p = 'IIS:\Sites\Default Web Site';
+    $f = 'system.webServer/security/requestFiltering/verbs';
+    if (-not (Get-WebConfiguration -PSPath $p -Filter "$f/add[@verb='PUT']")) {
+    Add-WebConfigurationProperty -PSPath $p -Filter $f -Name '.' -Value @{verb='PUT';allowed='false'} }
+  changed_when: false
   when:
     - pf_controls_iis_hardening | bool
     - inventory_hostname in pf_controls_iis_hosts

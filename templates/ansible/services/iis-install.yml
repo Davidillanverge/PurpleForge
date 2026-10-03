@@ -38,11 +38,11 @@
   when: iis_feature.reboot_required | default(false)
 
 - name: "iis-install | disable directory browsing on the Default Web Site (secure default)"
-  community.windows.win_iis_webconfigproperty:
-    path: "IIS:\\Sites\\Default Web Site"
-    filter: system.webServer/directoryBrowse
-    name: enabled
-    value: "false"
+  ansible.windows.win_shell: >-
+    Import-Module WebAdministration;
+    Set-WebConfigurationProperty -PSPath 'IIS:\Sites\Default Web Site'
+    -Filter 'system.webServer/directoryBrowse' -Name enabled -Value $false
+  changed_when: false
 
 - name: "iis-install | assert the DefaultAppPool runs as least-priv ApplicationPoolIdentity"
   community.windows.win_iis_webapppool:
