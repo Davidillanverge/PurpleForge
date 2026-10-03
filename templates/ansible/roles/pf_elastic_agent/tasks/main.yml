@@ -73,13 +73,17 @@
   register: pf_ea_status
   changed_when: false
   failed_when: false
-  retries: 10
+  retries: 12
   delay: 15
-  until: pf_ea_status.rc == 0 and ('Healthy' in (pf_ea_status.stdout | default('')) or 'online' in (pf_ea_status.stdout | default('') | lower))
+  # Elastic 9.x prints the state as `status: (HEALTHY) Connected` (uppercase, in
+  # parens) — match case-INSENSITIVELY on 'healthy'/'online' (confirmed live; a
+  # case-sensitive 'Healthy' match was a false-negative even though the agent was
+  # genuinely Healthy + Connected to Fleet).
+  until: pf_ea_status.rc == 0 and ('healthy' in (pf_ea_status.stdout | default('') | lower) or 'online' in (pf_ea_status.stdout | default('') | lower))
 
 - name: "pf_elastic_agent | record state"
   ansible.builtin.debug:
     msg: >-
       Elastic Agent {{ pf_elastic_agent_version }} enrolled to Fleet on
       {{ inventory_hostname }} (serves EDR/Defend + SIEM/winlog per the operator's
-      policy). Health check: {{ 'HEALTHY' if (pf_ea_status.rc | default(1)) == 0 and ('Healthy' in (pf_ea_status.stdout | default('')) or 'online' in (pf_ea_status.stdout | default('') | lower)) else 'NOT-yet-healthy — confirm in Fleet' }}.
+      policy). Health check: {{ 'HEALTHY' if (pf_ea_status.rc | default(1)) == 0 and ('healthy' in (pf_ea_status.stdout | default('') | lower) or 'online' in (pf_ea_status.stdout | default('') | lower)) else 'NOT-yet-healthy — confirm in Fleet' }}.

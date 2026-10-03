@@ -17,17 +17,33 @@
   snapshot — the agents are part of the defended baseline the snapshot captures.
 #}
 ---
+{# Each agent runs in block/rescue so one layer failing (e.g. a WARP MSI error on
+   a host) does not abort the other layers/hosts or the whole deploy — the failure
+   is surfaced with PF-TELEMETRY-FAILED and left for the operator/verify to catch,
+   same fault-isolation as vuln-injection. #}
 {% for h in elastic_agent_hosts %}
 - name: "PurpleForge | telemetry | elastic-agent -> {{ h }}"
   hosts: {{ h }}
   gather_facts: false
-  roles:
-    - pf_elastic_agent
+  tasks:
+    - name: "elastic-agent | provision"
+      block:
+        - ansible.builtin.include_role:
+            name: pf_elastic_agent
+      rescue:
+        - ansible.builtin.debug:
+            msg: "PF-TELEMETRY-FAILED elastic-agent on {{ '{{' }} inventory_hostname {{ '}}' }} — see error above; other layers/hosts continue."
 {% endfor %}
 {% for h in warp_hosts %}
 - name: "PurpleForge | telemetry | warp (cloudflare swg) -> {{ h }}"
   hosts: {{ h }}
   gather_facts: false
-  roles:
-    - pf_warp
+  tasks:
+    - name: "warp | provision"
+      block:
+        - ansible.builtin.include_role:
+            name: pf_warp
+      rescue:
+        - ansible.builtin.debug:
+            msg: "PF-TELEMETRY-FAILED warp on {{ '{{' }} inventory_hostname {{ '}}' }} — see error above; other layers/hosts continue."
 {% endfor %}
