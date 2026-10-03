@@ -1,0 +1,62 @@
+---
+# Vuln inject task-file: webapp-auth-bypass (T1190, T1078)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]). This task deploys a vulnerable
+# ASP.NET login page whose credential filter is built by string concatenation
+# (DataTable.Select), so a tautology in the user field matches the admin row
+# without the password. Self-contained (in-memory table, no DB). Idempotent.
+- name: "webapp-auth-bypass | enable ASP.NET 4.5 (the baseline IIS has only static content)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Asp-Net45
+      - Web-Net-Ext45
+    state: present
+    include_management_tools: true
+  register: aspnet_feature
+
+- name: "webapp-auth-bypass | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: aspnet_feature.reboot_required | default(false)
+
+- name: "webapp-auth-bypass | create the web app directory under wwwroot"
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\app
+    state: directory
+
+- name: "webapp-auth-bypass | deploy the vulnerable login page"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\app\login.aspx
+    content: |
+      <%@ Page Language="C#" %>
+      <%@ Import Namespace="System.Data" %>
+      <script runat="server">
+      // DELIBERATELY VULNERABLE (PurpleForge lab): the credential filter is built
+      // by string concatenation, so a tautology matches the admin row.
+      void Page_Load(object sender, EventArgs e) {
+          string user = Request["user"] ?? "";
+          string pass = Request["pass"] ?? "";
+          DataTable dt = new DataTable();
+          dt.Columns.Add("username"); dt.Columns.Add("password"); dt.Columns.Add("role");
+          dt.Rows.Add("admin", "S3cretApp!", "administrator");
+          dt.Rows.Add("alice", "Summer2024!", "user");
+          string filter = "username = '" + user + "' AND password = '" + pass + "'";
+          try {
+              DataRow[] rows = dt.Select(filter);
+              if (rows.Length > 0) Response.Write("AUTH_OK:" + rows[0]["username"]);
+              else Response.Write("AUTH_FAIL");
+          } catch (Exception ex) { Response.Write("ERR:" + ex.Message); }
+      }
+      </script>
+      <html><body>
+      <form method="get">
+      <input type="text" name="user" /><input type="password" name="pass" />
+      <input type="submit" value="Login" />
+      </form>
+      </body></html>
+
+- name: "webapp-auth-bypass | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Web app auth-bypass gap live on {{ inventory_hostname }}: /app/login.aspx
+      builds its credential filter by concatenation -> user=admin' OR '1'='1
+      logs in as admin without the password.

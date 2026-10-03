@@ -1,0 +1,54 @@
+---
+# Vuln inject task-file: webapp-path-traversal (T1083, T1190)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]). This task deploys a vulnerable
+# ASP.NET page that concatenates the `file` param into a path and streams it with
+# Response.WriteFile — no canonicalization/base-dir confinement, so `../` escapes
+# the app dir. A deterministic canary is planted ONE level up (in wwwroot) so the
+# gap is provable without depending on an OS file's exact contents. Idempotent.
+- name: "webapp-path-traversal | enable ASP.NET 4.5 (the baseline IIS has only static content)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Asp-Net45
+      - Web-Net-Ext45
+    state: present
+    include_management_tools: true
+  register: aspnet_feature
+
+- name: "webapp-path-traversal | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: aspnet_feature.reboot_required | default(false)
+
+- name: "webapp-path-traversal | create the web app directory under wwwroot"
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\app
+    state: directory
+
+- name: "webapp-path-traversal | plant a canary ONE level above the app dir (traversal target)"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\pf_lfi_canary.txt
+    content: "PF-LFI-CANARY\n"
+
+- name: "webapp-path-traversal | deploy the vulnerable download page"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\app\download.aspx
+    content: |
+      <%@ Page Language="C#" %>
+      <script runat="server">
+      // DELIBERATELY VULNERABLE (PurpleForge lab): the file path is built by
+      // concatenation with no canonicalization / base-dir confinement.
+      void Page_Load(object sender, EventArgs e) {
+          string file = Request.QueryString["file"] ?? "";
+          string path = @"C:\inetpub\wwwroot\app\" + file;
+          try { Response.WriteFile(path); }
+          catch (Exception ex) { Response.Write("ERR:" + ex.Message); }
+      }
+      </script>
+
+- name: "webapp-path-traversal | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Web app path-traversal gap live on {{ inventory_hostname }}:
+      /app/download.aspx streams C:\inetpub\wwwroot\app\<file> with no
+      canonicalization -> GET ?file=..\..\..\Windows\win.ini (or the canary) reads
+      arbitrary files as the app pool identity.

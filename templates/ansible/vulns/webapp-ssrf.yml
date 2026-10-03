@@ -1,0 +1,50 @@
+---
+# Vuln inject task-file: webapp-ssrf (T1190)
+# service-provisioning.yml already installed IIS SECURELY on this host
+# ({{ inventory_hostname }}, services: [iis]). This task deploys a vulnerable
+# ASP.NET page that performs a server-side HTTP GET of a user-supplied URL with no
+# destination allowlist, returning the response to the client. The IIS baseline's
+# own health page (http://127.0.0.1/health.html) is a deterministic loopback
+# target proving the SSRF. Idempotent.
+- name: "webapp-ssrf | enable ASP.NET 4.5 (the baseline IIS has only static content)"
+  ansible.windows.win_feature:
+    name:
+      - Web-Asp-Net45
+      - Web-Net-Ext45
+    state: present
+    include_management_tools: true
+  register: aspnet_feature
+
+- name: "webapp-ssrf | reboot if the feature install requires it"
+  ansible.windows.win_reboot:
+  when: aspnet_feature.reboot_required | default(false)
+
+- name: "webapp-ssrf | create the web app directory under wwwroot"
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\app
+    state: directory
+
+- name: "webapp-ssrf | deploy the vulnerable fetch page"
+  ansible.windows.win_copy:
+    dest: C:\inetpub\wwwroot\app\fetch.aspx
+    content: |
+      <%@ Page Language="C#" %>
+      <%@ Import Namespace="System.Net" %>
+      <script runat="server">
+      // DELIBERATELY VULNERABLE (PurpleForge lab): server-side fetch of any
+      // user-supplied URL, no allowlist / no loopback+metadata blocking.
+      void Page_Load(object sender, EventArgs e) {
+          string url = Request.QueryString["url"] ?? "";
+          try {
+              var wc = new WebClient();
+              Response.Write(wc.DownloadString(url));
+          } catch (Exception ex) { Response.Write("ERR:" + ex.Message); }
+      }
+      </script>
+
+- name: "webapp-ssrf | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Web app SSRF gap live on {{ inventory_hostname }}: /app/fetch.aspx fetches
+      any user-supplied URL server-side -> point `url` at loopback / internal
+      hosts / cloud metadata to pivot and exfiltrate.

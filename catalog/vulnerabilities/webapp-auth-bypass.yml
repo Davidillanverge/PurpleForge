@@ -1,0 +1,30 @@
+id: webapp-auth-bypass
+name: "Aplicación web ASP.NET con bypass de autenticación por inyección en el filtro"
+severity: critical
+attack:
+  mitre_attack: [T1190, T1078]
+  requires_services: [iis]
+  intended_path: >
+    Una aplicación web ASP.NET desplegada en IIS (/app/login.aspx) valida las
+    credenciales construyendo un filtro de búsqueda por concatenación de cadenas
+    (DataTable.Select con la entrada del usuario sin parametrizar). Un atacante
+    envía una tautología en el campo de usuario (admin' OR '1'='1) que altera la
+    lógica del filtro y hace coincidir la fila del administrador sin conocer su
+    contraseña -> inicia sesión como admin (bypass de autenticación), punto de
+    partida para tomar la aplicación.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/webapp-auth-bypass.yml
+  primitive: "app ASP.NET /app/login.aspx cuyo DataTable.Select se construye por concatenación (inyectable)"
+  reuses: "El servidor IIS base lo instala service-provisioning.yml de forma segura; esta inyección despliega la aplicación web vulnerable encima (y habilita ASP.NET 4.5, que el baseline no instala)"
+  params: {}
+neutralized_by:
+  - hardening.controls.webapp_auth_parameterization   # etiqueta libre: validar credenciales con comparación parametrizada/escapada (no concatenar en el filtro); es un fallo de código, no hay regla CIS/STIG que lo cubra, así que NO se empareja con hardening.baseline
+mitigate:
+  summary: "Validar credenciales con comparaciones parametrizadas/escapadas (nunca concatenar entrada en un filtro o consulta); usar un proveedor de identidad/hashing de contraseñas probado; aplicar bloqueo por intentos y MFA; no revelar el rol en la respuesta."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "GET http://<ip>/app/login.aspx con user=admin' OR '1'='1 y pass cualquiera devuelve 'AUTH_OK:admin' -> bypass confirmado"
+chain:
+  target_shape: none

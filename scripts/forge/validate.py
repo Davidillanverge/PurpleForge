@@ -431,6 +431,25 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                     row.update(applied="NO", exploitable="NO", evidence=evidence)
                 else:
                     row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
+        elif vid in WEBAPP_GET_CHECKS:
+            # Self-contained GET-based web vulns: one request with a crafted param,
+            # look for the expected marker in the response (read-only, safe).
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                path, params, marker, what = WEBAPP_GET_CHECKS[vid]
+                ok, evidence = _http_get_probe(target_ip, path, params, marker, what)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
         elif vid in ("ftp-anonymous-access", "ftp-write-webroot"):
             # Anonymous FTP checks over the tunnel (ftplib). ftp-anonymous-access:
             # anon login succeeds. ftp-write-webroot: anon STOR + HTTP GET-back.
@@ -642,6 +661,38 @@ def _ftp_webroot_probe(host_ip: str) -> tuple[bool | None, str]:
     return True, "anonymous FTP STOR succeeded; IIS did not serve it back, but the anonymous write confirms the gap."
 
 
+def _http_get_probe(
+    host_ip: str, path: str, params: dict[str, str], marker: str, what: str
+) -> tuple[bool | None, str]:
+    """GET http://<host>/<path> with URL-encoded params and look for `marker` in
+    the response. Marker present => the gap is applied AND exploitable; a response
+    without it => neutralized/absent; unreachable => None. Used by the self-
+    contained web-app vulns (path-traversal, auth-bypass, ssrf)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    cmd = [curl, "-s", "-m", "15", "-G"]
+    for k, v in params.items():
+        cmd += ["--data-urlencode", f"{k}={v}"]
+    cmd.append(f"http://{host_ip}/{path}")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+    except (subprocess.TimeoutExpired, OSError):
+        return None, f"GET to /{path} did not complete (timeout/unreachable) — retry the command below."
+    if r.returncode != 0:
+        return None, f"could not reach /{path} (curl rc={r.returncode}) — retry the command below."
+    if marker in (r.stdout or ""):
+        return True, f"{what} confirmed: /{path} returned the expected marker."
+    return False, f"/{path} responded but without the marker — {what} not present (app absent or neutralized)."
+
+
+# path -> (query params, response marker, human label) for the GET-based web vulns.
+WEBAPP_GET_CHECKS = {
+    "webapp-path-traversal": ("app/download.aspx", {"file": "../pf_lfi_canary.txt"}, "PF-LFI-CANARY", "path traversal"),
+    "webapp-auth-bypass": ("app/login.aspx", {"user": "admin' OR '1'='1", "pass": "x"}, "AUTH_OK:admin", "auth bypass"),
+    "webapp-ssrf": ("app/fetch.aspx", {"url": "http://127.0.0.1/health.html"}, "PurpleForge IIS baseline OK", "SSRF to loopback"),
+}
+
 WEBAPP_SQLI_MARKER = "PF-SQLI-OK"
 
 
@@ -765,6 +816,11 @@ def _live_command(
             f"curl -s -G --data-urlencode \"name=zzz' UNION SELECT '{WEBAPP_SQLI_MARKER}'-- -\" "
             f"http://{ip}/app/search.aspx  # response contains {WEBAPP_SQLI_MARKER} = SQLi works"
         )
+    if vid in WEBAPP_GET_CHECKS:
+        path, params, marker, _what = WEBAPP_GET_CHECKS[vid]
+        ip = target_ip or "<host-ip>"
+        args = " ".join(f"--data-urlencode \"{k}={v}\"" for k, v in params.items())
+        return f"curl -s -G {args} http://{ip}/{path}  # response contains '{marker}' = vuln works"
     if vid == "ftp-anonymous-access":
         return f"nxc ftp {target_ip or '<host-ip>'} -u anonymous -p ''  # anonymous login succeeds + lists the root (grab backup_creds.txt)"
     if vid == "ftp-write-webroot":

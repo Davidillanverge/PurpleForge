@@ -1,0 +1,30 @@
+id: webapp-ssrf
+name: "Aplicación web ASP.NET con SSRF (fetch de URL sin allowlist)"
+severity: high
+attack:
+  mitre_attack: [T1190]
+  requires_services: [iis]
+  intended_path: >
+    Una aplicación web ASP.NET desplegada en IIS (/app/fetch.aspx) realiza una
+    petición HTTP del lado servidor a la URL que indica el parámetro `url`, sin
+    allowlist ni validación de destino. Un atacante apunta la URL a recursos
+    internos inalcanzables desde fuera (servicios en loopback, otros hosts de la
+    red de gestión, o endpoints de metadatos del proveedor cloud) y recibe su
+    respuesta a través de la aplicación -> Server-Side Request Forgery para
+    pivotar hacia la red interna y exfiltrar datos de servicios internos.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/webapp-ssrf.yml
+  primitive: "app ASP.NET /app/fetch.aspx que hace WebClient.DownloadString de una URL arbitraria del usuario"
+  reuses: "El servidor IIS base lo instala service-provisioning.yml de forma segura; esta inyección despliega la aplicación web vulnerable encima (y habilita ASP.NET 4.5, que el baseline no instala)"
+  params: {}
+neutralized_by:
+  - hardening.controls.webapp_ssrf_allowlist   # etiqueta libre: allowlist de destinos + bloquear loopback/IP privadas/metadatos; es un fallo de código, no hay regla CIS/STIG que lo cubra, así que NO se empareja con hardening.baseline
+mitigate:
+  summary: "Restringir los destinos del fetch por allowlist estricta (esquema+host); resolver y rechazar loopback, rangos privados/enlace-local y el endpoint de metadatos cloud; no reenviar la respuesta cruda al cliente; usar un proxy de salida con egress controlado."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "GET http://<ip>/app/fetch.aspx?url=http://127.0.0.1/health.html devuelve el contenido de la página de salud local (p. ej. 'PurpleForge IIS baseline OK') -> SSRF a loopback confirmado"
+chain:
+  target_shape: none
