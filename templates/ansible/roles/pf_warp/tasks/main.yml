@@ -48,6 +48,11 @@
   ansible.windows.win_reboot:
   when: pf_warp_wlan.reboot_required | default(false)
 
+- name: "pf_warp | ensure the setup directory exists (don't depend on another role)"
+  ansible.windows.win_file:
+    path: C:\setup
+    state: directory
+
 - name: "pf_warp | check whether the WARP client is already installed"
   ansible.windows.win_stat:
     path: C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe
@@ -88,7 +93,19 @@
     name: CloudflareWARP
     state: restarted
 
-- name: "pf_warp | register + connect to the org (service-token, accept ToS)"
+- name: "pf_warp | register the device to the org (consumes the mdm.xml service token)"
+  ansible.windows.win_shell: >-
+    & 'C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe' --accept-tos registration new
+  register: pf_warp_reg
+  changed_when: true
+  failed_when: false
+  # Required before connect — a bare `connect` fails with "Registration Missing".
+  # Uses the mdm.xml service token. failed_when:false: idempotent (benign if already
+  # registered). NOTE: if status later shows "Does not exist in API", the service
+  # token is not authorised by a Zero Trust *device enrollment* policy (operator
+  # side) — add a WARP device-enrollment rule permitting the token.
+
+- name: "pf_warp | connect to the org (accept ToS)"
   ansible.windows.win_shell: >-
     & 'C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe' --accept-tos connect
   register: pf_warp_connect
