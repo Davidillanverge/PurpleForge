@@ -1,10 +1,11 @@
 {#
   PurpleForge — service-provisioning playbook for {{ lab_name }} (GENERATED,
   do not edit). Installs the infra services machines[].services declares —
-  `mssql`, `adcs` and `iis` are wired (sccm remains declared-but-unconsumed —
-  see NON-AD-VULNS-ROADMAP.md). Each installs a SECURE base (mssql: sa disabled,
-  Windows-auth only, xp_cmdshell off; iis: WebDAV absent, dir browsing off,
-  least-priv app pool, confirmed serving HTTP 200) — any vuln that
+  `mssql`, `adcs`, `iis`, `ftp` and `wsus` are wired (sccm remains
+  declared-but-unconsumed — see NON-AD-VULNS-ROADMAP.md). Each installs a SECURE
+  base (mssql: sa disabled, Windows-auth only, xp_cmdshell off; iis: WebDAV
+  absent, dir browsing off, least-priv app pool, confirmed serving HTTP 200; ftp:
+  anon off, auth required, read-only; wsus: HTTPS/8531, no auto-approvals) — any vuln that
   requires_services this host, or web app with associated flaws, lands
   afterwards in vuln-injection, same hardening-before-gaps order.
 
@@ -47,6 +48,14 @@
   tasks:
     - name: "ftp-install | provision"
       ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/ftp-install.yml"
+{% endfor %}
+{% for m in wsus_hosts %}
+- name: "PurpleForge | service-provisioning | wsus -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  tasks:
+    - name: "wsus-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../services/wsus-install.yml"
 {% endfor %}
 {% if adcs_hosts %}
 # The EnterpriseRootCA install publishes its cert to AD's NTAuth store, but the

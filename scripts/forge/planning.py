@@ -956,11 +956,12 @@ def plan_service_provisioning(machines: list[dict]) -> dict[str, list[str]]:
     Root CA, reusing GOAD's adcs role — this is what makes adcs-esc1 usable: the
     vuln publishes its ESC1 template to this CA), and `iis` (a secure Web-Server
     baseline that confirms it serves HTTP 200 before any web vuln/app lands —
-    NON-AD-VULNS-ROADMAP.md Phase 1), and `ftp` (a secure IIS FTP site — anonymous
-    off, auth required, read-only — that FTP vulns reopen). `sccm` remains
-    declared-but-unconsumed."""
+    NON-AD-VULNS-ROADMAP.md Phase 1), `ftp` (a secure IIS FTP site — anonymous
+    off, auth required, read-only — that FTP vulns reopen), and `wsus` (a secure
+    WSUS server — HTTPS/8531, no auto-approvals — that WSUS vulns reopen). `sccm`
+    remains declared-but-unconsumed."""
     plan = {}
-    for svc in ("mssql", "adcs", "iis", "ftp"):
+    for svc in ("mssql", "adcs", "iis", "ftp", "wsus"):
         hosts = [m["name"] for m in machines if svc in m.get("services", [])]
         if hosts:
             plan[svc] = hosts

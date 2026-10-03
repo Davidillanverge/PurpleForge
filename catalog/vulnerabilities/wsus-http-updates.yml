@@ -1,0 +1,32 @@
+id: wsus-http-updates
+name: "WSUS sirviendo actualizaciones por HTTP en claro (MITM/relay de updates)"
+severity: critical
+attack:
+  mitre_attack: [T1557, T1195.002]
+  requires_services: [wsus]
+  intended_path: >
+    service-provisioning instaló WSUS de forma SEGURA (HTTPS/8531, SSL requerido
+    en los vdirs de cliente, nada auto-aprobado). Esta inyección reabre el gap:
+    reconfigura WSUS y a sus clientes para hablar por HTTP en claro (puerto 8530,
+    sin SSL). Un atacante en la red intercepta/retransmite el tráfico de
+    actualización (PyWSUS / WSUSpect / WSUSpendu) y entrega un "update" malicioso
+    envuelto en un binario firmado por Microsoft (p. ej. PsExec con argumentos)
+    a los equipos que confían en este WSUS -> ejecución de comandos como SYSTEM
+    en los clientes, movimiento lateral a escala desde el servidor de updates.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/wsus-http-updates.yml
+  primitive: "WSUS y GPO de cliente apuntando a http://<wsus>:8530 (UseHttps=0), SSL no requerido en los vdirs"
+  reuses: "El servidor WSUS base lo instala service-provisioning.yml de forma segura (HTTPS/8531); esta inyección solo baja el transporte a HTTP/8530 y relaja el SSL de los vdirs"
+  params: {}
+neutralized_by:
+  - hardening.controls.wsus_https_required   # etiqueta libre: forzar WSUS sobre HTTPS/8531 (UseHttps=1) y SSL requerido en los vdirs de cliente
+  - hardening.baseline: [stig]
+mitigate:
+  summary: "Servir WSUS exclusivamente sobre HTTPS/8531 con un certificado válido (wsusutil configuressl) y SSL requerido en los vdirs de cliente; configurar los clientes con WUServer https y UseHttps=1; aplicar la baseline STIG que exige WSUS cifrado; firmar y revisar las aprobaciones de actualizaciones."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "En el servidor WSUS, HKLM\\Software\\Policies\\Microsoft\\Windows\\WindowsUpdate\\WUServer apunta a http:// y/o UseHttps=0, o el vdir de cliente no requiere SSL; o un cliente acepta el catálogo por http://<wsus>:8530"
+chain:
+  target_shape: none

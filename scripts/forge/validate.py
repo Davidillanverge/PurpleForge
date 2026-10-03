@@ -173,6 +173,12 @@ WINRM_APPLIED_CHECKS = {
         "$s = Get-Service Spooler -ErrorAction SilentlyContinue; "
         "Write-Output ('PF_CHECK:' + [bool]($s -and $s.Status -eq 'Running'))"
     ),
+    "wsus-http-updates": (
+        "$u = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate'; "
+        "$w = (Get-ItemProperty $u -Name WUServer -ErrorAction SilentlyContinue).WUServer; "
+        "$h = (Get-ItemProperty $u -Name UseHttps -ErrorAction SilentlyContinue).UseHttps; "
+        "Write-Output ('PF_CHECK:' + [bool](($w -like 'http://*') -or ($h -eq 0)))"
+    ),
 }
 
 

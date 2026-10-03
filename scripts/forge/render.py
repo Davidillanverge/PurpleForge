@@ -417,6 +417,7 @@ def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: s
             adcs_hosts=service_hosts.get("adcs", []),
             iis_hosts=service_hosts.get("iis", []),
             ftp_hosts=service_hosts.get("ftp", []),
+            wsus_hosts=service_hosts.get("wsus", []),
         ),
         encoding="utf-8",
     )
@@ -431,6 +432,8 @@ def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: s
         shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "iis-install.yml", services_dst / "iis-install.yml")
     if service_hosts.get("ftp"):
         shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "ftp-install.yml", services_dst / "ftp-install.yml")
+    if service_hosts.get("wsus"):
+        shutil.copy(TEMPLATES_DIR / "ansible" / "services" / "wsus-install.yml", services_dst / "wsus-install.yml")
 
     files_dst = dst / "files" / "mssql"
     files_dst.mkdir(parents=True, exist_ok=True)

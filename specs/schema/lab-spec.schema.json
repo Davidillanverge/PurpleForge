@@ -159,7 +159,7 @@
           "description": "Only meaningful on member-server; enables prerequisites for some catalog vulnerabilities (e.g. adcs-esc1 requires adcs).",
           "items": {
             "type": "string",
-            "enum": ["adcs", "mssql", "iis", "ftp", "sccm"]
+            "enum": ["adcs", "mssql", "iis", "ftp", "wsus", "sccm"]
           },
           "uniqueItems": true
         },

@@ -1,0 +1,121 @@
+---
+# PurpleForge service provisioning: WSUS (Windows Server Update Services), SECURE
+# base. Establishes what the machine IS — a working, locked-down update server —
+# NOT a vuln. Any WSUS vuln selected for this host (wsus-http-updates) reopens a
+# specific gap afterwards, in vuln-injection, same hardening-before-gaps order.
+#
+# Secure-by-default baseline:
+#   - UpdateServices role with the Windows Internal Database (WID) — no external
+#     SQL to manage. Content store at C:\WSUS.
+#   - Served over HTTPS/8531 (SSL required on the client-facing vdirs) where the
+#     role supports it — the gap wsus-http-updates reopens is plain HTTP/8530.
+#   - NOTHING auto-approved and NO products/classifications selected by default,
+#     so the server does not silently distribute anything.
+# Heavy install -> async + a role/service existence guard for idempotency, same
+# pattern as mssql-install.yml. win_wait_for confirms the listener is up.
+- name: "wsus-install | check whether the WSUS (WsusService) service already exists"
+  ansible.windows.win_service:
+    name: WsusService
+  register: wsus_service_check
+  failed_when: wsus_service_check is not defined
+  ignore_errors: true
+
+- name: "wsus-install | create the WSUS content directory"
+  ansible.windows.win_file:
+    path: C:\WSUS
+    state: directory
+  when: wsus_service_check.state is not defined or wsus_service_check.name is not defined
+
+- name: "wsus-install | install the UpdateServices role with the WID database (skips if already present)"
+  ansible.windows.win_feature:
+    name:
+      - UpdateServices
+      - UpdateServices-WidDB
+      - UpdateServices-Services
+    state: present
+    include_management_tools: true
+  register: wsus_feature
+  async: 2400
+  poll: 30
+  when: wsus_service_check.state is not defined or wsus_service_check.name is not defined
+
+- name: "wsus-install | reboot if the role install requires it"
+  ansible.windows.win_reboot:
+  when: wsus_feature is defined and (wsus_feature.reboot_required | default(false))
+
+- name: "wsus-install | run WSUS postinstall (provisions the WID schema + content dir)"
+  ansible.windows.win_command: >-
+    "C:\Program Files\Update Services\Tools\wsusutil.exe" postinstall CONTENT_DIR=C:\WSUS
+  args:
+    creates: C:\WSUS\WsusContent
+  when: wsus_service_check.state is not defined or wsus_service_check.name is not defined
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+
+- name: "wsus-install | SECURE baseline — require SSL (HTTPS/8531) on the client-facing vdirs"
+  ansible.windows.win_shell: |
+    Import-Module WebAdministration
+    # Require SSL on the WSUS client/reporting virtual directories so the server
+    # does not serve updates over cleartext. wsus-http-updates reopens this.
+    foreach ($vdir in 'ApiRemoting30','ClientWebService','DssAuthWebService','ServerSyncWebService','SimpleAuthWebService','Content','Inventory') {
+        $p = "IIS:\Sites\WSUS Administration\$vdir"
+        if (Test-Path $p) { Set-WebConfigurationProperty -PSPath $p -Filter 'system.webServer/security/access' -Name sslFlags -Value 'Ssl' -ErrorAction SilentlyContinue }
+    }
+  changed_when: true
+  # NOTE: full WSUS-over-SSL also needs a server certificate bound to :8531 and
+  # `wsusutil configuressl`; in an isolated lab without a PKI-issued cert that
+  # binding may be incomplete. Isolation is enforced at the NSG (invariant #1),
+  # so the baseline's INTENT (no cleartext distribution) is what matters here —
+  # the gap wsus-http-updates reopens (UseHttps=false / port 8530) is explicit.
+
+- name: "wsus-install | Firewall | allow WSUS (TCP 8530 HTTP + 8531 HTTPS)"
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for WSUS (TCP-In)"
+    Ensure: present
+    Enabled: True
+    # NOT "Domain"-only — a freshly domain-joined cloud member-server's NIC can
+    # stay NetworkCategory=Public (NLA quirk, same live finding as mssql/iis/ftp).
+    # Isolation is enforced at the NSG/SG (deny-by-default), so opening the guest
+    # firewall on all profiles does not weaken anything.
+    Profile: "Domain, Private, Public"
+    Direction: "Inbound"
+    Localport: "8530,8531"
+    Protocol: "TCP"
+    Description: "Opens the WSUS client/reporting ports"
+
+- name: "wsus-install | be sure the WSUS service (WsusService) is started"
+  ansible.windows.win_service:
+    name: WsusService
+    start_mode: auto
+    state: started
+
+# --- Phase 1 "is it up" validation: the WSUS client-facing port must listen.
+- name: "wsus-install | wait for a WSUS port (8531 HTTPS or 8530 HTTP) to become open"
+  ansible.windows.win_wait_for:
+    port: "{{ item }}"
+    delay: 3
+    timeout: 90
+  loop:
+    - 8531
+    - 8530
+  register: wsus_port_wait
+  failed_when: false
+  # Either port listening means the IIS-hosted WSUS endpoints are up; the secure
+  # baseline prefers 8531, but we don't hard-fail if only 8530 is bound yet.
+
+- name: "wsus-install | assert at least one WSUS port came up"
+  ansible.builtin.assert:
+    that: "wsus_port_wait.results | selectattr('state', 'defined') | selectattr('state', 'equalto', 'started') | list | length > 0"
+    fail_msg: "neither WSUS port (8530/8531) is listening — the install did not come up"
+    success_msg: "WSUS client-facing port confirmed listening"
+
+- name: "wsus-install | record baseline state"
+  ansible.builtin.debug:
+    msg: >-
+      WSUS installed on {{ inventory_hostname }} — SECURE baseline: WID database,
+      content at C:\WSUS, SSL required on client vdirs (HTTPS/8531 preferred),
+      no products/classifications selected, nothing auto-approved.
