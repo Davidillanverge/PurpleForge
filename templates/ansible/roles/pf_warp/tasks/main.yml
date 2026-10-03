@@ -99,6 +99,10 @@
   register: pf_warp_reg
   changed_when: true
   failed_when: false
+  async: 120
+  poll: 5
+  # async timeout so a stuck registration (e.g. the daemon not ready after the
+  # service restart, or an unauthorised service token) can't hang the play forever.
   # Required before connect — a bare `connect` fails with "Registration Missing".
   # Uses the mdm.xml service token. failed_when:false: idempotent (benign if already
   # registered). NOTE: if status later shows "Does not exist in API", the service
@@ -111,7 +115,9 @@
   register: pf_warp_connect
   changed_when: true
   failed_when: false
-  # failed_when:false — connect is best-effort/idempotent; verify below.
+  async: 60
+  poll: 5
+  # failed_when:false + async timeout — connect is best-effort/idempotent; verify below.
 
 - name: "pf_warp | verify WARP is Connected (best-effort, retries)"
   ansible.windows.win_shell: "& 'C:\\Program Files\\Cloudflare\\Cloudflare WARP\\warp-cli.exe' status"
