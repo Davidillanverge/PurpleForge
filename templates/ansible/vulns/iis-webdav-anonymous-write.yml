@@ -17,6 +17,17 @@
   ansible.windows.win_reboot:
   when: webdav_feature.reboot_required | default(false)
 
+- name: "iis-webdav-anonymous-write | unlock the WebDAV config sections (locked at apphost by default)"
+  ansible.windows.win_shell: >-
+    & "$env:windir\system32\inetsrv\appcmd.exe" unlock config /section:system.webServer/webdav/authoring;
+    & "$env:windir\system32\inetsrv\appcmd.exe" unlock config /section:system.webServer/webdav/authoringRules
+  changed_when: false
+  # A fresh Web-DAV-Publishing install locks these sections
+  # (overrideModeDefault="Deny") at applicationHost.config, so a site-level
+  # Set-WebConfigurationProperty / appcmd set against them fails with "This
+  # configuration section cannot be used at this path" until unlocked. appcmd
+  # unlock is idempotent (re-unlocking an unlocked section is a no-op success).
+
 - name: "iis-webdav-anonymous-write | enable WebDAV on the Default Web Site"
   ansible.windows.win_shell: >-
     Import-Module WebAdministration;
