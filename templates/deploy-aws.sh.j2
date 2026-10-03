@@ -318,10 +318,15 @@ snapshot_clean() {
     [ "$name" = "${LAB}-bastion" ] && { echo "  skip bastion (disposable infra)"; continue; }
     local snap="${LAB}-${name}-clean"
     echo "  snapshot $name -> AMI $snap"
-    aws ec2 create-image --instance-id "$id" --name "$snap" --no-reboot \
+    # Capture stdout+stderr so a failure surfaces the ACTUAL AWS error instead of
+    # an opaque "could not snapshot" (which hid the cause across live runs). On
+    # success $out is the new AMI id, harmlessly ignored.
+    local out
+    if ! out="$(aws ec2 create-image --instance-id "$id" --name "$snap" --no-reboot \
       --tag-specifications "ResourceType=image,Tags=[{Key=purpleforge,Value=clean-state},{Key=lab,Value=$LAB}]" \
-      "ResourceType=snapshot,Tags=[{Key=purpleforge,Value=clean-state},{Key=lab,Value=$LAB}]" >/dev/null 2>&1 \
-      || warn "could not snapshot $name (continuing) — take it manually or re-run this step"
+      "ResourceType=snapshot,Tags=[{Key=purpleforge,Value=clean-state},{Key=lab,Value=$LAB}]" 2>&1)"; then
+      warn "could not snapshot $name (continuing) — AWS said: ${out} — take it manually or re-run this step"
+    fi
   done
   echo "  clean-state AMI(s) requested — reset with: forge reset {{ spec_rel }}"
 }
