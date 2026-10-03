@@ -1,0 +1,32 @@
+id: jenkins-unauth-script-console
+name: "Jenkins con acceso anónimo a la Script Console (RCE sin autenticar)"
+severity: critical
+attack:
+  mitre_attack: [T1190, T1059]
+  requires_services: []
+  requires_apps: [jenkins]
+  intended_path: >
+    application-provisioning instaló Jenkins de forma SEGURA (realm de usuarios
+    propio, admin 'pfadmin', acceso anónimo deshabilitado, FullControlOnceLoggedIn).
+    Esta inyección reabre el gap: cambia la estrategia de autorización a
+    'cualquiera puede hacer cualquier cosa' (Unsecured) y el realm a sin
+    autenticación, de modo que un atacante no autenticado accede a la Groovy
+    Script Console (/script, /scriptText) y ejecuta código Groovy arbitrario en
+    el controlador -> ejecución remota de código con la identidad del servicio
+    Jenkins, punto de partida para comprometer la cadena de CI/CD.
+inject:
+  type: ansible
+  playbook: templates/ansible/vulns/jenkins-unauth-script-console.yml
+  primitive: "Jenkins con AuthorizationStrategy.UNSECURED + SecurityRealm.NO_AUTHENTICATION (Script Console anónima)"
+  reuses: "El servidor Jenkins base lo instala application-provisioning.yml de forma segura; esta inyección solo relaja la autorización/realm para dejar la Script Console accesible sin credenciales"
+  params: {}
+neutralized_by:
+  - hardening.controls.jenkins_require_auth   # etiqueta libre: realm con autenticación + autorización matriz-por-roles, anónimo sin permisos; es config de la app, no hay regla CIS/STIG que lo cubra -> sin hardening.baseline
+mitigate:
+  summary: "Exigir autenticación (realm de usuarios o SSO) y una estrategia de autorización de mínimo privilegio (matriz/por-proyecto) sin permisos para el usuario anónimo; restringir/retirar el acceso a la Script Console; mantener el setup wizard y las actualizaciones al día; aislar el controlador de internet."
+validate:
+  atomic: null
+  bloodhound_edge: null
+  local_check: "POST sin autenticar a http://<ip>:8080/scriptText con script=println 'PF-JENKINS-OK' devuelve 'PF-JENKINS-OK' -> Script Console anónima = RCE confirmado"
+chain:
+  target_shape: none

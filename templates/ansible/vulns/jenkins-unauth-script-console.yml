@@ -1,0 +1,40 @@
+---
+# Vuln inject task-file: jenkins-unauth-script-console (T1190, T1059)
+# application-provisioning.yml already installed Jenkins SECURELY on this host
+# ({{ inventory_hostname }}, applications: [jenkins]): own user DB, admin pfadmin,
+# anonymous OFF. This task is the gap: drop an init.groovy.d script that switches
+# the authorization strategy to Unsecured and the realm to NO_AUTHENTICATION, so
+# the Groovy Script Console (/script, /scriptText) is reachable unauthenticated ->
+# RCE. Restarting Jenkins applies it. Idempotent: win_copy only changes on drift;
+# the restart re-runs init.groovy.d.
+- name: "jenkins-unauth-script-console | drop the init script that disables Jenkins security"
+  ansible.windows.win_copy:
+    dest: C:\ProgramData\Jenkins\.jenkins\init.groovy.d\pf-unsecure.groovy
+    content: |
+      import jenkins.model.*
+      import hudson.security.*
+      // DELIBERATELY VULNERABLE (PurpleForge lab): anyone can do anything, no auth
+      // -> the Groovy Script Console is reachable without credentials (RCE).
+      def instance = Jenkins.getInstance()
+      instance.setSecurityRealm(SecurityRealm.NO_AUTHENTICATION)
+      instance.setAuthorizationStrategy(AuthorizationStrategy.UNSECURED)
+      instance.save()
+
+- name: "jenkins-unauth-script-console | restart Jenkins so the init script applies"
+  ansible.windows.win_service:
+    name: Jenkins
+    state: restarted
+
+- name: "jenkins-unauth-script-console | wait for Jenkins to answer again"
+  ansible.windows.win_wait_for:
+    port: 8080
+    delay: 10
+    timeout: 300
+
+- name: "jenkins-unauth-script-console | record intended path"
+  ansible.builtin.debug:
+    msg: >-
+      Jenkins unauth-script-console gap live on {{ inventory_hostname }}: security
+      disabled (Unsecured + NO_AUTHENTICATION) -> POST Groovy to
+      http://{{ inventory_hostname }}:8080/scriptText without credentials for RCE
+      as the Jenkins service identity.

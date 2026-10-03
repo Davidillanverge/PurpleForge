@@ -163,6 +163,15 @@
           },
           "uniqueItems": true
         },
+        "applications": {
+          "type": "array",
+          "description": "Third-party applications (full products, not Windows services) provisioned securely on this host by the application-provisioning phase; catalog vulns then reopen gaps on top via attack.requires_apps (e.g. jenkins -> jenkins-unauth-script-console). See NON-AD-VULNS-ROADMAP.md 'Application catalog'.",
+          "items": {
+            "type": "string",
+            "enum": ["jenkins"]
+          },
+          "uniqueItems": true
+        },
         "image_id": {
           "type": "string",
           "minLength": 1,

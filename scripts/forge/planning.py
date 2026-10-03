@@ -208,6 +208,10 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
     for m in spec["machines"]:
         services_by_domain.setdefault(m["domain"], set()).update(m.get("services", []))
 
+    apps_by_domain: dict[str, set[str]] = {}
+    for m in spec["machines"]:
+        apps_by_domain.setdefault(m["domain"], set()).update(m.get("applications", []))
+
     for vuln_id in spec["vulnerabilities"]:
         if vuln_id not in catalog:
             errors.append(f"vulnerabilities: unknown id '{vuln_id}' (no catalog/vulnerabilities/{vuln_id}.yml)")
@@ -221,12 +225,29 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
                     f"vulnerabilities: '{vuln_id}' requires service(s) {missing} "
                     f"but no machine in the spec declares them"
                 )
+        # Application vulns declare attack.requires_apps (a product provisioned by
+        # the application-provisioning phase) instead of an AD service prereq — they
+        # inject on the host declaring that app (see plan_vuln_injection).
+        required_apps = catalog[vuln_id].get("attack", {}).get("requires_apps") or []
+        if required_apps:
+            available_apps = set().union(*apps_by_domain.values()) if apps_by_domain else set()
+            missing_apps = [a for a in required_apps if a not in available_apps]
+            if missing_apps:
+                errors.append(
+                    f"vulnerabilities: '{vuln_id}' requires application(s) {missing_apps} "
+                    f"but no machine in the spec declares them"
+                )
         # OS-level / application vulns declare attack.target_role (workstation |
         # member-server | domain-controller) instead of an AD service prereq —
         # they inject on the first machine of that role (see plan_vuln_injection).
-        # requires_services takes precedence, so a vuln never needs both.
+        # requires_services/requires_apps take precedence, so a vuln never needs both.
         target_role = catalog[vuln_id].get("attack", {}).get("target_role")
-        if target_role and not required and not any(m["role"] == target_role for m in spec["machines"]):
+        if (
+            target_role
+            and not required
+            and not required_apps
+            and not any(m["role"] == target_role for m in spec["machines"])
+        ):
             errors.append(
                 f"vulnerabilities: '{vuln_id}' targets role '{target_role}' but the spec has no machine with that role"
             )
@@ -280,6 +301,7 @@ def assign_ips(spec: dict) -> dict:
                         "os": m["os"],
                         "ip": f"10.{octet}.{i}.{host_octet}",
                         "services": m.get("services", []),
+                        "applications": m.get("applications", []),
                         "image_id": m.get("image_id"),
                         "vm_size": m.get("vm_size"),
                     }
@@ -534,6 +556,7 @@ def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
                     "os": host["os"],
                     "ip": host["ip"],
                     "services": host.get("services", []),
+                    "applications": host.get("applications", []),
                     "image_id": host.get("image_id"),
                     "vm_size": host.get("vm_size"),
                 }
@@ -903,10 +926,17 @@ def plan_vuln_injection(
     for vid in spec["vulnerabilities"]:
         v = catalog[vid]
         requires = v["attack"].get("requires_services") or []
+        requires_apps = v["attack"].get("requires_apps") or []
         target_role = v["attack"].get("target_role")
         if requires:
             # semantic_checks already guaranteed a host provides these services.
             host = next(m for m in machines if all(s in m.get("services", []) for s in requires))
+            run_on, target_domain = host["name"], host["domain"]
+        elif requires_apps:
+            # Application vuln: land on the host that provides the required app(s)
+            # (semantic_checks guaranteed one exists). Application-layer counterpart
+            # to requires_services.
+            host = next(m for m in machines if all(a in (m.get("applications") or []) for a in requires_apps))
             run_on, target_domain = host["name"], host["domain"]
         elif target_role:
             # OS-level / application privesc: land on the first machine of the
@@ -965,6 +995,20 @@ def plan_service_provisioning(machines: list[dict]) -> dict[str, list[str]]:
         hosts = [m["name"] for m in machines if svc in m.get("services", [])]
         if hosts:
             plan[svc] = hosts
+    return plan
+
+
+def plan_application_provisioning(machines: list[dict]) -> dict[str, list[str]]:
+    """machines[].applications -> {app: [host names]} for the third-party products
+    this generator provisions (secure baseline, then catalog vulns reopen gaps on
+    top via attack.requires_apps). The application-layer sibling of
+    plan_service_provisioning. Today only `jenkins` is wired — see
+    NON-AD-VULNS-ROADMAP.md 'Application catalog' for the backlog."""
+    plan = {}
+    for app in ("jenkins",):
+        hosts = [m["name"] for m in machines if app in (m.get("applications") or [])]
+        if hosts:
+            plan[app] = hosts
     return plan
 
 

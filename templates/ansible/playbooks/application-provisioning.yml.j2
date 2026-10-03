@@ -1,0 +1,24 @@
+{#
+  PurpleForge — application-provisioning playbook for {{ lab_name }} (GENERATED,
+  do not edit). Installs the third-party applications machines[].applications
+  declares — today only `jenkins` is wired (see NON-AD-VULNS-ROADMAP.md
+  'Application catalog' for the backlog: jira, sharepoint, wordpress, joomla,
+  gitlab). Each installs a SECURE base (jenkins: security realm on, admin user,
+  anonymous off, CSRF + agent-to-controller security on, confirmed answering on
+  8080) — any vuln that requires_apps this host lands afterwards in
+  vuln-injection, same hardening-before-gaps order as services.
+
+  Deploy order (CLAUDE.md / site.yml.j2): runs after service-provisioning and
+  before ad-population/hardening — this establishes what the machine IS (a
+  running product), not a vuln or a hardening control. Application-layer sibling
+  of service-provisioning.yml.
+#}
+---
+{% for m in jenkins_hosts %}
+- name: "PurpleForge | application-provisioning | jenkins -> {{ m }}"
+  hosts: {{ m }}
+  gather_facts: false
+  tasks:
+    - name: "jenkins-install | provision"
+      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../apps/jenkins-install.yml"
+{% endfor %}

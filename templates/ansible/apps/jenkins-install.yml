@@ -1,0 +1,118 @@
+---
+# PurpleForge application provisioning: Jenkins (LTS), SECURE base install.
+# Establishes what the machine IS — a working, locked-down CI server — NOT a vuln.
+# Any Jenkins vuln selected for this host (jenkins-unauth-script-console) reopens a
+# specific gap afterwards, in vuln-injection, same hardening-before-gaps order.
+#
+# Secure-by-default baseline (via an init.groovy.d script, applied at first boot):
+#   - Jenkins' own user database as the security realm, with a known admin account
+#     (pfadmin) — anonymous access OFF.
+#   - FullControlOnceLoggedIn authorization with anonymous READ disabled.
+#   - Setup wizard disabled (runSetupWizard=false) so the server comes up
+#     configured, not stuck on the unlock screen.
+# Heavy install (JDK + MSI) -> service-existence guard for idempotency, like
+# mssql-install.yml. win_uri confirms Jenkins answers on 8080.
+#
+# LIVE-TEST CAVEAT (not yet exercised on a real box): the JDK/Jenkins MSI URLs and
+# silent-install flags, and JENKINS_HOME (C:\ProgramData\Jenkins\.jenkins for the
+# MSI), may need adjusting against the pinned installer versions — same status as
+# wsus-install.yml. The structure + secure-by-default config is the contract.
+- name: "jenkins-install | check whether the Jenkins service already exists"
+  ansible.windows.win_service:
+    name: Jenkins
+  register: jenkins_service_check
+  failed_when: false
+
+- name: "jenkins-install | create the setup directory"
+  ansible.windows.win_file:
+    path: C:\setup\jenkins
+    state: directory
+
+- name: "jenkins-install | download the Temurin JDK 17 (MSI)"
+  ansible.windows.win_get_url:
+    url: "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_windows_hotspot_17.0.11_9.msi"
+    dest: C:\setup\jenkins\jdk17.msi
+  when: not (jenkins_service_check.exists | default(false))
+
+- name: "jenkins-install | install the JDK silently (sets JAVA_HOME + PATH)"
+  ansible.windows.win_package:
+    path: C:\setup\jenkins\jdk17.msi
+    arguments: "ADDLOCAL=FeatureMain,FeatureJavaHome,FeatureEnvironment /quiet /norestart"
+    state: present
+  when: not (jenkins_service_check.exists | default(false))
+
+- name: "jenkins-install | download the Jenkins LTS Windows installer (MSI)"
+  ansible.windows.win_get_url:
+    url: "https://get.jenkins.io/windows-stable/2.452.3/jenkins.msi"
+    dest: C:\setup\jenkins\jenkins.msi
+  when: not (jenkins_service_check.exists | default(false))
+
+- name: "jenkins-install | seed the secure init.groovy.d config BEFORE first service start"
+  ansible.windows.win_copy:
+    dest: C:\ProgramData\Jenkins\.jenkins\init.groovy.d\pf-security.groovy
+    content: |
+      import jenkins.model.*
+      import hudson.security.*
+      def instance = Jenkins.getInstance()
+      // Secure baseline: Jenkins' own user DB, a known admin, anonymous OFF.
+      def realm = new HudsonPrivateSecurityRealm(false)
+      if (realm.getAllUsers().find { it.id == 'pfadmin' } == null) {
+          realm.createAccount('pfadmin', 'PFJenkinsAdmin!2026')
+      }
+      instance.setSecurityRealm(realm)
+      def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+      strategy.setAllowAnonymousRead(false)
+      instance.setAuthorizationStrategy(strategy)
+      instance.save()
+
+- name: "jenkins-install | install Jenkins silently (disable the setup wizard)"
+  ansible.windows.win_package:
+    path: C:\setup\jenkins\jenkins.msi
+    arguments: "/quiet /norestart JENKINS_OPTS=\"--argumentsRealm.passwd.admin=unused -Djenkins.install.runSetupWizard=false\""
+    state: present
+  when: not (jenkins_service_check.exists | default(false))
+
+- name: "jenkins-install | Firewall | allow Jenkins HTTP (TCP 8080)"
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for Jenkins (TCP-In)"
+    Ensure: present
+    Enabled: True
+    # NSG enforces isolation (deny-by-default); same all-profiles note as the
+    # other service installers.
+    Profile: "Domain, Private, Public"
+    Direction: "Inbound"
+    Localport: "8080"
+    Protocol: "TCP"
+    Description: "Opens the Jenkins HTTP port"
+
+- name: "jenkins-install | be sure the Jenkins service is started"
+  ansible.windows.win_service:
+    name: Jenkins
+    start_mode: auto
+    state: started
+
+# --- "is it up" validation: Jenkins must answer (login page = secured baseline).
+- name: "jenkins-install | wait for port 8080 to become open"
+  ansible.windows.win_wait_for:
+    port: 8080
+    delay: 10
+    timeout: 300
+
+- name: "jenkins-install | confirm Jenkins responds on /login (secured baseline)"
+  ansible.windows.win_uri:
+    url: http://localhost:8080/login
+    method: GET
+    status_code: [200, 403]
+    return_content: false
+  register: jenkins_up
+  retries: 10
+  delay: 15
+  until: jenkins_up.status_code is defined and jenkins_up.status_code in [200, 403]
+
+- name: "jenkins-install | record baseline state"
+  ansible.builtin.debug:
+    msg: >-
+      Jenkins installed on {{ inventory_hostname }} — SECURE baseline: own user DB
+      with admin 'pfadmin', anonymous access OFF, FullControlOnceLoggedIn, setup
+      wizard disabled. Answering on 8080.

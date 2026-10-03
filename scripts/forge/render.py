@@ -443,7 +443,36 @@ def render_service_provisioning(service_hosts: dict[str, list[str]], lab_name: s
     )
 
 
-def render_site_playbook(has_vuln_injection: bool, has_service_provisioning: bool, out_dir: Path) -> None:
+def render_application_provisioning(app_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) -> None:
+    """Renders application-provisioning.yml (one play per host needing an app) plus
+    the per-app installer task-files. Installs SECURELY by design (see
+    templates/ansible/apps/<app>-install.yml) — the vuln that requires_apps this
+    host lands later, in vuln-injection. Application-layer sibling of
+    render_service_provisioning."""
+    if not app_hosts:
+        return
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "application-provisioning.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
+    )
+    (dst / "application-provisioning.yml").write_text(
+        template.render(lab_name=lab_name, jenkins_hosts=app_hosts.get("jenkins", [])),
+        encoding="utf-8",
+    )
+    apps_dst = out_dir / "ansible" / "apps"
+    apps_dst.mkdir(parents=True, exist_ok=True)
+    if app_hosts.get("jenkins"):
+        shutil.copy(TEMPLATES_DIR / "ansible" / "apps" / "jenkins-install.yml", apps_dst / "jenkins-install.yml")
+
+
+def render_site_playbook(
+    has_vuln_injection: bool,
+    has_service_provisioning: bool,
+    out_dir: Path,
+    has_application_provisioning: bool = False,
+) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
     leaving it up to whoever runs the individual playbooks by hand."""
@@ -454,7 +483,11 @@ def render_site_playbook(has_vuln_injection: bool, has_service_provisioning: boo
         keep_trailing_newline=True,
     )
     (dst / "site.yml").write_text(
-        template.render(has_vuln_injection=has_vuln_injection, has_service_provisioning=has_service_provisioning),
+        template.render(
+            has_vuln_injection=has_vuln_injection,
+            has_service_provisioning=has_service_provisioning,
+            has_application_provisioning=has_application_provisioning,
+        ),
         encoding="utf-8",
     )
 

@@ -25,6 +25,9 @@
 {% if has_service_provisioning %}
 - import_playbook: service-provisioning.yml
 {% endif %}
+{% if has_application_provisioning %}
+- import_playbook: application-provisioning.yml
+{% endif %}
 - import_playbook: ad-population.yml
 - import_playbook: defensive-controls.yml
 {% if has_vuln_injection %}
