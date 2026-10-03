@@ -42,6 +42,58 @@ COMMUNITY_WINDOWS_MODULES = {
 
 _FQCN_RE = re.compile(r"\bansible\.windows\.([a-z0-9_]+)")
 
+# Allowlist of FQCN module invocations that are KNOWN to exist in their collection
+# AND are deliberately used by the templates. The denylist above catches a real
+# module under the wrong collection prefix; this allowlist catches the other half
+# of the bug class — a module that does not exist in ANY collection (e.g. the
+# invented `community.windows.win_iis_webconfigproperty` that aborted a live deploy
+# — use win_shell + Set-WebConfigurationProperty instead). A new module here forces
+# a conscious "does this module actually exist?" check before it can ship.
+# Keep sorted; add a line only after verifying the module is real.
+VALID_MODULE_FQCNS = {
+    # ansible.builtin
+    "ansible.builtin.assert",
+    "ansible.builtin.debug",
+    "ansible.builtin.include_role",
+    "ansible.builtin.include_tasks",
+    "ansible.builtin.set_fact",
+    # ansible.windows
+    "ansible.windows.win_acl",
+    "ansible.windows.win_command",
+    "ansible.windows.win_copy",
+    "ansible.windows.win_dsc",
+    "ansible.windows.win_feature",
+    "ansible.windows.win_file",
+    "ansible.windows.win_get_url",
+    "ansible.windows.win_package",
+    "ansible.windows.win_powershell",
+    "ansible.windows.win_reboot",
+    "ansible.windows.win_regedit",
+    "ansible.windows.win_service",
+    "ansible.windows.win_shell",
+    "ansible.windows.win_stat",
+    "ansible.windows.win_template",
+    "ansible.windows.win_uri",
+    "ansible.windows.win_user",
+    "ansible.windows.win_user_right",
+    "ansible.windows.win_wait_for",
+    # community.general
+    "community.general.random_string",
+    # community.windows
+    "community.windows.win_domain_computer",
+    "community.windows.win_domain_group_membership",
+    "community.windows.win_domain_ou",
+    "community.windows.win_firewall_rule",
+    "community.windows.win_iis_webapppool",
+    "community.windows.win_scheduled_task",
+}
+
+# Matches an FQCN used as a task module KEY (not prose/comments): `<fqcn>:` at the
+# start of a line, optionally after a YAML list dash.
+_MODULE_KEY_RE = re.compile(
+    r"^\s*(?:-\s+)?((?:ansible\.(?:windows|builtin|utils)|community\.(?:windows|general))\.[a-z0-9_]+):",
+)
+
 
 def _template_sources():
     for path in TEMPLATES_DIR.rglob("*"):
@@ -61,3 +113,21 @@ def test_no_misplaced_ansible_windows_fqcn():
                         f"{rel}:{lineno}: ansible.windows.{mod} -> should be community.windows.{mod}"
                     )
     assert not offenders, "Wrong module collection (FQCN) in template(s):\n" + "\n".join(offenders)
+
+
+def test_only_known_modules_used():
+    """Every FQCN module invoked by a template must be a real module we've vetted
+    (in VALID_MODULE_FQCNS). Catches an invented/typo'd module that resolves in no
+    collection — the win_iis_webconfigproperty class — at test time, not live."""
+    offenders = []
+    for path in _template_sources():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            m = _MODULE_KEY_RE.match(line)
+            if m and m.group(1) not in VALID_MODULE_FQCNS:
+                rel = path.relative_to(REPO_ROOT)
+                offenders.append(
+                    f"{rel}:{lineno}: {m.group(1)} is not in VALID_MODULE_FQCNS "
+                    f"(does it exist? if real, add it; if invented, fix it)"
+                )
+    assert not offenders, "Unknown/unvetted Ansible module(s) in template(s):\n" + "\n".join(offenders)

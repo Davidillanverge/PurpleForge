@@ -1,9 +1,10 @@
 # catalog/defense/profiles/realistic.yml
-# Perfil defensivo 'realistic': Defender AV (ASR audit) + CIS L1 (con gaps
-# intencionados) + SIEM + 1 EDR. El escenario más representativo de una
-# empresa media.
+# Perfil defensivo 'realistic': Defender AV (ASR en audit) + CIS L1 con gaps
+# intencionados vía reconciliación. El escenario más representativo de una
+# empresa media. (Sin SIEM/telemetría — la detección queda fuera de alcance,
+# invariante #2; Defender AV es el único EDR implementado end-to-end.)
 profile: realistic
-description: "Defender AV en audit + CIS L1 + SIEM + 1 EDR adicional. Gaps intencionados vía reconciliación."
+description: "Defender AV (ASR audit) + CIS L1 con gaps intencionados vía reconciliación. Sin SIEM (detección fuera de alcance)."
 defaults:
   edr:
     - product: defender-av

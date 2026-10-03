@@ -26,6 +26,15 @@
     # {{ v.name }}
     # intended path: {{ v.intended_path }}
     # neutralization: {{ v.neutralization }}
+    # Each inject is wrapped in block/rescue so a fatal task in ONE vuln does not
+    # drop the host from every later vuln-injection play in this site.yml run
+    # (which would silently skip unrelated vulns on the same host). A failed inject
+    # is surfaced loudly with the PF-INJECT-FAILED marker and left for `forge
+    # validate --run` to catch as applied=NO, instead of cascading.
     - name: "{{ v.id }} | inject"
-      ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../vulns/{{ v.id }}.yml"
+      block:
+        - ansible.builtin.include_tasks: "{{ '{{' }} playbook_dir {{ '}}' }}/../vulns/{{ v.id }}.yml"
+      rescue:
+        - ansible.builtin.debug:
+            msg: "PF-INJECT-FAILED {{ v.id }} on {{ '{{' }} inventory_hostname {{ '}}' }} — inject errored (see above); other vulns continue, validate will catch this as applied=NO."
 {% endfor %}
