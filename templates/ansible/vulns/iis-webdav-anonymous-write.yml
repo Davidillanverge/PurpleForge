@@ -65,6 +65,19 @@
     -Filter 'system.webServer/security/authentication/anonymousAuthentication' -Name enabled -Value $true
   changed_when: false
 
+- name: "iis-webdav-anonymous-write | grant the anonymous IIS identity NTFS write on the web root (the gap)"
+  ansible.windows.win_acl:
+    path: C:\inetpub\wwwroot
+    user: IIS_IUSRS
+    rights: Modify
+    type: allow
+    state: present
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+  # WebDAV authorizes the write at the config layer, but the NTFS ACL on wwwroot
+  # grants IIS_IUSRS only Read+Execute by default — without this the anonymous PUT
+  # gets HTTP 401 (confirmed live). This is the filesystem half of the gap.
+
 - name: "iis-webdav-anonymous-write | restart IIS so the WebDAV module loads"
   ansible.windows.win_shell: iisreset /restart
   changed_when: true

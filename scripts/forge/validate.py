@@ -155,8 +155,11 @@ WINRM_APPLIED_CHECKS = {
         "Write-Output ('PF_CHECK:' + [bool]($a -eq '1' -and $p))"
     ),
     "iis-apppool-privileged-identity": (
+        # On the IIS: provider, Get-ItemProperty -Name processModel.identityType
+        # returns the value directly (no `.Value` wrapper) — read it off the app
+        # pool object's processModel instead, or the check is always false.
         "Import-Module WebAdministration; "
-        "$id = (Get-ItemProperty 'IIS:\\AppPools\\DefaultAppPool' -Name processModel.identityType -ErrorAction SilentlyContinue).Value; "
+        "$id = (Get-ItemProperty 'IIS:\\AppPools\\DefaultAppPool' -ErrorAction SilentlyContinue).processModel.identityType; "
         "Write-Output ('PF_CHECK:' + [bool](\"$id\" -match 'LocalSystem'))"
     ),
     "ldap-signing-not-required": (
