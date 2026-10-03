@@ -467,11 +467,38 @@ def render_application_provisioning(app_hosts: dict[str, list[str]], lab_name: s
         shutil.copy(TEMPLATES_DIR / "ansible" / "apps" / "jenkins-install.yml", apps_dst / "jenkins-install.yml")
 
 
+def render_telemetry(agent_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) -> None:
+    """Renders telemetry-provisioning.yml (one play per host per DETECT agent).
+    AGENTS ONLY — the backends/Fleet policies/integrations/rules are operator-
+    configured, and the roles (pf_elastic_agent, pf_warp) resolve via ansible.cfg
+    roles_path, so nothing is copied. Backend creds arrive as deploy-time
+    extra-vars (PF_FLEET_URL/PF_FLEET_ENROLLMENT_TOKEN, PF_CLOUDFLARE_*), never in
+    the spec. Runs after vuln-injection, before the clean snapshot (the agents are
+    part of the defended baseline the snapshot captures)."""
+    if not agent_hosts:
+        return
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "telemetry-provisioning.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
+    )
+    (dst / "telemetry-provisioning.yml").write_text(
+        template.render(
+            lab_name=lab_name,
+            elastic_agent_hosts=agent_hosts.get("elastic-agent", []),
+            warp_hosts=agent_hosts.get("warp", []),
+        ),
+        encoding="utf-8",
+    )
+
+
 def render_site_playbook(
     has_vuln_injection: bool,
     has_service_provisioning: bool,
     out_dir: Path,
     has_application_provisioning: bool = False,
+    has_telemetry: bool = False,
 ) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
@@ -487,6 +514,7 @@ def render_site_playbook(
             has_vuln_injection=has_vuln_injection,
             has_service_provisioning=has_service_provisioning,
             has_application_provisioning=has_application_provisioning,
+            has_telemetry=has_telemetry,
         ),
         encoding="utf-8",
     )

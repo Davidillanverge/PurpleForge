@@ -88,9 +88,40 @@ Notes:
   mitre_attack, no detect). CVE-based entries additionally depend on the Phase-4
   image/patch-level decision.
 
-## Telemetry (DETECT pillar) — deferred ⬜
+## Telemetry (DETECT pillar) — agent deployment IN PROGRESS 🟡
 
-Deferred by decision (2026-10-02). This is a **scope reversal, not an extension**:
+**Round scope (agreed 2026-10-03): deploy the AGENTS of all three layers
+(SWG+EDR+SIEM); the detection-coverage feedback loop is a later round.** Division
+of labor: **the operator configures the backends** (Elastic deployment + Fleet
+policy + Elastic Defend/winlog integrations + detection rules; Cloudflare Zero
+Trust org + Gateway + the split-tunnel that must EXCLUDE the lab management range);
+**PurpleForge installs + enrolls the agents** on the lab hosts. The egress
+exception for WARP→Cloudflare is approved (outbound only; inbound isolation
+invariant #1 intact — see the SWG note below).
+
+**Landed (framework + agent roles, generation-green, not yet live):**
+- `telemetry:` spec block (swg/edr/siem, providers cloudflare/elastic) +
+  `plan_telemetry` + `render_telemetry` + `telemetry-provisioning.yml` wired after
+  vuln-injection, before the clean snapshot (agents are part of the baseline).
+- Roles `pf_elastic_agent` (ONE agent serves edr+siem; Fleet-enrolled) and
+  `pf_warp` (WARP + service-token mdm.xml). Agents only — no backend config.
+- Backend creds are **deploy-time extra-vars**, never in the spec (not seed-derived
+  — the one deliberate exception to account-independence):
+  `PF_FLEET_URL`/`PF_FLEET_ENROLLMENT_TOKEN`/`PF_ELASTIC_AGENT_VERSION`,
+  `PF_CLOUDFLARE_TEAM`/`PF_CLOUDFLARE_ENROLL_CLIENT_ID`/`_SECRET`.
+
+**Pending this round:** deploy.sh validation of the telemetry env creds; a
+`telemetry-verify` step (agents enrolled/healthy); CLAUDE.md invariant #2 rewrite
+(PREVENT/RESPOND → +DETECT); a live smoke-test (needs an operator Elastic + a
+Cloudflare Zero Trust org). Agent install flags carry a live-test caveat.
+
+**Later rounds (deferred):** the detection-coverage feedback loop (validate → pull
+alerts → applied+exploitable+**detected** matrix), relaxing the vuln schema's
+`detect:false`, and the alternative stacks (Zscaler/MDE/Sentinel).
+
+### Original scope note (the reversal)
+
+This is a **scope reversal, not an extension**:
 PurpleForge today is PREVENT/RESPOND only, and DETECT is designed OUT —
 `CLAUDE.md` invariant #2, the vuln schema hard-forbids `detect`/`siem_rule`
 (`false`), the `defense.edr[].product` enum accepts only `defender-av`, and the

@@ -33,3 +33,10 @@
 {% if has_vuln_injection %}
 - import_playbook: vuln-injection.yml
 {% endif %}
+{% if has_telemetry %}
+# DETECT pillar: install/enroll the telemetry agents (elastic-agent, WARP) on the
+# defended+gapped box, BEFORE the clean snapshot so they're part of the baseline.
+# Agents only — backends/policies/rules are operator-configured; backend creds are
+# deploy-time extra-vars.
+- import_playbook: telemetry-provisioning.yml
+{% endif %}

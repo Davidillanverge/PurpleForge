@@ -1,0 +1,81 @@
+---
+# PurpleForge DETECT agent: Cloudflare WARP client (SWG / Zero Trust enrollment).
+# Installs the WARP client and enrolls it to the OPERATOR's Zero Trust org via a
+# service token (unattended), so egress web traffic flows through Cloudflare
+# Gateway. This role only lands + enrolls the agent; the org, Gateway policy and —
+# critically — the SPLIT-TUNNEL that must EXCLUDE the lab management range are
+# operator-configured (otherwise WARP can swallow the WinRM/WireGuard control path).
+#
+# Backend inputs are deploy-time extra-vars (NOT in the spec, not seed-derived):
+#   pf_cloudflare_team                 (required)  the Zero Trust team/org slug
+#   pf_cloudflare_enroll_client_id     (required)  service token client id
+#   pf_cloudflare_enroll_client_secret (required)  service token client secret
+#
+# LIVE-TEST CAVEAT (not yet exercised — needs an operator Zero Trust org): the MSI
+# URL + mdm.xml schema track Cloudflare's current client; verify on first live run.
+# Idempotent: skips the MSI install when the client is already present.
+- name: "pf_warp | require the Cloudflare enrollment inputs (deploy-time env)"
+  ansible.builtin.assert:
+    that:
+      - pf_cloudflare_team | default('') | length > 0
+      - pf_cloudflare_enroll_client_id | default('') | length > 0
+      - pf_cloudflare_enroll_client_secret | default('') | length > 0
+    fail_msg: >-
+      WARP needs PF_CLOUDFLARE_TEAM, PF_CLOUDFLARE_ENROLL_CLIENT_ID and
+      PF_CLOUDFLARE_ENROLL_CLIENT_SECRET passed as extra-vars at deploy
+      (operator-provided Zero Trust org). None are baked into the spec.
+
+- name: "pf_warp | check whether the WARP client is already installed"
+  ansible.windows.win_stat:
+    path: C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe
+  register: pf_warp_cli
+
+- name: "pf_warp | download the Cloudflare WARP installer (MSI)"
+  ansible.windows.win_get_url:
+    url: "https://1111-releases.cloudflareclient.com/windows/Cloudflare_WARP_Release-x64.msi"
+    dest: C:\setup\Cloudflare_WARP.msi
+  when: not pf_warp_cli.stat.exists
+
+- name: "pf_warp | install the WARP client silently"
+  ansible.windows.win_package:
+    path: C:\setup\Cloudflare_WARP.msi
+    state: present
+    arguments: "/quiet /norestart"
+  when: not pf_warp_cli.stat.exists
+
+- name: "pf_warp | deploy the mdm.xml enrolling to the Zero Trust org via service token"
+  ansible.windows.win_copy:
+    dest: C:\ProgramData\Cloudflare\mdm.xml
+    content: |
+      <dict>
+        <key>organization</key>
+        <string>{{ pf_cloudflare_team }}</string>
+        <key>auth_client_id</key>
+        <string>{{ pf_cloudflare_enroll_client_id }}</string>
+        <key>auth_client_secret</key>
+        <string>{{ pf_cloudflare_enroll_client_secret }}</string>
+        <key>service_mode</key>
+        <string>warp</string>
+      </dict>
+  # NOTE: split-tunnel to EXCLUDE the lab management range is operator-side (Zero
+  # Trust device profile) — without it WARP can blackhole the WinRM/WireGuard path.
+
+- name: "pf_warp | restart the WARP service so it picks up the mdm enrollment"
+  ansible.windows.win_service:
+    name: CloudflareWARP
+    state: restarted
+
+- name: "pf_warp | register + connect to the org (service-token, accept ToS)"
+  ansible.windows.win_shell: >-
+    & 'C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe' --accept-tos connect
+  register: pf_warp_connect
+  changed_when: true
+  failed_when: false
+  # failed_when:false — connect is best-effort/idempotent; verify below.
+
+- name: "pf_warp | record state"
+  ansible.builtin.debug:
+    msg: >-
+      Cloudflare WARP installed + enrolled to org '{{ pf_cloudflare_team }}' on
+      {{ inventory_hostname }} (egress via Gateway). Confirm `warp-cli status` is
+      Connected and the split-tunnel excludes the management range.

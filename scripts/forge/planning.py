@@ -1019,6 +1019,41 @@ def plan_application_provisioning(machines: list[dict]) -> dict[str, list[str]]:
     return plan
 
 
+def plan_telemetry(spec: dict, machines: list[dict]) -> dict[str, list[str]]:
+    """spec.telemetry -> {agent: [host names]} for the DETECT-pillar agents this
+    generator deploys (AGENTS ONLY — backends/policies/rules are operator-
+    configured; backend creds are deploy-time env vars, not in the spec). The
+    elastic edr+siem layers are served by ONE elastic-agent (union of targets);
+    the cloudflare swg layer is the WARP client. targets default to all hosts."""
+    tel = spec.get("telemetry") or {}
+    plan: dict[str, list[str]] = {}
+
+    def _hosts(targets) -> list[str]:
+        roles = expand_role_or_all(targets)
+        return [m["name"] for m in machines if m["role"] in roles]
+
+    elastic_layers = [
+        layer
+        for layer in (tel.get("edr") or {}, tel.get("siem") or {})
+        if layer.get("provider") == "elastic" and layer.get("enabled", True)
+    ]
+    if elastic_layers:
+        hosts: list[str] = []
+        for layer in elastic_layers:
+            for h in _hosts(layer.get("targets", "all")):
+                if h not in hosts:
+                    hosts.append(h)
+        if hosts:
+            plan["elastic-agent"] = hosts
+
+    swg = tel.get("swg") or {}
+    if swg.get("provider") == "cloudflare" and swg.get("enabled", True):
+        hosts = _hosts(swg.get("targets", "all"))
+        if hosts:
+            plan["warp"] = hosts
+    return plan
+
+
 def expand_role_or_all(value) -> set[str]:
     if value == "all" or value is None:
         return {"domain-controller", "member-server", "workstation"}

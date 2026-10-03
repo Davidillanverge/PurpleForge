@@ -1,0 +1,33 @@
+{#
+  PurpleForge — telemetry (DETECT) agent provisioning for {{ lab_name }}
+  (GENERATED, do not edit). Installs + enrolls the DETECT-pillar agents the spec's
+  telemetry[] block declares — AGENTS ONLY. The backends (Elastic deployment +
+  Fleet policy + Elastic Defend/winlog integrations + detection rules; Cloudflare
+  Zero Trust org + Gateway + split-tunnel) are operator-configured; this harness
+  only lands the agents. Backend credentials are deploy-time extra-vars
+  (PF_FLEET_URL / PF_FLEET_ENROLLMENT_TOKEN / PF_ELASTIC_AGENT_VERSION;
+  PF_CLOUDFLARE_TEAM / PF_CLOUDFLARE_ENROLL_CLIENT_ID / _SECRET), never in the spec
+  (not seed-derived — the one deliberate exception to account-independence).
+
+  Roles resolve via ansible.cfg roles_path (templates/ansible/roles), so nothing
+  is copied. One elastic-agent serves both the edr (Elastic Defend) and siem
+  (winlog/Sysmon) layers — the Fleet policy decides which integrations run.
+
+  Deploy order (site.yml.j2): runs after vuln-injection, before the clean
+  snapshot — the agents are part of the defended baseline the snapshot captures.
+#}
+---
+{% for h in elastic_agent_hosts %}
+- name: "PurpleForge | telemetry | elastic-agent -> {{ h }}"
+  hosts: {{ h }}
+  gather_facts: false
+  roles:
+    - pf_elastic_agent
+{% endfor %}
+{% for h in warp_hosts %}
+- name: "PurpleForge | telemetry | warp (cloudflare swg) -> {{ h }}"
+  hosts: {{ h }}
+  gather_facts: false
+  roles:
+    - pf_warp
+{% endfor %}

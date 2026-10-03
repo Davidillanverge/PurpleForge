@@ -1,0 +1,76 @@
+---
+# PurpleForge DETECT agent: Elastic Agent (Fleet-enrolled).
+# Installs + enrolls ONE elastic-agent that serves BOTH the telemetry.edr (Elastic
+# Defend) and telemetry.siem (winlog/Sysmon) layers — the Fleet policy the
+# OPERATOR configured decides which integrations run. This role only lands the
+# agent; it does not create policies, integrations or detection rules.
+#
+# Backend inputs are deploy-time extra-vars (NOT in the spec, not seed-derived):
+#   pf_fleet_url                  (required)  e.g. https://<fleet>.fleet.<region>.cloud.es.io:443
+#   pf_fleet_enrollment_token     (required)  from the operator's agent policy
+#   pf_elastic_agent_version      (required)  pin to the operator's stack version
+#   pf_fleet_insecure             (optional)  true to skip CA verify (self-hosted/self-signed)
+#
+# LIVE-TEST CAVEAT (not yet exercised — needs an operator Fleet): the download URL
+# / install flags track Elastic's current CLI; verify against the pinned version.
+# Idempotent: skips the install when the Elastic Agent service already exists.
+- name: "pf_elastic_agent | require the Fleet enrollment inputs (deploy-time env)"
+  ansible.builtin.assert:
+    that:
+      - pf_fleet_url | default('') | length > 0
+      - pf_fleet_enrollment_token | default('') | length > 0
+      - pf_elastic_agent_version | default('') | length > 0
+    fail_msg: >-
+      Elastic Agent needs PF_FLEET_URL, PF_FLEET_ENROLLMENT_TOKEN and
+      PF_ELASTIC_AGENT_VERSION passed as extra-vars at deploy (operator-provided
+      backend). None are baked into the spec.
+
+- name: "pf_elastic_agent | check whether the Elastic Agent service already exists"
+  ansible.windows.win_service:
+    name: "Elastic Agent"
+  register: pf_ea_svc
+  failed_when: false
+
+- name: "pf_elastic_agent | create the setup directory"
+  ansible.windows.win_file:
+    path: C:\setup\elastic
+    state: directory
+  when: not (pf_ea_svc.exists | default(false))
+
+- name: "pf_elastic_agent | download the Elastic Agent (Windows zip, pinned version)"
+  ansible.windows.win_get_url:
+    url: "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-{{ pf_elastic_agent_version }}-windows-x86_64.zip"
+    dest: "C:\\setup\\elastic\\elastic-agent-{{ pf_elastic_agent_version }}.zip"
+  when: not (pf_ea_svc.exists | default(false))
+
+- name: "pf_elastic_agent | expand the archive"
+  ansible.windows.win_shell: >-
+    Expand-Archive -Path 'C:\setup\elastic\elastic-agent-{{ pf_elastic_agent_version }}.zip'
+    -DestinationPath 'C:\setup\elastic' -Force
+  args:
+    creates: "C:\\setup\\elastic\\elastic-agent-{{ pf_elastic_agent_version }}-windows-x86_64\\elastic-agent.exe"
+  when: not (pf_ea_svc.exists | default(false))
+
+- name: "pf_elastic_agent | install + enroll to Fleet (non-interactive)"
+  ansible.windows.win_shell: >-
+    & 'C:\setup\elastic\elastic-agent-{{ pf_elastic_agent_version }}-windows-x86_64\elastic-agent.exe'
+    install --non-interactive
+    --url='{{ pf_fleet_url }}'
+    --enrollment-token='{{ pf_fleet_enrollment_token }}'
+    {{ '--insecure' if (pf_fleet_insecure | default(false) | bool) else '' }}
+  register: pf_ea_install
+  changed_when: true
+  failed_when: pf_ea_install.rc != 0
+  when: not (pf_ea_svc.exists | default(false))
+
+- name: "pf_elastic_agent | be sure the Elastic Agent service is running"
+  ansible.windows.win_service:
+    name: "Elastic Agent"
+    state: started
+
+- name: "pf_elastic_agent | record state"
+  ansible.builtin.debug:
+    msg: >-
+      Elastic Agent {{ pf_elastic_agent_version }} enrolled to Fleet on
+      {{ inventory_hostname }} (serves EDR/Defend + SIEM/winlog per the operator's
+      policy). Confirm healthy in Fleet.

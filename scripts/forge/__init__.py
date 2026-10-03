@@ -111,6 +111,7 @@ from .planning import (
     plan_edr,
     plan_hardening,
     plan_service_provisioning,
+    plan_telemetry,
     plan_vuln_injection,
     reconcile,
     resolve_attack_chain,
@@ -134,6 +135,7 @@ from .render import (
     render_proxmox_terraform,
     render_service_provisioning,
     render_site_playbook,
+    render_telemetry,
     render_verify_playbook,
     render_vuln_injection,
     resolve_defender_av_expected,
@@ -260,7 +262,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     render_defensive_controls(
         hardening_plan, edr_plan, deception_plan, machines, resolved_defense, ansible_groups, out_dir
     )
-    render_site_playbook(bool(planned_vulns), bool(service_hosts), out_dir, bool(app_hosts))
+    tel_hosts = plan_telemetry(spec, machines)
+    render_telemetry(tel_hosts, spec["lab"]["name"], out_dir)
+    render_site_playbook(bool(planned_vulns), bool(service_hosts), out_dir, bool(app_hosts), bool(tel_hosts))
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
     render_deploy_scripts(spec, manifest, machines, network_plan, out_dir)
@@ -620,12 +624,12 @@ __all__ = [
     "VULN_WEAK_PASSWORD_ALT", "WINDOWS_EVAL_EXPIRY_DAYS", "assign_ips", "build_ansible_groups", "build_manifest",
     "build_vuln_vars", "compute_population_counts", "derive_infra_secrets", "estimate_cost", "eval_expiry_notes",
     "expand_role_or_all", "flatten_machines", "load_and_resolve", "parse_auto_shutdown", "plan_deception",
-    "plan_application_provisioning", "plan_edr", "plan_hardening", "plan_service_provisioning", "plan_vuln_injection", "reconcile",
+    "plan_application_provisioning", "plan_edr", "plan_telemetry", "plan_hardening", "plan_service_provisioning", "plan_vuln_injection", "reconcile",
     "resolve_attack_chain", "resolve_hardening_skip_rules", "semantic_checks", "validate_schema",
     # render
     "DEFENDER_ASR_RULE_IDS", "VULN_CREDENTIAL_NOTES", "describe_vuln_credentials", "render_ad_population",
     "render_ansible", "render_azure_terraform", "render_backend_config", "render_defensive_controls",
-    "render_application_provisioning", "render_deploy_scripts", "render_lab_report", "render_proxmox_terraform", "render_service_provisioning",
+    "render_application_provisioning", "render_deploy_scripts", "render_telemetry", "render_lab_report", "render_proxmox_terraform", "render_service_provisioning",
     "render_site_playbook", "render_verify_playbook", "render_vuln_injection", "resolve_defender_av_expected",
     "write_lab_secrets",
     # lifecycle

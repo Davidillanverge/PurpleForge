@@ -33,7 +33,8 @@
       "enum": ["warn", "exclude-control", "fail"],
       "default": "warn"
     },
-    "validation": { "$ref": "#/$defs/validation" }
+    "validation": { "$ref": "#/$defs/validation" },
+    "telemetry": { "$ref": "#/$defs/telemetry" }
   },
 
   "$defs": {
@@ -301,6 +302,44 @@
           "additionalProperties": false,
           "properties": {
             "honey_accounts": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "DETECT-pillar telemetry AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agents; the backends, Fleet policies, integrations and detection rules are operator-configured, and the backend credentials are deploy-time env vars (never in the spec — not seed-derived, see NON-AD-VULNS-ROADMAP.md 'Telemetry'). telemetry.edr and telemetry.siem (both elastic) are served by a SINGLE elastic-agent install; telemetry.swg (cloudflare) is the WARP client.",
+      "properties": {
+        "swg": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider"],
+          "properties": {
+            "provider": { "type": "string", "enum": ["cloudflare"] },
+            "enabled": { "type": "boolean" },
+            "targets": { "$ref": "#/$defs/role_or_all" }
+          }
+        },
+        "edr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider"],
+          "properties": {
+            "provider": { "type": "string", "enum": ["elastic"] },
+            "enabled": { "type": "boolean" },
+            "targets": { "$ref": "#/$defs/role_or_all" }
+          }
+        },
+        "siem": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider"],
+          "properties": {
+            "provider": { "type": "string", "enum": ["elastic"] },
+            "enabled": { "type": "boolean" },
+            "targets": { "$ref": "#/$defs/role_or_all" }
           }
         }
       }
