@@ -545,6 +545,13 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
             "gateway_ip": str(net.network_address + 254),
             "subnet": info["subnet"],
         }
+    _tel = spec.get("telemetry") or {}
+    telemetry_elastic = any(
+        (_tel.get(k) or {}).get("provider") == "elastic" and (_tel.get(k) or {}).get("enabled", True)
+        for k in ("edr", "siem")
+    )
+    _swg = _tel.get("swg") or {}
+    telemetry_warp = _swg.get("provider") == "cloudflare" and _swg.get("enabled", True)
     context = {
         "lab_name": spec["lab"]["name"],
         "provider": provider,
@@ -556,6 +563,10 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         "spec_rel": manifest["source_spec"],
         "domains_json": json.dumps(domains_ctx),
         "auto_shutdown": spec["lab"].get("auto_shutdown", ""),
+        # Telemetry (DETECT) agents selected -> deploy.sh validates the operator's
+        # backend creds + passes them to site.yml as extra-vars.
+        "telemetry_elastic": telemetry_elastic,
+        "telemetry_warp": telemetry_warp,
     }
     template_suffix = {"proxmox": "-proxmox", "aws": "-aws"}.get(provider, "")
     env = jinja2.Environment(keep_trailing_newline=True)

@@ -73,9 +73,17 @@
   failed_when: false
   # failed_when:false — connect is best-effort/idempotent; verify below.
 
+- name: "pf_warp | verify WARP is Connected (best-effort, retries)"
+  ansible.windows.win_shell: "& 'C:\\Program Files\\Cloudflare\\Cloudflare WARP\\warp-cli.exe' status"
+  register: pf_warp_status
+  changed_when: false
+  failed_when: false
+  retries: 8
+  delay: 15
+  until: pf_warp_status.rc == 0 and ('Connected' in (pf_warp_status.stdout | default('')))
+
 - name: "pf_warp | record state"
   ansible.builtin.debug:
     msg: >-
       Cloudflare WARP installed + enrolled to org '{{ pf_cloudflare_team }}' on
-      {{ inventory_hostname }} (egress via Gateway). Confirm `warp-cli status` is
-      Connected and the split-tunnel excludes the management range.
+      {{ inventory_hostname }} (egress via Gateway). Status: {{ 'CONNECTED' if ('Connected' in (pf_warp_status.stdout | default(''))) else 'NOT-yet-connected — confirm warp-cli status' }}. Ensure the split-tunnel excludes the management range.

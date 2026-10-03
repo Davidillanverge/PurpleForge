@@ -281,13 +281,31 @@ ansible_up() {
 # ---- provision AD (site.yml enforces hardening-before-vulns order) ----------
 run_site() {
   log "6. Provision AD -> population -> hardening -> vuln injection (site.yml)"
+  # Telemetry (DETECT) backend creds are operator-provided + deploy-time only
+  # (never in the spec). Validate the ones this lab's telemetry agents need and
+  # pass them to site.yml as extra-vars (expanded on the host, so values travel as
+  # literal args — no env forwarding into the container needed).
+  TELEMETRY_EV=""
+{% if telemetry_elastic %}
+  [ -n "${PF_FLEET_URL:-}" ] || die "telemetry: PF_FLEET_URL unset (operator Fleet endpoint)"
+  [ -n "${PF_FLEET_ENROLLMENT_TOKEN:-}" ] || die "telemetry: PF_FLEET_ENROLLMENT_TOKEN unset"
+  [ -n "${PF_ELASTIC_AGENT_VERSION:-}" ] || die "telemetry: PF_ELASTIC_AGENT_VERSION unset (match your Elastic stack)"
+  TELEMETRY_EV="$TELEMETRY_EV -e pf_fleet_url=$PF_FLEET_URL -e pf_fleet_enrollment_token=$PF_FLEET_ENROLLMENT_TOKEN -e pf_elastic_agent_version=$PF_ELASTIC_AGENT_VERSION"
+  [ -n "${PF_FLEET_INSECURE:-}" ] && TELEMETRY_EV="$TELEMETRY_EV -e pf_fleet_insecure=$PF_FLEET_INSECURE"
+{% endif %}
+{% if telemetry_warp %}
+  [ -n "${PF_CLOUDFLARE_TEAM:-}" ] || die "telemetry: PF_CLOUDFLARE_TEAM unset (Zero Trust org slug)"
+  [ -n "${PF_CLOUDFLARE_ENROLL_CLIENT_ID:-}" ] || die "telemetry: PF_CLOUDFLARE_ENROLL_CLIENT_ID unset"
+  [ -n "${PF_CLOUDFLARE_ENROLL_CLIENT_SECRET:-}" ] || die "telemetry: PF_CLOUDFLARE_ENROLL_CLIENT_SECRET unset"
+  TELEMETRY_EV="$TELEMETRY_EV -e pf_cloudflare_team=$PF_CLOUDFLARE_TEAM -e pf_cloudflare_enroll_client_id=$PF_CLOUDFLARE_ENROLL_CLIENT_ID -e pf_cloudflare_enroll_client_secret=$PF_CLOUDFLARE_ENROLL_CLIENT_SECRET"
+{% endif %}
   local i=0
   until docker exec -w "/repo/generated/$LAB/ansible" pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }
     echo "  waiting for WinRM on all hosts ($i)..."; sleep 20
   done
   local tries=0 max=6
-  until docker exec -w "/repo/generated/$LAB/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml; do
+  until docker exec -w "/repo/generated/$LAB/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "site.yml still failing after $tries runs — inspect the error above (AWS-DEPLOY-RUNBOOK.md step 7)"
     warn "site.yml failed (attempt $tries/$max) — re-running (idempotent; picks up where it left off)"

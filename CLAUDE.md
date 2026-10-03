@@ -23,8 +23,15 @@ vez de reinventar despliegue/hardening de Windows.
    gestión. NSG/SG deny-by-default.
 2. **Purple = ataque ∧ defensa.** Toda vuln del catálogo declara `mitigate` +
    `neutralized_by`. El lab se despliega siempre con su stack `defense:`, nunca
-   solo la parte ofensiva. Alcance: PREVENT/RESPOND (hardening + Defender AV +
-   deception). Sin SIEM ni telemetría — la ingeniería de detección queda fuera.
+   solo la parte ofensiva. Alcance: **PREVENT/RESPOND/DETECT**. PREVENT/RESPOND =
+   hardening + Defender AV + deception (`defense:`). DETECT = el bloque opcional
+   `telemetry:` despliega y enrola **agentes** (elastic-agent/Fleet, WARP) en los
+   hosts; los **backends, políticas y reglas los configura el operador** y sus
+   credenciales son **deploy-time, no derivadas del seed** (la única excepción
+   consciente a la independencia de cuenta). El harness NO hornea reglas ni mapea
+   detección por-vuln: el bloque `detect`/`siem_rule` del schema de vulns sigue
+   prohibido, y el bucle de cobertura de detección (matriz applied+exploitable+
+   detected) es trabajo posterior — ver NON-AD-VULNS-ROADMAP.md 'Telemetry'.
 3. **Reconciliación hardening ⟷ vulns.** Antes de generar, el hardening se
    cruza con las vulns (vía `neutralized_by`) y los conflictos se resuelven
    según `on_conflict` (`warn` | `exclude-control` | `fail`). Nunca se aplica en
