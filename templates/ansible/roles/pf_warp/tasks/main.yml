@@ -25,6 +25,29 @@
       PF_CLOUDFLARE_ENROLL_CLIENT_SECRET passed as extra-vars at deploy
       (operator-provided Zero Trust org). None are baked into the spec.
 
+# WARP is officially a Win10/11 client; on Windows Server its MSI aborts at
+# CustomAction ConfigureServiceCA with 1603 because the WARP service depends on
+# the WLAN AutoConfig service, which Server does not install by default. Enabling
+# the Wireless-Networking feature (which brings WLAN AutoConfig) fixes it. Only on
+# Server/DC (ProductType 2/3); on a Win10/11 workstation (ProductType 1) WLAN is
+# already present and win_feature/Install-WindowsFeature would not apply.
+# (Confirmed root cause live: ConfigureServiceCA 1603 on Windows Server 2022.)
+- name: "pf_warp | detect OS product type (1=client, 2=DC, 3=server)"
+  ansible.windows.win_shell: "(Get-CimInstance Win32_OperatingSystem).ProductType"
+  register: pf_warp_producttype
+  changed_when: false
+
+- name: "pf_warp | enable the Wireless-Networking feature on Server (WARP needs WLAN AutoConfig)"
+  ansible.windows.win_feature:
+    name: Wireless-Networking
+    state: present
+  register: pf_warp_wlan
+  when: (pf_warp_producttype.stdout | trim) != '1'
+
+- name: "pf_warp | reboot if enabling the WLAN feature requires it"
+  ansible.windows.win_reboot:
+  when: pf_warp_wlan.reboot_required | default(false)
+
 - name: "pf_warp | check whether the WARP client is already installed"
   ansible.windows.win_stat:
     path: C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe
