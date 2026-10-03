@@ -93,21 +93,18 @@
     name: CloudflareWARP
     state: restarted
 
-- name: "pf_warp | register the device to the org (consumes the mdm.xml service token)"
-  ansible.windows.win_shell: >-
-    & 'C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe' --accept-tos registration new
-  register: pf_warp_reg
-  changed_when: true
-  failed_when: false
-  async: 120
-  poll: 5
-  # async timeout so a stuck registration (e.g. the daemon not ready after the
-  # service restart, or an unauthorised service token) can't hang the play forever.
-  # Required before connect — a bare `connect` fails with "Registration Missing".
-  # Uses the mdm.xml service token. failed_when:false: idempotent (benign if already
-  # registered). NOTE: if status later shows "Does not exist in API", the service
-  # token is not authorised by a Zero Trust *device enrollment* policy (operator
-  # side) — add a WARP device-enrollment rule permitting the token.
+# Device enrollment is AUTOMATIC: on service start the WARP client reads mdm.xml and
+# enrols with the service token. Do NOT run `warp-cli registration new` — that path
+# is interactive (opens a browser) and fails headless. Just give the service a
+# moment to auto-enrol after the restart above, then connect.
+# IMPORTANT (operator side, confirmed live): the service token only enrols if a Zero
+# Trust WARP *device-enrollment* rule exists with action **Service Auth** and
+# expression `User Email is non_identity@<ORG>.cloudflareaccess.com`. An
+# Allow/Include rule does NOT work for service tokens — the device registers locally
+# but the API rejects it ("Registration Missing: Does not exist in API").
+- name: "pf_warp | wait for the service to auto-enrol from the mdm service token"
+  ansible.builtin.pause:
+    seconds: 25
 
 - name: "pf_warp | connect to the org (accept ToS)"
   ansible.windows.win_shell: >-

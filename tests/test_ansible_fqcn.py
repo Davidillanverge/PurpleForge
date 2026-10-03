@@ -56,6 +56,7 @@ VALID_MODULE_FQCNS = {
     "ansible.builtin.debug",
     "ansible.builtin.include_role",
     "ansible.builtin.include_tasks",
+    "ansible.builtin.pause",
     "ansible.builtin.set_fact",
     # ansible.windows
     "ansible.windows.win_acl",
