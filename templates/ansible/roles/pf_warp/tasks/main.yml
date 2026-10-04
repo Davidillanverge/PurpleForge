@@ -88,6 +88,15 @@
   # NOTE: split-tunnel to EXCLUDE the lab management range is operator-side (Zero
   # Trust device profile) — without it WARP can blackhole the WinRM/WireGuard path.
 
+- name: "pf_warp | clear any stale registration (avoids RegistrationMissing/ApiMismatch on re-runs)"
+  ansible.windows.win_shell: >-
+    & 'C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe' --accept-tos registration delete
+  changed_when: false
+  failed_when: false
+  # Best-effort: harmless on a clean host; on a re-enrol it clears stale local
+  # registration state so the fresh mdm service-token enrollment isn't rejected
+  # with Invalidated(ApiMismatch) (confirmed live).
+
 - name: "pf_warp | restart the WARP service so it picks up the mdm enrollment"
   ansible.windows.win_service:
     name: CloudflareWARP
