@@ -34,17 +34,34 @@
 
 - name: "ftp-install | create a SECURE FTP site (anon off, basic on, authenticated read-only)"
   ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
     Import-Module WebAdministration
     if (-not (Get-Website -Name 'PFFtp' -ErrorAction SilentlyContinue)) {
         New-WebFtpSite -Name 'PFFtp' -Port 21 -PhysicalPath 'C:\inetpub\ftproot' -Force | Out-Null
     }
     $site = "IIS:\Sites\PFFtp"
-    # auth: anonymous OFF, basic ON
+    # auth: anonymous OFF, basic ON (the IIS: provider handles authentication fine)
     Set-ItemProperty $site -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $false
     Set-ItemProperty $site -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
-    # authorization: wipe any rule, then allow authenticated users READ only
-    Clear-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -ErrorAction SilentlyContinue
-    Add-WebConfiguration -PSPath $site -Filter 'system.ftpServer/security/authorization' -Value @{accessType='Allow'; roles=''; users='*'; permissions='Read'} -ErrorAction SilentlyContinue
+    # authorization: authenticated users, READ only.
+    # NB: Clear/Add-WebConfiguration against the per-site IIS: PSDrive path throw
+    # COM "Class not registered" for system.ftpServer/security/authorization on a
+    # freshly-installed FTP role (a defect of the IIS PowerShell provider for FTP
+    # sections, independent of reboots). Use the Microsoft.Web.Administration
+    # ServerManager API instead — it edits applicationHost.config directly and is
+    # not affected. Idempotent: the collection is cleared before the rule is added.
+    Add-Type -Path "$env:windir\system32\inetsrv\Microsoft.Web.Administration.dll"
+    $sm = New-Object Microsoft.Web.Administration.ServerManager
+    $cfg = $sm.GetApplicationHostConfiguration()
+    $authz = $cfg.GetSection('system.ftpServer/security/authorization', 'PFFtp')
+    $col = $authz.GetCollection()
+    $col.Clear()
+    $rule = $col.CreateElement('add')
+    $rule['accessType'] = 'Allow'
+    $rule['users'] = '*'
+    $rule['permissions'] = 1
+    $col.Add($rule) | Out-Null
+    $sm.CommitChanges()
   changed_when: true
 
 - name: "ftp-install | Firewall | allow FTP control channel (TCP 21)"

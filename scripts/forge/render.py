@@ -779,6 +779,8 @@ def render_lab_report(
     edr_plan: list[dict],
     deception_plan: dict,
     out_dir: Path,
+    telemetry_plan: dict[str, list[str]] | None = None,
+    bas_plan: dict[str, list[str]] | None = None,
 ) -> None:
     # "Administrator" here is the domain's real RID-500 account, not a fresh
     # object win_domain creates: promoting the first DC of a new forest seeds
@@ -808,8 +810,33 @@ def render_lab_report(
         for v in planned_vulns
     ]
 
+    # Telemetry (DETECT) + BAS rows for the report. The plans are {agent: [hosts]};
+    # map them to human rows, naming the layers each Elastic Agent serves (edr =>
+    # Elastic Defend, siem => ELK) from the spec. Agents only — backends/policies/
+    # rules are operator-configured, creds deploy-time env (see the runbooks).
+    telemetry_plan = telemetry_plan or {}
+    bas_plan = bas_plan or {}
+    _tel = spec.get("telemetry") or {}
+    telemetry_rows = []
+    if telemetry_plan.get("elastic-agent"):
+        layers = []
+        if (_tel.get("edr") or {}).get("provider") == "elastic" and (_tel.get("edr") or {}).get("enabled", True):
+            layers.append("EDR (Elastic Defend)")
+        if (_tel.get("siem") or {}).get("provider") == "elastic" and (_tel.get("siem") or {}).get("enabled", True):
+            layers.append("SIEM (ELK)")
+        telemetry_rows.append(
+            {"product": "Elastic Agent", "role": " + ".join(layers) or "—", "targets": telemetry_plan["elastic-agent"]}
+        )
+    if telemetry_plan.get("warp"):
+        telemetry_rows.append({"product": "Cloudflare WARP", "role": "SWG", "targets": telemetry_plan["warp"]})
+    bas_rows = []
+    if bas_plan.get("caldera-sandcat"):
+        bas_rows.append({"product": "MITRE Caldera (sandcat beacon)", "targets": bas_plan["caldera-sandcat"]})
+
     context = {
         "lab": spec["lab"],
+        "telemetry_rows": telemetry_rows,
+        "bas_rows": bas_rows,
         "theme_id": theme["id"],
         "theme_name": theme["name"],
         "cost_estimate": manifest["cost_estimate"],

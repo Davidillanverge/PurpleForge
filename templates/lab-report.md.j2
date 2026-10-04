@@ -196,6 +196,34 @@ No ansible-lockdown role applied (baseline `none`/`baseline-controls` — only t
 No EDR configured.
 
 {% endif %}
+{% if telemetry_rows %}
+### Telemetry (DETECT agents)
+
+The DETECT pillar enrols **agents** on the hosts (part of the defended baseline the clean snapshot captures). The **backends, policies and detection rules are the operator's job**, and their credentials are **deploy-time environment variables, never derived from the seed** — the one conscious exception to account independence.
+
+| Agent | Layer(s) | Targets |
+|---|---|---|
+{% for t in telemetry_rows %}
+| {{ t.product }} | {{ t.role }} | {{ t.targets | join(', ') }} |
+{% endfor %}
+
+Deploy-time env (see `TELEMETRY-DEPLOY-RUNBOOK.md`): Elastic — `PF_FLEET_URL`, `PF_FLEET_ENROLLMENT_TOKEN`, `PF_ELASTIC_AGENT_VERSION`; Cloudflare WARP — `PF_CLOUDFLARE_TEAM`, `PF_CLOUDFLARE_ENROLL_CLIENT_ID`, `PF_CLOUDFLARE_ENROLL_CLIENT_SECRET`.
+
+{% endif %}
+{% if bas_rows %}
+### BAS (breach & attack simulation)
+
+Adversary-emulation **beacon** only — the operator stands up the C2 server and defines/launches operations; the harness lands and enrols the agent. Server creds are deploy-time env, not in the spec.
+
+| Agent | Targets |
+|---|---|
+{% for b in bas_rows %}
+| {{ b.product }} | {{ b.targets | join(', ') }} |
+{% endfor %}
+
+Deploy-time env (see `BAS-DEPLOY-RUNBOOK.md`): `PF_CALDERA_SERVER`, `PF_CALDERA_GROUP`, optional `PF_CALDERA_API_KEY`.
+
+{% endif %}
 ## Vulnerabilities
 
 {% if vuln_rows %}

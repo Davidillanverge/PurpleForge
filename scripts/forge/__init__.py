@@ -302,6 +302,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         edr_plan,
         deception_plan,
         out_dir,
+        telemetry_plan=tel_hosts,
+        bas_plan=bas_hosts,
     )
     render_verify_playbook(
         machines,
