@@ -36,6 +36,7 @@ lab-manifest.json
 !specs/**/*.json
 .env
 .env.*
+!.env.example
 
 # Python
 .venv/
