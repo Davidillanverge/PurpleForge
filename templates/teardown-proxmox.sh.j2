@@ -51,9 +51,12 @@ destroy() {
   # the QEMU guest agent and BLOCKS on it (the same agent-wait that slows apply) —
   # on teardown that hangs indefinitely. We're tearing everything down anyway, so
   # destroy straight from the recorded state without re-reading the guests.
-  until terraform -chdir="$TF_DIR" destroy -refresh=false -auto-approve -input=false; do
+  while true; do
+    if terraform -chdir="$TF_DIR" destroy -refresh=false -auto-approve -input=false; then
+      return 0
+    fi
     tries=$((tries+1))
-    [ "$tries" -ge 3 ] && { warn "destroy still failing after $tries tries — check the Proxmox UI for leftover VMs in pool '$LAB'"; break; }
+    [ "$tries" -ge 3 ] && { warn "destroy still failing after $tries tries — check the Proxmox UI for leftover VMs in pool '$LAB'"; return 1; }
     warn "destroy failed (attempt $tries) — retrying in 15s"
     sleep 15
   done
@@ -73,10 +76,13 @@ except Exception: d={}
 print(len([m for m in d.get("members",[]) if m.get("type")=="qemu"]))' 2>/dev/null || echo "?")"
   if [ "$left" = "0" ]; then
     echo "  pool '$LAB' has no VMs left — teardown complete"
+    return 0
   elif [ "$left" = "?" ]; then
     warn "could not query the pool (pool already deleted, or API unreachable) — verify manually in the Proxmox UI"
+    return 0
   else
     warn "$left VM(s) still in pool '$LAB' — delete them manually in the Proxmox UI"
+    return 1
   fi
 }
 
@@ -90,9 +96,10 @@ local_cleanup() {
 }
 
 remove_cron
-destroy
-verify
+destroy || warn "terraform destroy reported failure — verifying the pool directly"
+verify_ok=0; verify && verify_ok=1
 local_cleanup
+[ "$verify_ok" = 1 ] || die "pool '$LAB' still has VM(s) — teardown did NOT reach cost-zero; delete them in the Proxmox UI or re-run ./teardown.sh"
 # KEEP .pf-proxmox-env (it is gitignored, holds no lab state, and a fresh
 # `forge generate` wipes generated/ anyway) so a later redeploy of this lab
 # re-sources the same credentials with nothing to retype. Previously this was

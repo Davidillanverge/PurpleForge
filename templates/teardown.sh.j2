@@ -56,9 +56,12 @@ except Exception: d={}
 destroy() {
   log "2. terraform destroy + cost-zero verification"
   local tries=0
-  until PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --yes; do
+  while true; do
+    if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --yes; then
+      return 0
+    fi
     tries=$((tries+1))
-    [ "$tries" -ge 3 ] && break
+    [ "$tries" -ge 3 ] && return 1
     warn "destroy failed (attempt $tries) — starting VMs again and retrying"
     start_vms
   done
@@ -92,7 +95,13 @@ local_cleanup() {
 }
 
 start_vms
-destroy
+destroy || warn "terraform destroy did not verify clean — relying on the resource-group sweep below"
 sweep_rg
 local_cleanup
+# True cost-zero signal for Azure = the resource group no longer exists. Gate the
+# COMPLETE banner on it so teardown never claims success while the RG (and its
+# billable resources) is still there.
+if az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$LAB?api-version=2021-04-01" >/dev/null 2>&1; then
+  die "resource group '$LAB' still exists — teardown did NOT reach cost-zero; resources may be billing. Delete it in the portal or re-run ./teardown.sh"
+fi
 log "TEARDOWN COMPLETE — $LAB (verify: az resource list -g $LAB should 404)"

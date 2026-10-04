@@ -14,9 +14,11 @@ set -uo pipefail
 LAB="{{ lab_name }}"
 REGION="${PF_REGION:-{{ region }}}"
 SPEC_REL="{{ spec_rel }}"
+STATE_TABLE="purpleforge-tfstate-lock"
 
 cd "$(dirname "$0")"
 LAB_DIR="$PWD"
+TF_DIR="$LAB_DIR/terraform/aws"
 REPO="$(cd "$LAB_DIR/../.." && pwd)"
 
 export AWS_DEFAULT_REGION="$REGION"
@@ -26,18 +28,41 @@ warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v aws >/dev/null 2>&1 || die "missing prerequisite: aws"
-aws sts get-caller-identity >/dev/null 2>&1 || die "AWS credentials not usable (configure env / AWS_PROFILE / 'aws sso login')"
+ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" \
+  || die "AWS credentials not usable (configure env / AWS_PROFILE / 'aws sso login')"
+[ -n "$ACCOUNT" ] && [ "$ACCOUNT" != "None" ] \
+  || die "AWS credentials not usable (configure env / AWS_PROFILE / 'aws sso login')"
+
+# ---- 0b. re-point backend.hcl at the REAL remote state ---------------------
+# `forge generate` rewrites backend.hcl back to a PLACEHOLDER bucket
+# (purpleforge-tfstate / us-east-1), so a lab regenerated after deploy would send
+# `terraform init` at a bucket that does not exist and `terraform destroy` would
+# silently destroy NOTHING (resources keep billing). Re-derive the backend the
+# same way deploy.sh mints it (account id + region) so destroy always targets the
+# bucket the lab's state actually lives in. We only REWRITE the pointer; the
+# bucket/table must already exist from deploy (we never create them here).
+ensure_backend() {
+  log "0b. Re-point backend.hcl at the real remote state (guard vs generate clobber)"
+  local bucket="${PF_STATE_BUCKET:-pf-tfstate-${ACCOUNT}-${REGION}}"
+  printf 'bucket         = "%s"\nkey            = "%s.tfstate"\nregion         = "%s"\ndynamodb_table = "%s"\nencrypt        = true\n' \
+    "$bucket" "$LAB" "$REGION" "$STATE_TABLE" > "$TF_DIR/backend.hcl"
+  echo "  backend.hcl -> bucket=$bucket key=$LAB.tfstate table=$STATE_TABLE"
+}
 
 # ---- 1. destroy + verify cost-zero (reuses `forge destroy`) ----------------
 # EC2 terminates regardless of power state, so (unlike Azure) no VM-start step is
 # needed first. `forge destroy` runs terraform destroy then verify_aws_teardown
-# (no resource tagged lab=$LAB remains in $REGION).
+# (no resource tagged lab=$LAB remains in $REGION). Returns non-zero if destroy
+# never verified clean, so the caller does NOT falsely claim COMPLETE.
 destroy() {
   log "1. terraform destroy + cost-zero verification"
   local tries=0
-  until PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --yes; do
+  while true; do
+    if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --yes; then
+      return 0
+    fi
     tries=$((tries+1))
-    [ "$tries" -ge 3 ] && break
+    [ "$tries" -ge 3 ] && return 1
     warn "destroy failed (attempt $tries) — retrying in 15s"
     sleep 15
   done
@@ -73,9 +98,15 @@ local_cleanup() {
   echo "  removed pf-ansible container + pf-lab WireGuard interface"
 }
 
-destroy
+ensure_backend
+if destroy; then destroy_ok=1; else destroy_ok=0; fi
 sweep_amis
 local_cleanup
+if [ "$destroy_ok" != 1 ]; then
+  die "terraform destroy did NOT verify cost-zero — resources may STILL BE BILLING.
+  Check AWS creds and that the state bucket exists, then re-run ./teardown.sh.
+  Verify by hand: aws ec2 describe-instances --filters Name=tag:lab,Values=$LAB --region $REGION"
+fi
 log "TEARDOWN COMPLETE — $LAB"
 echo "verify: aws ec2 describe-instances --filters Name=tag:lab,Values=$LAB --region $REGION  (should list none running)"
 echo "NOTE: the shared state bucket + DynamoDB lock table are per-deployer and intentionally kept"
