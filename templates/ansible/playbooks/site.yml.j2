@@ -40,3 +40,12 @@
 # deploy-time extra-vars.
 - import_playbook: telemetry-provisioning.yml
 {% endif %}
+{% if has_bas %}
+# BAS pillar (adversary emulation): install/enroll the Caldera sandcat beacon,
+# AFTER telemetry and BEFORE the clean snapshot — the dormant agent is part of the
+# defended baseline (like the EDR), while the Caldera operations themselves are
+# attacks that run AFTER the snapshot (like /validate). Agents only — the operator
+# stands up the Caldera server (cloud or local Kali) and launches operations;
+# server creds are deploy-time extra-vars, never in the spec.
+- import_playbook: bas-provisioning.yml
+{% endif %}

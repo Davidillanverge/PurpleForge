@@ -1,0 +1,91 @@
+---
+# PurpleForge BAS agent: MITRE Caldera "sandcat" (54ndc47) beacon.
+# Downloads + installs ONE sandcat agent that beacons back to the operator's
+# Caldera server and joins a group. This role only lands + persists the agent; it
+# does NOT create operations, abilities or adversaries — the operator drives the
+# emulation from the Caldera server. The server runs wherever the operator put it:
+#   * a CLOUD Caldera  -> agents reach it by egress through the WireGuard bastion
+#     (NAT), so PF_CALDERA_SERVER is its public/routable URL.
+#   * a LOCAL KALI Caldera -> the Kali box is the WireGuard peer, so set
+#     PF_CALDERA_SERVER to the Kali address the lab subnets can reach over the
+#     tunnel (its WireGuard interface IP, e.g. http://10.x.x.x:8888). See
+#     BAS-DEPLOY-RUNBOOK.md for picking the right address.
+#
+# Backend inputs are deploy-time extra-vars (NOT in the spec, not seed-derived):
+#   pf_caldera_server   (required)  base URL incl. scheme+port, e.g. http://host:8888
+#   pf_caldera_group    (required)  sandcat group to join, e.g. red
+#   pf_caldera_api_key  (optional)  only if your download endpoint is auth-gated;
+#                                   the default sandcat beacon does not need it.
+#
+# LIVE-TEST CAVEAT (not yet exercised against a real Caldera): the download headers
+# and sandcat flags track Caldera's current sandcat plugin; verify against your
+# server version. Idempotent: skips when the PFCalderaSandcat task already exists.
+- name: "pf_caldera_agent | require the Caldera enrollment inputs (deploy-time env)"
+  ansible.builtin.assert:
+    that:
+      - pf_caldera_server | default('') | length > 0
+      - pf_caldera_group | default('') | length > 0
+    fail_msg: >-
+      Caldera sandcat needs PF_CALDERA_SERVER and PF_CALDERA_GROUP passed as
+      extra-vars at deploy (operator-provided C2 server — cloud or local Kali).
+      Neither is baked into the spec.
+
+- name: "pf_caldera_agent | check whether the sandcat scheduled task already exists"
+  ansible.windows.win_shell: "if (Get-ScheduledTask -TaskName 'PFCalderaSandcat' -ErrorAction SilentlyContinue) { 'present' } else { 'absent' }"
+  register: pf_cal_task
+  changed_when: false
+
+- name: "pf_caldera_agent | create the setup directory"
+  ansible.windows.win_file:
+    path: C:\setup\caldera
+    state: directory
+  when: "'present' not in (pf_cal_task.stdout | default(''))"
+
+- name: "pf_caldera_agent | download the sandcat agent (Windows binary) from the Caldera server"
+  ansible.windows.win_get_url:
+    url: "{{ pf_caldera_server }}/file/download"
+    dest: "C:\\setup\\caldera\\sandcat.exe"
+    headers:
+      platform: windows
+      file: sandcat.go
+      "{{ 'KEY' if (pf_caldera_api_key | default('') | length > 0) else 'X-Pf-Unused' }}": "{{ pf_caldera_api_key | default('') }}"
+  when: "'present' not in (pf_cal_task.stdout | default(''))"
+
+# Persist as an at-boot SYSTEM scheduled task (survives reboot -> part of the
+# baseline the clean snapshot captures) AND kick it off now so it is already
+# beaconing when the snapshot is taken.
+- name: "pf_caldera_agent | register the sandcat agent as an at-boot SYSTEM task"
+  community.windows.win_scheduled_task:
+    name: PFCalderaSandcat
+    description: "PurpleForge BAS — MITRE Caldera sandcat beacon (group {{ pf_caldera_group }})"
+    actions:
+      - path: C:\setup\caldera\sandcat.exe
+        arguments: "-server {{ pf_caldera_server }} -group {{ pf_caldera_group }} -v"
+    triggers:
+      - type: boot
+    username: SYSTEM
+    run_level: highest
+    state: present
+    enabled: true
+
+- name: "pf_caldera_agent | start the sandcat agent now (begin beaconing)"
+  ansible.windows.win_shell: "Start-ScheduledTask -TaskName 'PFCalderaSandcat'"
+  register: pf_cal_start
+  changed_when: true
+  failed_when: pf_cal_start.rc != 0
+
+- name: "pf_caldera_agent | verify the sandcat process is running (best-effort, retries)"
+  ansible.windows.win_shell: "if (Get-Process -Name 'sandcat' -ErrorAction SilentlyContinue) { 'running' } else { 'not-running' }"
+  register: pf_cal_proc
+  changed_when: false
+  failed_when: false
+  retries: 8
+  delay: 10
+  until: "'running' in (pf_cal_proc.stdout | default(''))"
+
+- name: "pf_caldera_agent | record state"
+  ansible.builtin.debug:
+    msg: >-
+      Caldera sandcat enrolled on {{ inventory_hostname }} -> server
+      {{ pf_caldera_server }} (group {{ pf_caldera_group }}). Beacon check:
+      {{ 'RUNNING' if 'running' in (pf_cal_proc.stdout | default('')) else 'NOT-yet-seen — confirm the agent appears in the Caldera UI' }}.

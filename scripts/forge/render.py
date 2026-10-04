@@ -493,12 +493,39 @@ def render_telemetry(agent_hosts: dict[str, list[str]], lab_name: str, out_dir: 
     )
 
 
+def render_bas(agent_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) -> None:
+    """Renders bas-provisioning.yml (one play per host per BAS agent). AGENTS ONLY
+    — the operator stands up the Caldera/C2 server (cloud or local Kali) and
+    launches the operations; this only lands + enrolls the sandcat beacon. The role
+    (pf_caldera_agent) resolves via ansible.cfg roles_path, so nothing is copied.
+    Server creds arrive as deploy-time extra-vars (PF_CALDERA_SERVER/
+    PF_CALDERA_GROUP[/PF_CALDERA_API_KEY]), never in the spec. Runs after telemetry,
+    before the clean snapshot — the agent is part of the defended baseline the
+    snapshot captures; the emulations are attacks that run after."""
+    if not agent_hosts:
+        return
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "bas-provisioning.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
+    )
+    (dst / "bas-provisioning.yml").write_text(
+        template.render(
+            lab_name=lab_name,
+            caldera_hosts=agent_hosts.get("caldera-sandcat", []),
+        ),
+        encoding="utf-8",
+    )
+
+
 def render_site_playbook(
     has_vuln_injection: bool,
     has_service_provisioning: bool,
     out_dir: Path,
     has_application_provisioning: bool = False,
     has_telemetry: bool = False,
+    has_bas: bool = False,
 ) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
@@ -515,6 +542,7 @@ def render_site_playbook(
             has_service_provisioning=has_service_provisioning,
             has_application_provisioning=has_application_provisioning,
             has_telemetry=has_telemetry,
+            has_bas=has_bas,
         ),
         encoding="utf-8",
     )
@@ -552,6 +580,11 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
     )
     _swg = _tel.get("swg") or {}
     telemetry_warp = _swg.get("provider") == "cloudflare" and _swg.get("enabled", True)
+    # BAS (adversary-emulation) agents selected -> deploy.sh validates the
+    # operator's C2 server creds (cloud or local Kali) + passes them to site.yml.
+    _bas = spec.get("bas") or {}
+    _caldera = _bas.get("caldera")
+    bas_caldera = _caldera is not None and _caldera.get("enabled", True)
     context = {
         "lab_name": spec["lab"]["name"],
         "provider": provider,
@@ -567,6 +600,7 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         # backend creds + passes them to site.yml as extra-vars.
         "telemetry_elastic": telemetry_elastic,
         "telemetry_warp": telemetry_warp,
+        "bas_caldera": bas_caldera,
     }
     template_suffix = {"proxmox": "-proxmox", "aws": "-aws"}.get(provider, "")
     env = jinja2.Environment(keep_trailing_newline=True)

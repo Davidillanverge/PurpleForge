@@ -34,7 +34,8 @@
       "default": "warn"
     },
     "validation": { "$ref": "#/$defs/validation" },
-    "telemetry": { "$ref": "#/$defs/telemetry" }
+    "telemetry": { "$ref": "#/$defs/telemetry" },
+    "bas": { "$ref": "#/$defs/bas" }
   },
 
   "$defs": {
@@ -338,6 +339,23 @@
           "required": ["provider"],
           "properties": {
             "provider": { "type": "string", "enum": ["elastic"] },
+            "enabled": { "type": "boolean" },
+            "targets": { "$ref": "#/$defs/role_or_all" }
+          }
+        }
+      }
+    },
+
+    "bas": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BAS (breach-and-attack-simulation / adversary-emulation) AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agent (beacon); the C2 server and the operations/abilities that drive the emulation are operator-configured, and the server credentials are deploy-time env vars (never in the spec — not seed-derived, same deliberate exception as telemetry). The dormant agent installs as part of the defended baseline (before the clean snapshot); the emulations are attacks that run after it, like validation. See BAS-DEPLOY-RUNBOOK.md.",
+      "properties": {
+        "caldera": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "MITRE Caldera sandcat beacon. The server (PF_CALDERA_SERVER) may be a cloud Caldera or a local Kali instance reachable over the WireGuard tunnel.",
+          "properties": {
             "enabled": { "type": "boolean" },
             "targets": { "$ref": "#/$defs/role_or_all" }
           }

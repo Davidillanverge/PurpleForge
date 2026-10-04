@@ -1054,6 +1054,31 @@ def plan_telemetry(spec: dict, machines: list[dict]) -> dict[str, list[str]]:
     return plan
 
 
+def plan_bas(spec: dict, machines: list[dict]) -> dict[str, list[str]]:
+    """spec.bas -> {agent: [host names]} for the BAS (breach-and-attack-simulation
+    / adversary-emulation) agents this generator deploys. AGENTS ONLY — the
+    operator stands up the C2 server (Caldera, cloud or local Kali) and
+    defines/launches the operations; the harness only lands + enrolls the beacon.
+    Server creds are deploy-time env vars, not in the spec (the same deliberate
+    exception to account-independence as telemetry). targets default to all hosts.
+    The agent installs as part of the defended baseline (before the clean
+    snapshot); the emulations themselves are attacks and run AFTER the snapshot,
+    like validation."""
+    bas = spec.get("bas") or {}
+    plan: dict[str, list[str]] = {}
+
+    def _hosts(targets) -> list[str]:
+        roles = expand_role_or_all(targets)
+        return [m["name"] for m in machines if m["role"] in roles]
+
+    caldera = bas.get("caldera")
+    if caldera is not None and caldera.get("enabled", True):
+        hosts = _hosts(caldera.get("targets", "all"))
+        if hosts:
+            plan["caldera-sandcat"] = hosts
+    return plan
+
+
 def expand_role_or_all(value) -> set[str]:
     if value == "all" or value is None:
         return {"domain-controller", "member-server", "workstation"}

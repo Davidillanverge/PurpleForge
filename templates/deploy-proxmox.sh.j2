@@ -333,6 +333,16 @@ run_site() {
   [ -n "${PF_CLOUDFLARE_ENROLL_CLIENT_SECRET:-}" ] || die "telemetry: PF_CLOUDFLARE_ENROLL_CLIENT_SECRET unset"
   TELEMETRY_EV="$TELEMETRY_EV -e pf_cloudflare_team=$PF_CLOUDFLARE_TEAM -e pf_cloudflare_enroll_client_id=$PF_CLOUDFLARE_ENROLL_CLIENT_ID -e pf_cloudflare_enroll_client_secret=$PF_CLOUDFLARE_ENROLL_CLIENT_SECRET"
 {% endif %}
+{% if bas_caldera %}
+  # BAS (adversary emulation) — MITRE Caldera sandcat beacon. The Caldera server is
+  # operator-run: a cloud server (agents reach it via bastion egress) or a local
+  # Kali server (set PF_CALDERA_SERVER to the Kali address reachable over the
+  # WireGuard tunnel, e.g. http://10.x.x.x:8888). Creds are deploy-time only.
+  [ -n "${PF_CALDERA_SERVER:-}" ] || die "bas: PF_CALDERA_SERVER unset (operator Caldera URL, e.g. http://host:8888 — cloud or local Kali over the tunnel)"
+  [ -n "${PF_CALDERA_GROUP:-}" ] || die "bas: PF_CALDERA_GROUP unset (sandcat agent group, e.g. red)"
+  TELEMETRY_EV="$TELEMETRY_EV -e pf_caldera_server=$PF_CALDERA_SERVER -e pf_caldera_group=$PF_CALDERA_GROUP"
+  [ -n "${PF_CALDERA_API_KEY:-}" ] && TELEMETRY_EV="$TELEMETRY_EV -e pf_caldera_api_key=$PF_CALDERA_API_KEY"
+{% endif %}
   local i=0
   until docker exec -w "/repo/generated/$LAB/ansible" pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }

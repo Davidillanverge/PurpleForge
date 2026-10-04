@@ -1,0 +1,36 @@
+{#
+  PurpleForge — BAS (breach-and-attack-simulation / adversary-emulation) agent
+  provisioning for {{ lab_name }} (GENERATED, do not edit). Installs + enrolls the
+  BAS agents the spec's bas[] block declares — AGENTS ONLY. The C2 server (Caldera,
+  running either in the cloud or on the operator's local Kali) and the operations /
+  abilities that drive the emulation are operator-configured; this harness only
+  lands + enrolls the beacon. Server creds are deploy-time extra-vars
+  (PF_CALDERA_SERVER / PF_CALDERA_GROUP[/ PF_CALDERA_API_KEY]), never in the spec
+  (not seed-derived — the same deliberate exception to account-independence as the
+  DETECT telemetry layer).
+
+  Roles resolve via ansible.cfg roles_path (templates/ansible/roles), so nothing
+  is copied.
+
+  Deploy order (site.yml.j2): runs after telemetry, before the clean snapshot. The
+  dormant sandcat agent is part of the defended baseline the snapshot captures; the
+  Caldera operations are attacks that run AFTER the snapshot (like /validate).
+#}
+---
+{# Each agent runs in block/rescue so one host failing (e.g. a download error) does
+   not abort the other hosts or the whole deploy — the failure is surfaced with
+   PF-BAS-FAILED and left for the operator to catch, same fault-isolation as
+   telemetry/vuln-injection. #}
+{% for h in caldera_hosts %}
+- name: "PurpleForge | bas | caldera sandcat -> {{ h }}"
+  hosts: {{ h }}
+  gather_facts: false
+  tasks:
+    - name: "caldera sandcat | provision"
+      block:
+        - ansible.builtin.include_role:
+            name: pf_caldera_agent
+      rescue:
+        - ansible.builtin.debug:
+            msg: "PF-BAS-FAILED caldera sandcat on {{ '{{' }} inventory_hostname {{ '}}' }} — see error above; other hosts continue."
+{% endfor %}
