@@ -6,10 +6,19 @@
 # the PFFtp site and drop a cleartext-credential backup file in the FTP root, so
 # any unauthenticated client can connect and download it. Idempotent:
 # Set-ItemProperty converges and win_copy only changes on content drift.
-- name: "ftp-anonymous-access | enable anonymous authentication on the FTP site"
+- name: "ftp-anonymous-access | enable anonymous auth + allow plaintext (no SSL) on the FTP site"
   ansible.windows.win_shell: |
     Import-Module WebAdministration
-    Set-ItemProperty "IIS:\Sites\PFFtp" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+    $site = "IIS:\Sites\PFFtp"
+    Set-ItemProperty $site -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+    # The IIS FTP default SSL policy is SslRequire, which rejects a plaintext
+    # client with "534 Policy requires SSL" BEFORE it can even send USER — so the
+    # anonymous gap is unreachable over cleartext FTP (the catalog validate step
+    # expects a plain anonymous login to succeed). Lower the control and
+    # data channel policy to SslAllow (0 = optional) so an unauthenticated
+    # plaintext client can connect and pull the exposed credential file.
+    Set-ItemProperty $site -Name ftpServer.security.ssl.controlChannelPolicy -Value 0
+    Set-ItemProperty $site -Name ftpServer.security.ssl.dataChannelPolicy -Value 0
   changed_when: true
 
 - name: "ftp-anonymous-access | drop a cleartext-credential backup file in the FTP root"

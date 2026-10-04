@@ -40,6 +40,9 @@
         New-WebFtpSite -Name 'PFFtp' -Port 21 -PhysicalPath 'C:\inetpub\ftproot' -Force | Out-Null
     }
     $site = "IIS:\Sites\PFFtp"
+    # New-WebFtpSite does not reliably persist the root physicalPath; assert it
+    # explicitly or FTP logins fail with 530 "home directory inaccessible".
+    Set-ItemProperty $site -Name physicalPath -Value 'C:\inetpub\ftproot'
     # auth: anonymous OFF, basic ON (the IIS: provider handles authentication fine)
     Set-ItemProperty $site -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $false
     Set-ItemProperty $site -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
