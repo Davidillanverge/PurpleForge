@@ -71,10 +71,14 @@ scope. Azure, AWS, and Proxmox VE are supported.
 ```bash
 git clone --recurse-submodules <this-repo>   # or: git submodule update --init --recursive
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .            # runtime; puts the `forge` command on PATH
+pip install -e . -c constraints.txt            # runtime; puts the `forge` command on PATH
 # ...or with the dev extras (linters, type-checker, tests):
-pip install -e ".[dev]"
+pip install -e ".[dev]" -c constraints.txt
 ```
+
+Deps are pinned exactly (`pyproject.toml`) and `constraints.txt` locks the full
+transitive closure, so every deployer runs the same renderer — the install side
+of invariant #5 (byte-identical artifacts from the same spec+seed).
 
 `forge <command>` works anywhere after the editable install. Without installing,
 `python3 -m forge <command>` from the repo root is the exact same entry point.

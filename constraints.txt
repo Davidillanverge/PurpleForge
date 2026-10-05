@@ -1,0 +1,25 @@
+# PurpleForge dependency lock — the full transitive closure of the runtime deps,
+# pinned exactly so an install reproduces the same renderer across machines.
+#
+# Invariant #5 (determinism): the same spec+seed must compile to byte-identical
+# artifacts. Jinja2 (and MarkupSafe) decide the rendered output, so they are
+# locked here together with the rest of the closure.
+#
+# Usage:
+#   pip install -e ".[dev]" -c constraints.txt
+#
+# Regenerate after an intentional bump:
+#   python -m venv /tmp/pfenv && . /tmp/pfenv/bin/activate
+#   pip install 'PyYAML' 'jsonschema' 'Jinja2' 'ldap3'
+#   pip freeze | sort > constraints.txt   # then re-add this header
+
+attrs==26.1.0
+Jinja2==3.1.6
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+ldap3==2.9.1
+MarkupSafe==3.0.4
+pyasn1==0.6.4
+PyYAML==6.0.3
+referencing==0.37.0
+rpds-py==2026.9.1

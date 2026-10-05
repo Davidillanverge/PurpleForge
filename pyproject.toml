@@ -9,20 +9,25 @@ description = "Spec-driven harness that compiles a lab-spec.yml into Terraform +
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
+# Pinned exactly (not ">="): invariant #5 promises byte-identical artifacts from
+# the same spec+seed, and the renderer's output depends on the exact Jinja2 (and
+# its MarkupSafe) version — a silent minor bump could change rendering BETWEEN
+# deployers. constraints.txt pins the full transitive closure; install the
+# reproducible set with `pip install -e ".[dev]" -c constraints.txt`.
 dependencies = [
-    "PyYAML>=6.0",
-    "jsonschema>=4.20",
-    "Jinja2>=3.1",
-    "ldap3>=2.9",
+    "PyYAML==6.0.3",
+    "jsonschema==4.26.0",
+    "Jinja2==3.1.6",
+    "ldap3==2.9.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.6",
-    "mypy>=1.11",
-    "types-PyYAML>=6.0",
-    "types-jsonschema>=4.20",
+    "pytest==9.0.2",
+    "ruff==0.16.10",
+    "mypy==2.4.0",
+    "types-PyYAML==6.0.12.20260906",
+    "types-jsonschema==4.26.0.20260518",
 ]
 
 # `forge` on the PATH after `pip install -e .` — no more `python3 scripts/forge.py`.
