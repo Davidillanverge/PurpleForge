@@ -24,7 +24,8 @@ happens on the live Windows host at Ansible-runtime, so `forge` could never
 know usernames/passwords/OU placement ahead of a deploy. Replaced by
 `scripts/population.py` — a **deliberate, user-confirmed departure from the
 "wrap upstream" principle, scoped only to BadBlood**. GOAD/Vulnerable-AD/
-ansible-lockdown are still wrapped; `vendor/BadBlood` stays pinned but unused.
+ansible-lockdown are still wrapped; `vendor/BadBlood` has been removed from
+`vendor/` (its ratios/naming are already reproduced in `population.py`).
 
 ## How it works
 

@@ -4,8 +4,8 @@ PurpleForge compila un `lab-spec.yml` declarativo en automatización completa
 (Terraform + Ansible + PowerShell) para desplegar laboratorios de Active
 Directory instrumentados para Purple Team, en **Azure, AWS o Proxmox**.
 Envuelve proyectos upstream fijados en `vendor/` (GOAD,
-Vulnerable-AD, ansible-lockdown; BadBlood queda fijado pero ya sin usar) en
-vez de reinventar despliegue/hardening de Windows.
+Vulnerable-AD, ansible-lockdown) en vez de reinventar despliegue/hardening de
+Windows. La población ya no usa BadBlood: la genera `scripts/population.py`.
 
 - `README.md` — uso.
 - `.claude/agents/README.md` — sistema de agentes.

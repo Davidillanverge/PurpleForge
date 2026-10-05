@@ -4,9 +4,6 @@
 [submodule "vendor/attack_range"]
 	path = vendor/attack_range
 	url = https://github.com/splunk/attack_range.git
-[submodule "vendor/BadBlood"]
-	path = vendor/BadBlood
-	url = https://github.com/davidprowe/BadBlood.git
 [submodule "vendor/Vulnerable-AD"]
 	path = vendor/Vulnerable-AD
 	url = https://github.com/WazeHell/vulnerable-AD.git

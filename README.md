@@ -349,7 +349,7 @@ scripts/
   forge/                      # the deterministic core (a Python package — see below)
   population.py               # the deterministic themed-population generator
 
-vendor/                       # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown (+ BadBlood, unused)
+vendor/                       # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown
 tests/                        # the harness test suite
 generated/                    # gitignored — per-lab output
 ```

@@ -3,8 +3,9 @@
 Hand-edited lab definitions — the only source of truth PurpleForge consumes. A
 spec (`<lab>.yml`) compiles deterministically into `generated/<lab>/` via `forge
 generate`. Your own `specs/*.yml` are gitignored (they are harness input/output,
-not source); the JSON Schema (`specs/schema/`), the two committed smoke-test
-specs, and the example files here are versioned.
+not source); only the JSON Schema (`specs/schema/`) and the two committed
+smoke-test specs — `winrm-validate-lab.yml` and `mssql-weak-sa-lab.yml` — are
+versioned. Copy one of those as the starting point for a new spec.
 
 ## Authoring a spec
 
@@ -12,7 +13,7 @@ Three fronts produce a `specs/<lab>.yml`, all feeding the same pipeline:
 
 ```
 natural language ──/new-lab──────────▶ specs/<lab>.yml ─┐
-you, by hand (copy an example)        ─────────────────▶ ├─ forge lab-spec → generate → deploy
+you, by hand (copy a committed spec)  ─────────────────▶ ├─ forge lab-spec → generate → deploy
 exercise layer  ──forge from-exercise──▶ specs/<lab>.yml ─┘
 ```
 
