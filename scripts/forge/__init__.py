@@ -79,6 +79,8 @@ from .lifecycle import (
     cmd_deploy,
     cmd_destroy,
     cmd_reset,
+    cmd_restart,
+    cmd_stop,
     cmd_teardown,
     run_terraform_plan,
     verify_azure_teardown,
@@ -527,6 +529,22 @@ def main() -> int:
     p_reset.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_reset.set_defaults(func=cmd_reset)
 
+    p_stop = sub.add_parser(
+        "stop",
+        help="Pause a deployed lab at minimal cost WITHOUT destroying it — run the generated stop.sh (deallocate/stop every VM; disks + AD state + clean snapshot survive). Resume with `forge deploy`.",
+    )
+    p_stop.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
+    p_stop.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_stop.set_defaults(func=cmd_stop)
+
+    p_restart = sub.add_parser(
+        "restart",
+        help="Reboot every VM in a deployed lab — the unstick button for a hung/blocked machine — run the generated restart.sh. A power reboot, NOT a snapshot rollback (use `forge reset` for a pristine lab).",
+    )
+    p_restart.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
+    p_restart.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_restart.set_defaults(func=cmd_restart)
+
     p_destroy = sub.add_parser(
         "destroy",
         help="terraform destroy a generated lab + verify no Azure resource group is left behind (lower-level; `teardown` wraps this with the deallocated-VM/snapshot gotchas)",
@@ -641,7 +659,7 @@ __all__ = [
     "render_site_playbook", "render_verify_playbook", "render_vuln_injection", "resolve_defender_av_expected",
     "write_lab_secrets",
     # lifecycle
-    "clean_snapshot_name", "cmd_deploy", "cmd_destroy", "cmd_reset", "cmd_teardown", "run_terraform_plan",
+    "clean_snapshot_name", "cmd_deploy", "cmd_destroy", "cmd_reset", "cmd_restart", "cmd_stop", "cmd_teardown", "run_terraform_plan",
     "verify_azure_teardown",
     # validate
     "LDAP_APPLIED_FILTERS", "ROAST_FLAGS", "VALID_RESULT", "WINRM_APPLIED_CHECKS", "build_vuln_check",

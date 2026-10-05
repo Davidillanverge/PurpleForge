@@ -88,10 +88,12 @@ The full deterministic lifecycle for an existing spec:
 ```bash
 forge from-exercise <layer.json>          # (optional) author specs/<lab>.yml from a BAS exercise's ATT&CK layer
 forge lab-spec  specs/<lab>.yml           # validate + reconcile -> lab-manifest.json
-forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/reset/teardown scripts
+forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/stop/restart/reset/teardown scripts
 forge guardrail specs/<lab>.yml           # PASS/FAIL the CLAUDE.md invariants before any spend
 forge deploy    specs/<lab>.yml           # build infra + tunnel + AD + hardening + vulns + clean snapshot
 forge validate  specs/<lab>.yml --run     # confirm each vuln is applied + exploitable
+forge stop      specs/<lab>.yml           # pause to minimal cost (deallocate VMs) WITHOUT destroying; resume with `forge deploy`
+forge restart   specs/<lab>.yml           # reboot every VM — unstick a hung machine (power reboot, NOT a snapshot rollback)
 forge reset     specs/<lab>.yml           # roll every VM back to the clean-state snapshot
 forge teardown  specs/<lab>.yml           # destroy to cost-zero and verify nothing is left
 ```

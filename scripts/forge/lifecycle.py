@@ -358,6 +358,44 @@ def cmd_reset(args: argparse.Namespace) -> int:
     return subprocess.run(["bash", str(reset_sh)]).returncode
 
 
+def _run_power_script(args: argparse.Namespace, script: str, banner: str) -> int:
+    """Shared body for the power-control commands (stop/restart): locate the
+    generated <script> under the lab dir and run it. Thin wrapper mirroring
+    cmd_reset — the generated script is the single source of truth for the exact
+    per-provider commands."""
+    spec_path = Path(args.spec).resolve()
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 2
+    lab_name = load_yaml(spec_path)["lab"]["name"]
+    lab_dir = Path(args.out_dir) if args.out_dir else GENERATED_DIR / lab_name
+    script_sh = lab_dir / script
+    if not script_sh.exists():
+        print(
+            f"error: {script_sh} not found — run `forge generate {args.spec}` first "
+            f"({script} is rendered alongside deploy.sh/teardown.sh).",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"=== {banner.format(lab=lab_name)} ===")
+    return subprocess.run(["bash", str(script_sh)]).returncode
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    """Deterministic no-AI stop: run the generated stop.sh to deallocate/stop
+    every VM, dropping the lab to minimal cost WITHOUT destroying it. Resume with
+    `forge deploy` (deploy.sh starts stopped VMs). Not a teardown, not a
+    snapshot rollback."""
+    return _run_power_script(args, "stop.sh", "STOP {lab} — deallocate every VM to minimal cost (no destroy)")
+
+
+def cmd_restart(args: argparse.Namespace) -> int:
+    """Deterministic no-AI restart: run the generated restart.sh to reboot every
+    VM — the unstick button for a hung/blocked machine. A power reboot, NOT a
+    snapshot rollback (use `forge reset` for a pristine lab)."""
+    return _run_power_script(args, "restart.sh", "RESTART {lab} — reboot every VM (unstick a hung machine)")
+
+
 def cmd_destroy(args: argparse.Namespace) -> int:
     spec_path = Path(args.spec).resolve()
     if not spec_path.exists():

@@ -303,6 +303,11 @@ python3 -m forge validate "$SPEC" --run
 # 3. (optional) verify the live domain matches this report:
 python3 -m forge ad-inventory "$SPEC"
 
+# 3b. (optional) pause to minimal cost without destroying — resume with `forge deploy`:
+python3 -m forge stop "$SPEC"            # deallocate every VM (disks + AD state kept)
+# ...or reboot a hung/blocked VM in place (power reboot, NOT a snapshot rollback):
+python3 -m forge restart "$SPEC"
+
 # 4. Tear down to COST ZERO when finished (starts deallocated VMs, destroys,
 #    sweeps stray snapshots, verifies the resource group is gone, local cleanup):
 python3 -m forge teardown "$SPEC"        # or: ./generated/{{ lab.name }}/teardown.sh

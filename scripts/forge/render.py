@@ -606,7 +606,10 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
     env = jinja2.Environment(keep_trailing_newline=True)
     # reset.sh restores the clean-state snapshot deploy.sh takes as its last step
     # (CLAUDE.md deploy order) — run between exercises via `forge reset`.
-    for name in ("deploy.sh", "teardown.sh", "reset.sh"):
+    # stop.sh / restart.sh are the power controls (no state change): stop
+    # deallocates every VM to minimal cost (resume with `forge deploy`), restart
+    # reboots hung VMs (`forge stop` / `forge restart`).
+    for name in ("deploy.sh", "teardown.sh", "reset.sh", "stop.sh", "restart.sh"):
         stem = name[: -len(".sh")]
         template = env.from_string((TEMPLATES_DIR / f"{stem}{template_suffix}.sh.j2").read_text(encoding="utf-8"))
         path = out_dir / name

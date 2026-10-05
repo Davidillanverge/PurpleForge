@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import shutil
+import subprocess
 from types import SimpleNamespace
 
 import forge
+import pytest
 from _helpers import make_spec, write_spec
 
 
@@ -47,6 +50,34 @@ def test_site_yml_orders_hardening_before_vuln_injection(tmp_path):
     assert site.index("defensive-controls.yml") < site.index("vuln-injection.yml"), (
         "site.yml must run hardening before vuln injection"
     )
+
+
+# Power controls (stop/restart): the provider-specific action each generated
+# script must invoke — deallocate/stop to drop to minimal cost, reboot/reset to
+# unstick a hung VM. Keyed by provider; checked in the rendered script text.
+_POWER_MARKERS = {
+    "azure": {"stop.sh": "/deallocate?api-version", "restart.sh": "/restart?api-version"},
+    "aws": {"stop.sh": "stop-instances", "restart.sh": "reboot-instances"},
+    "proxmox": {"stop.sh": "status/stop", "restart.sh": "status/reset"},
+}
+
+
+@pytest.mark.parametrize("provider", ["azure", "aws", "proxmox"])
+def test_power_control_scripts_are_generated_per_provider(tmp_path, provider):
+    """stop.sh (pause to minimal cost, no destroy) and restart.sh (reboot a hung
+    VM, not a snapshot rollback) are rendered for every provider, carry that
+    provider's power action, and are syntactically valid bash."""
+    out = _generate(tmp_path, provider=provider, members=1, vulns=["kerberoasting"])
+    bash = shutil.which("bash")
+    for script, marker in _POWER_MARKERS[provider].items():
+        path = out / script
+        assert path.exists(), f"{script} not generated for {provider}"
+        text = path.read_text(encoding="utf-8")
+        assert marker in text, f"{script} ({provider}) missing power action {marker!r}"
+        # Safety: a power control never destroys infra (that's `forge teardown`).
+        assert "terraform destroy" not in text
+        if bash:
+            assert subprocess.run([bash, "-n", str(path)]).returncode == 0, f"{script} ({provider}) is not valid bash"
 
 
 def test_committed_terraform_tfvars_carries_no_infra_secret(tmp_path):
