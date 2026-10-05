@@ -348,8 +348,15 @@ for r in d.get("values",{}).get("root_module",{}).get("resources",[]):
   local SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i ssh_keys/bastion.pem purpleforge@$BASTION_IP"
   # bastion boot + cloud-init can lag; wait for it to answer.
   local i=0; until $SSH true 2>/dev/null; do i=$((i+1)); [ "$i" -ge 20 ] && die "bastion SSH never came up at $BASTION_IP (check bastion_ssh_allowed_cidrs includes your IP)"; sleep 15; done
-  SERVER_PUB="$($SSH 'sudo cat /etc/wireguard/publickey')"
-  $SSH "sudo wg set wg0 peer $CLIENT_PUB allowed-ips 10.250.250.2/32 && sudo wg-quick save wg0"
+  # sshd answers well before cloud-init finishes installing wireguard-tools and
+  # generating the server keypair — wait for it, or SERVER_PUB comes back empty
+  # and wg-quick fails with "Line unrecognized: PublicKey=".
+  echo "  waiting for bastion cloud-init (wireguard-tools + server keypair)..."
+  $SSH 'sudo cloud-init status --wait >/dev/null 2>&1; true'
+  SERVER_PUB="$($SSH 'sudo cat /etc/wireguard/publickey 2>/dev/null')"
+  [ -n "$SERVER_PUB" ] || die "bastion has no /etc/wireguard/publickey — cloud-init failed? check: ssh ... 'sudo tail -50 /var/log/cloud-init-output.log'"
+  $SSH "sudo wg set wg0 peer $CLIENT_PUB allowed-ips 10.250.250.2/32 && sudo wg-quick save wg0" \
+    || die "could not register the client peer on the bastion's wg0"
   cat > ssh_keys/pf-lab.conf <<EOF
 [Interface]
 PrivateKey = $(cat ssh_keys/client_wg.key)
@@ -360,6 +367,7 @@ Endpoint = $BASTION_IP:$WG_PORT
 AllowedIPs = 10.250.250.0/24, $SUPERNET
 PersistentKeepalive = 25
 EOF
+  chmod 600 ssh_keys/pf-lab.conf
   sudo wg-quick down "$TF_DIR/ssh_keys/pf-lab.conf" 2>/dev/null || true
   sudo wg-quick up "$TF_DIR/ssh_keys/pf-lab.conf" || die "wg-quick up failed"
   cd "$LAB_DIR"
