@@ -10,6 +10,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import shutil
+import tempfile
 from pathlib import Path
 
 import jinja2
@@ -30,6 +31,56 @@ from .planning import (
     expand_role_or_all,
     parse_auto_shutdown,
 )
+
+# Files/dirs under terraform/<provider>/ that are written at DEPLOY time (not
+# reproducible from the spec) and must survive a re-`generate` of a deployed
+# lab: the resolved remote-state pointer, the deploy-time sizing/region
+# overlays, the operator-filled Proxmox host vars, the SSH/WireGuard keys, and
+# the terraform-init cache + provider lock. Wiping them (the old rmtree+copytree
+# did) orphans the remote state so a later teardown silently skips destroy and
+# leaves billable resources — see the teardown-backend-overwrite class of bug.
+# secrets.auto.tfvars.json / terraform.tfvars.json are NOT here: they are
+# seed-derived and re-written identically by the render pass.
+_DEPLOY_RESOLVED_TF_PATHS = (
+    "backend.hcl",
+    "sizes.auto.tfvars.json",
+    "region.auto.tfvars.json",
+    "host.auto.tfvars.json",
+    "ssh_keys",
+    ".terraform",
+    ".terraform.lock.hcl",
+)
+
+
+def recopy_terraform_tree(src: Path, dst: Path) -> None:
+    """Replace dst with a fresh copy of the template tree `src` while PRESERVING
+    any deploy-resolved files already in dst (`_DEPLOY_RESOLVED_TF_PATHS`). This
+    is the safe substitute for the old `rmtree(dst); copytree(src, dst)` that
+    nuked a deployed lab's state pointer/keys on every regenerate. Files the
+    render pass writes afterwards still overwrite the fresh template copy as
+    before; only genuinely deploy-only artifacts are carried across."""
+    stash: Path | None = None
+    if dst.exists():
+        stash = Path(tempfile.mkdtemp(prefix="pf-tf-preserve-"))
+        for rel in _DEPLOY_RESOLVED_TF_PATHS:
+            p = dst / rel
+            if p.exists() or p.is_symlink():
+                target = stash / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(p), str(target))
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    if stash is not None:
+        for rel in _DEPLOY_RESOLVED_TF_PATHS:
+            p = stash / rel
+            if not (p.exists() or p.is_symlink()):
+                continue
+            target = dst / rel
+            if target.exists() or target.is_symlink():
+                shutil.rmtree(target) if target.is_dir() and not target.is_symlink() else target.unlink()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(p), str(target))
+        shutil.rmtree(stash, ignore_errors=True)
 
 VULN_CREDENTIAL_NOTES = {
     "gpp-cpassword": "No named account — a GPO's Groups.xml carries a cpassword that decrypts to `Local*8!` (published MS14-025 key).",
@@ -71,13 +122,20 @@ def render_backend_config(lab_name: str, dst: Path) -> None:
     below WILL collide across PurpleForge installs; treat it as a value to
     override, not a working default.
     """
+    # Never clobber a backend.hcl a deploy already resolved to a real storage
+    # account (recopy_terraform_tree preserves it across a regenerate) — that
+    # pointer is what teardown needs to find the remote state. Only write the
+    # placeholder when none exists yet, exactly like deploy.sh's bootstrap_state.
+    backend = dst / "backend.hcl"
+    if backend.exists():
+        return
     content = (
         'resource_group_name  = "purpleforge-tfstate-rg"\n'
         'storage_account_name = "purpleforgetfstate"  # placeholder — must be globally unique, override after bootstrap\n'
         'container_name       = "tfstate"\n'
         f'key                  = "{lab_name}.tfstate"\n'
     )
-    (dst / "backend.hcl").write_text(content, encoding="utf-8")
+    backend.write_text(content, encoding="utf-8")
 
 
 def render_azure_terraform(
@@ -85,9 +143,7 @@ def render_azure_terraform(
 ) -> None:
     src = TEMPLATES_DIR / "terraform" / "azure"
     dst = out_dir / "terraform" / "azure"
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    recopy_terraform_tree(src, dst)
 
     shutdown_time, shutdown_tz = parse_auto_shutdown(lab["auto_shutdown"])
     tfvars = {
@@ -148,9 +204,7 @@ def render_proxmox_terraform(
     convention). No backend.hcl: this layer uses a local state backend."""
     src = TEMPLATES_DIR / "terraform" / "proxmox"
     dst = out_dir / "terraform" / "proxmox"
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    recopy_terraform_tree(src, dst)
 
     # One VLAN tag per domain, assigned deterministically (100 + index) so a
     # domain's subnet is L2-isolated on the lab bridge, matching the /24-per-
@@ -206,6 +260,12 @@ def render_aws_backend_config(lab_name: str, dst: Path) -> None:
     as a value to override after the one-time bootstrap, not a working default.
     See .claude/skills/infra-aws/SKILL.md.
     """
+    # Never clobber a deploy-resolved backend.hcl (preserved across regenerate by
+    # recopy_terraform_tree) — teardown needs that pointer to find the remote
+    # state. Write the placeholder only when none exists yet, like deploy-aws.sh.
+    backend = dst / "backend.hcl"
+    if backend.exists():
+        return
     content = (
         'bucket         = "purpleforge-tfstate"  # placeholder — S3 bucket names are global, override after bootstrap\n'
         f'key            = "{lab_name}.tfstate"\n'
@@ -213,7 +273,7 @@ def render_aws_backend_config(lab_name: str, dst: Path) -> None:
         'dynamodb_table = "purpleforge-tfstate-lock"\n'
         'encrypt        = true\n'
     )
-    (dst / "backend.hcl").write_text(content, encoding="utf-8")
+    backend.write_text(content, encoding="utf-8")
 
 
 def parse_auto_shutdown_cron(value: str) -> tuple[str, str]:
@@ -239,9 +299,7 @@ def render_aws_terraform(
     plan/apply time, so no account-specific ami-id is baked into the spec."""
     src = TEMPLATES_DIR / "terraform" / "aws"
     dst = out_dir / "terraform" / "aws"
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    recopy_terraform_tree(src, dst)
 
     shutdown_cron, shutdown_tz = parse_auto_shutdown_cron(lab["auto_shutdown"])
     tfvars = {
