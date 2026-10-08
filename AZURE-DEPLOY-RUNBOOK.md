@@ -238,6 +238,15 @@ and crackable (`hashcat -m 1000`). Same sensitivity as `lab-report.md`
 
 ## 8. Verify, then teardown
 
+> **Scripted path (recommended).** The manual steps below explain what the
+> generated scripts do. Day to day, use them:
+> `forge stop` (graceful powerOff + deallocate, tfstate untouched) ·
+> `forge start` (start + tunnel + reachability check, no `apply`) ·
+> `forge reset` (re-run `site.yml`; `--snapshot` = OS-disk swap from the clean
+> snapshot) · `forge teardown` (type the lab name or `--force`; starts
+> deallocated VMs, destroys, sweeps snapshots, verifies the RG 404, purges local
+> caches).
+
 ```bash
 docker exec -w /repo/generated/<lab>/ansible pf-ansible \
   ansible-playbook -i inventory/hosts.yml playbooks/verify.yml

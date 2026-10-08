@@ -103,5 +103,6 @@ Each host runs in block/rescue: a host that fails to reach the server surfaces
 
 Drive adversary profiles/operations from the Caldera server **after** the clean
 snapshot, exactly as the purple-team exercise intends. Between exercises,
-`forge reset <spec>` restores the clean snapshot (the dormant beacon comes back
-with it; the operations' effects are rolled off).
+`forge reset <spec> --snapshot` restores the clean snapshot (the dormant beacon
+comes back with it; the operations' effects are rolled off). Plain `forge reset`
+only re-runs `site.yml`, which does NOT remove what an operation dropped.

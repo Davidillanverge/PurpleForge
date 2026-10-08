@@ -9,7 +9,7 @@
 # Needs the same PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN the deploy used.
 # Best-effort per VM; a VM with no pf-clean snapshot is skipped with a warning.
 #
-#   PROXMOX_VE_ENDPOINT=... PROXMOX_VE_API_TOKEN=... ./reset.sh
+#   ./rollback.sh   (or ./reset.sh --snapshot)
 # =============================================================================
 set -uo pipefail
 

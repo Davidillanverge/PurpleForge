@@ -72,19 +72,30 @@ forge ad-inventory specs/<lab>.yml        # live domain matches the plan
 ## 4. Teardown (cost-zero)
 
 ```bash
-forge teardown specs/<lab>.yml
+forge teardown specs/<lab>.yml           # type the lab name to confirm
+forge teardown specs/<lab>.yml --force   # non-interactive (CI / scripted)
 ```
 
 `terraform destroy` + `verify_aws_teardown` (no resource tagged `lab=<name>`
 remains in the region) + deregister the clean-state AMIs and delete their EBS
 snapshots (they are created out of band by `deploy.sh`, so `destroy` alone
 leaves them). The shared state bucket + lock table are per-deployer and kept.
+After a verified destroy it purges the local residue (`.terraform/`, lock file,
+`ssh_keys/`, deploy overlays, `terraform-outputs.json`, Ansible caches).
 
-## 5. Reset between exercises
+## 5. Pause, resume and reset between exercises
 
 ```bash
-forge reset specs/<lab>.yml        # swap every VM's root volume back to its clean AMI
+forge stop  specs/<lab>.yml             # stop-instances + wait (EIP, EBS, AMIs kept; tfstate untouched)
+forge start specs/<lab>.yml             # start-instances + tunnel + reachability check (no apply)
+forge reset specs/<lab>.yml             # re-run site.yml on the running instances
+forge reset specs/<lab>.yml --snapshot  # swap every VM's root volume back to its clean AMI (rollback.sh)
 ```
+
+`start`/`reset` read the bastion IP and host IPs from `terraform-outputs.json`
+(written by `deploy.sh`) and write `connectivity.json`: bastion SSH, WireGuard
+handshake, TCP 5986 on every Windows host. `PF_CONNECT_TIMEOUT` (default 900 s)
+bounds the wait.
 
 ---
 
@@ -129,7 +140,7 @@ fail earlier with `KDC_ERR_CLIENT_NOT_TRUSTED`).
 | WinRM never goes green | Private domain subnets reach the internet only via the bastion NAT — if the bastion's cloud-init hasn't finished, the Windows `user_data` bootstrap (which fetches `ConfigureRemotingForAnsible.ps1`) can't complete. Give it time; `run_site` retries. |
 | All hosts go `UNREACHABLE` mid-`site.yml`; instances show `State=stopped`, `StateTransitionReason: User initiated (… HH:00)` | The **auto-shutdown fired during provisioning**: `auto_shutdown` is a daily cron (default `20:00 Europe/Madrid` = 18:00 UTC). A long first deploy (AD promotion + a large `population.users`) that crosses that wall-clock time gets its instances stopped underneath Ansible. Restart them (`aws ec2 start-instances`) and re-run `site.yml`/`vuln-injection.yml` (idempotent); or raise/disable the schedule while provisioning a big lab. |
 | `internal error: failed to become user 'DOMAIN\Administrator': ... The trust relationship between this workstation and the primary domain failed` right after a stop/start | Transient: a member/workstation booted and tried to authenticate before the DC's AD services were ready (both start together). `run_site`/the vuln-injection retry loop clears it on the next attempt — no secure-channel repair needed. |
-| `reset.sh` skips a VM ("no clean-state AMI") | The deploy's `snapshot_clean` step didn't run or failed. Re-run it, or re-deploy. |
+| `reset.sh --snapshot` / `rollback.sh` skips a VM ("no clean-state AMI") | The deploy's `snapshot_clean` step didn't run or failed. Re-run it, or re-deploy. |
 | Teardown leaves AMIs/snapshots | They are not in Terraform state by design — `teardown.sh`'s `sweep_amis` removes them. If you ran a bare `terraform destroy`, run `teardown.sh` or deregister them by hand. |
 
 ## Design notes specific to AWS

@@ -88,14 +88,34 @@ The full deterministic lifecycle for an existing spec:
 ```bash
 forge from-exercise <layer.json>          # (optional) author specs/<lab>.yml from a BAS exercise's ATT&CK layer
 forge lab-spec  specs/<lab>.yml           # validate + reconcile -> lab-manifest.json
-forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/stop/restart/reset/teardown scripts
+forge generate  specs/<lab>.yml           # render Terraform + Ansible + deploy/start/stop/restart/reset/teardown scripts
 forge guardrail specs/<lab>.yml           # PASS/FAIL the CLAUDE.md invariants before any spend
 forge deploy    specs/<lab>.yml           # build infra + tunnel + AD + hardening + vulns + clean snapshot
 forge validate  specs/<lab>.yml --run     # confirm each vuln is applied + exploitable
-forge stop      specs/<lab>.yml           # pause to minimal cost (deallocate VMs) WITHOUT destroying; resume with `forge deploy`
+forge stop      specs/<lab>.yml           # graceful power-off to minimal cost WITHOUT destroying (terraform state untouched)
+forge start     specs/<lab>.yml           # power a stopped lab back on + tunnel + verify reachability (no terraform apply)
 forge restart   specs/<lab>.yml           # reboot every VM — unstick a hung machine (power reboot, NOT a snapshot rollback)
-forge reset     specs/<lab>.yml           # roll every VM back to the clean-state snapshot
-forge teardown  specs/<lab>.yml           # destroy to cost-zero and verify nothing is left
+forge reset     specs/<lab>.yml           # re-run the Ansible phase on the running VMs (restore the spec's logical state)
+forge reset     specs/<lab>.yml --snapshot  # ...or roll every VM back to the clean-state snapshot
+forge teardown  specs/<lab>.yml           # confirm (type the lab name, or --force) -> destroy to cost-zero + purge local caches
+```
+
+Every generated script also runs standalone and takes the lab directory as its
+first argument (default: the directory it lives in), e.g.
+`./generated/<lab>/start.sh generated/<lab>`. `deploy.sh` writes
+`terraform-outputs.json` (`terraform output -json`) and, after bringing up the
+tunnel, `connectivity.json` (bastion SSH, WireGuard handshake, WinRM 5986 on every
+host); `start.sh` and `reset.sh` re-run the same probe. `PF_CONNECT_TIMEOUT`
+(default 900 s) bounds the wait.
+
+```text
+script        terraform            VMs                       Ansible
+deploy.sh     init + apply         create / start            site.yml + snapshot
+start.sh      reads outputs only   start                     —
+stop.sh       untouched            graceful shutdown         —
+reset.sh      reads outputs only   untouched (must be up)    site.yml again
+rollback.sh   untouched            restore clean snapshot    —
+teardown.sh   destroy              destroyed                 — (purges local caches/state)
 ```
 
 `terraform` (>= 1.5) is only needed for `generate … --plan` (a structural dry
@@ -299,7 +319,7 @@ on_conflict: exclude-control
 | `lab-manifest.json` | The resolved plan every step reads: network plan, cost, reconciliation, population, planned vulns, hardening/EDR/deception plans, attack chain. |
 | `terraform/<provider>/` | The full infra layer. `terraform.tfvars.json` is secret-free & shareable; the two seed-derived infra secrets sit in the gitignored `secrets.auto.tfvars.json`. |
 | `ansible/` | Inventory (`hosts.yml`) + playbooks (`ad-topology`, `ad-population`, `defensive-controls`, `vuln-injection`, `service-provisioning`, `verify`) + `site.yml` (the single ordered entry point) + seed-derived secrets in `inventory/group_vars/all/`. |
-| `deploy.sh` / `teardown.sh` / `reset.sh` | The deterministic, no-AI deploy / cost-zero teardown / clean-state-reset scripts. `forge deploy`/`teardown`/`reset` are thin wrappers that add the guardrail gate. |
+| `deploy.sh` / `start.sh` / `stop.sh` / `reset.sh` / `rollback.sh` / `restart.sh` / `teardown.sh` | The deterministic, no-AI lifecycle scripts (deploy, power on, graceful power-off, re-run Ansible, clean-snapshot restore, reboot, confirmed cost-zero teardown). `forge deploy`/`start`/`stop`/`reset`/`restart`/`teardown` are thin wrappers (deploy adds the guardrail gate. |
 | `lab-report.md` | Human-readable documentation of the whole lab (see below). |
 
 **The lab report (`lab-report.md`)** is the manifest as prose: machines, network
@@ -426,10 +446,10 @@ generator and `population.seed` makes every name/password/OU reproducible.
 `ad-topology` → `ad-population` → `defensive-controls` → `vuln-injection` in that
 order, so hardening always lands before the gaps regardless of who runs it. The
 clean-state snapshot is taken as the *last* deploy step (after vulns, before any
-attack); `forge reset` restores it.
+attack); `forge reset --snapshot` restores it.
 
 > The **clean-state snapshot** step has now run against a live AWS deploy
-> (`snapshot_clean` created one AMI per Windows host). `forge reset` and
+> (`snapshot_clean` created one AMI per Windows host). `forge reset --snapshot` and
 > `verify.yml` are still rendered from the documented procedures but have not yet
 > been exercised live — treat their first run with that caution.
 
@@ -447,8 +467,10 @@ forge deploy specs/<lab>.yml            # == ./generated/<lab>/deploy.sh, behind
 You reach the lab **only** through the WireGuard tunnel `deploy.sh` brings up — no
 lab host ever has a public IP or inbound RDP/WinRM. When it finishes,
 `lab-report.md` has every credential and the attack path. Between exercises,
-`forge reset` rolls every VM back to the clean-state snapshot; when finished,
-`forge teardown` destroys everything and verifies cost-zero.
+`forge reset` re-runs the Ansible phase on the running VMs (`--snapshot` rolls every
+VM back to the clean-state snapshot instead); `forge stop`/`forge start` pause and
+resume without touching Terraform; when finished, `forge teardown` (confirm by
+typing the lab name, or `--force`) destroys everything and verifies cost-zero.
 
 ### Prerequisites (both providers)
 
@@ -546,8 +568,9 @@ silently.
 ```bash
 forge validate specs/<lab>.yml --run     # writes validation-report.md (applied + exploitable)
 forge ad-inventory specs/<lab>.yml       # writes ad-inventory.md (live users/groups + NT hashes)
-forge reset specs/<lab>.yml              # roll back to the clean-state snapshot between exercises
-forge teardown specs/<lab>.yml           # destroy everything, verify nothing billable remains
+forge reset specs/<lab>.yml              # re-run Ansible to restore the spec's state between exercises
+forge reset specs/<lab>.yml --snapshot   # ...or roll back to the clean-state snapshot
+forge teardown specs/<lab>.yml           # confirm, destroy everything, verify nothing billable remains
 ```
 
 > **If a step fails:** re-running `deploy.sh` usually clears transient errors.

@@ -661,15 +661,21 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         "bas_caldera": bas_caldera,
     }
     template_suffix = {"proxmox": "-proxmox", "aws": "-aws"}.get(provider, "")
-    env = jinja2.Environment(keep_trailing_newline=True)
-    # reset.sh restores the clean-state snapshot deploy.sh takes as its last step
-    # (CLAUDE.md deploy order) — run between exercises via `forge reset`.
-    # stop.sh / restart.sh are the power controls (no state change): stop
-    # deallocates every VM to minimal cost (resume with `forge deploy`), restart
-    # reboots hung VMs (`forge stop` / `forge restart`).
-    for name in ("deploy.sh", "teardown.sh", "reset.sh", "stop.sh", "restart.sh"):
+    # FileSystemLoader so every script can {% include "_lifecycle-common.sh.j2" %}
+    # (lab-dir resolution, terraform outputs JSON, connectivity probe, cleanup).
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(TEMPLATES_DIR)), keep_trailing_newline=True)
+    # Lifecycle: deploy (apply + provision) -> stop (graceful power-off, state
+    # untouched) / start (power on + reconnect, no apply) -> reset (re-run the
+    # Ansible phase on running VMs; --snapshot delegates to rollback.sh, the
+    # clean-state snapshot restore) -> restart (reboot a hung VM) -> teardown
+    # (confirmed destroy + local purge). start.sh/reset.sh source deploy.sh, so
+    # they share one provider-agnostic template; the rest are per provider.
+    for name in ("deploy.sh", "start.sh", "stop.sh", "reset.sh", "rollback.sh", "restart.sh", "teardown.sh"):
         stem = name[: -len(".sh")]
-        template = env.from_string((TEMPLATES_DIR / f"{stem}{template_suffix}.sh.j2").read_text(encoding="utf-8"))
+        tpl_name = f"{stem}{template_suffix}.sh.j2"
+        if not (TEMPLATES_DIR / tpl_name).exists():
+            tpl_name = f"{stem}.sh.j2"
+        template = env.get_template(tpl_name)
         path = out_dir / name
         path.write_text(template.render(**context), encoding="utf-8")
         path.chmod(0o755)

@@ -56,9 +56,10 @@ def test_site_yml_orders_hardening_before_vuln_injection(tmp_path):
 # script must invoke — deallocate/stop to drop to minimal cost, reboot/reset to
 # unstick a hung VM. Keyed by provider; checked in the rendered script text.
 _POWER_MARKERS = {
-    "azure": {"stop.sh": "/deallocate?api-version", "restart.sh": "/restart?api-version"},
-    "aws": {"stop.sh": "stop-instances", "restart.sh": "reboot-instances"},
-    "proxmox": {"stop.sh": "status/stop", "restart.sh": "status/reset"},
+    "azure": {"stop.sh": "/deallocate?", "start.sh": "/start?api-version", "restart.sh": "/restart?api-version"},
+    "aws": {"stop.sh": "stop-instances", "start.sh": "start-instances", "restart.sh": "reboot-instances"},
+    # graceful guest shutdown first (hard stop only as a timeout fallback)
+    "proxmox": {"stop.sh": "status/shutdown", "start.sh": "status/start", "restart.sh": "status/reset"},
 }
 
 
@@ -71,6 +72,10 @@ def test_power_control_scripts_are_generated_per_provider(tmp_path, provider):
     bash = shutil.which("bash")
     for script, marker in _POWER_MARKERS[provider].items():
         path = out / script
+        if script == "start.sh":
+            # start.sh sources deploy.sh and reuses its start_vms() (one source of truth)
+            assert "start_vms" in path.read_text(encoding="utf-8")
+            path = out / "deploy.sh"
         assert path.exists(), f"{script} not generated for {provider}"
         text = path.read_text(encoding="utf-8")
         assert marker in text, f"{script} ({provider}) missing power action {marker!r}"
@@ -146,3 +151,63 @@ def test_committed_terraform_tfvars_carries_no_infra_secret(tmp_path):
     # the actual seed-derived admin secret must not leak into the shareable tfvars.
     admin_pw, _ = forge.derive_infra_secrets(1)  # make_spec default seed
     assert admin_pw not in tfvars_text
+
+
+_LIFECYCLE = ("deploy.sh", "start.sh", "stop.sh", "reset.sh", "rollback.sh", "restart.sh", "teardown.sh")
+
+
+@pytest.mark.parametrize("provider", ["azure", "aws", "proxmox"])
+def test_lifecycle_scripts_contracts(tmp_path, provider):
+    """The five operator scripts (+ rollback/restart) are rendered for every
+    provider, valid bash, take the lab dir as an argument, and keep their
+    contracts: start never applies, stop/reset never touch terraform state,
+    teardown confirms (or --force) and purges local residue."""
+    out = _generate(tmp_path, provider=provider, members=1, vulns=["kerberoasting"])
+    bash = shutil.which("bash")
+    text = {}
+    for name in _LIFECYCLE:
+        path = out / name
+        assert path.exists(), f"{name} not generated for {provider}"
+        text[name] = path.read_text(encoding="utf-8")
+        assert "{%" not in text[name] and "{{" not in text[name], f"{name}: unrendered jinja"
+        if bash:
+            assert subprocess.run([bash, "-n", str(path)]).returncode == 0, f"{name} ({provider}) is not valid bash"
+    for name in ("deploy.sh", "stop.sh", "teardown.sh"):
+        assert 'pf_resolve_lab_dir "$@"' in text[name]
+    # deploy: outputs -> JSON + connectivity check; sourceable by start/reset
+    assert "pf_export_outputs" in text["deploy.sh"] and "pf_check_connectivity" in text["deploy.sh"]
+    assert 'if [ "${BASH_SOURCE[0]}" = "$0" ]; then' in text["deploy.sh"]
+    # start: sources deploy.sh but never runs apply/tf_apply
+    assert "/deploy.sh" in text["start.sh"] and "tf_apply" not in text["start.sh"]
+    start_body = text["start.sh"].split("start_main() {", 1)[1]
+    assert "terraform -chdir" not in start_body and "apply -auto-approve" not in start_body
+    assert "pf_check_connectivity" in text["start.sh"]
+    # stop / reset: no terraform at all, no power-off in reset
+    # (strip the shared helper library: it DEFINES pf_export_outputs, stop never calls it)
+    stop_own = text["stop.sh"].split("# ---- end shared lifecycle helpers", 1)[1]
+    assert "terraform -chdir" not in stop_own and "pf_export_outputs" not in stop_own
+    reset_body = text["reset.sh"].split("reset_main() {", 1)[1]
+    assert "run_site" in reset_body and "tf_apply" not in reset_body
+    for verb in ("stop_vms", "stop-instances", "/deallocate", "status/stop", "terraform destroy", "forge destroy"):
+        assert verb not in reset_body
+    assert "--snapshot" in text["reset.sh"] and "rollback.sh" in text["reset.sh"]
+    # teardown: confirmation + purge of local residue
+    assert "confirm_teardown" in text["teardown.sh"] and "--force" in text["teardown.sh"]
+    assert "purge_local" in text["teardown.sh"] and ".terraform" in text["teardown.sh"]
+
+
+def test_teardown_refuses_without_confirmation(tmp_path):
+    """Non-interactive stdin and no --force -> teardown dies BEFORE destroying."""
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash not available")
+    repo = tmp_path / "repo"
+    (repo / "vendor").mkdir(parents=True)
+    out = repo / "generated" / "lab"
+    spec_file = write_spec(tmp_path, make_spec(provider="proxmox", region="node-1", members=1, vulns=["kerberoasting"]))
+    assert forge.cmd_generate(SimpleNamespace(spec=str(spec_file), out_dir=str(out), plan=False)) == 0
+    env = {"PATH": "/usr/bin:/bin", "PROXMOX_VE_ENDPOINT": "https://pve.invalid:8006/", "PROXMOX_VE_API_TOKEN": "x"}
+    r = subprocess.run([bash, str(out / "teardown.sh"), str(out)], stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "without confirmation" in r.stderr and "--force" in r.stderr

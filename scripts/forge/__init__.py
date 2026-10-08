@@ -80,6 +80,7 @@ from .lifecycle import (
     cmd_destroy,
     cmd_reset,
     cmd_restart,
+    cmd_start,
     cmd_stop,
     cmd_teardown,
     run_terraform_plan,
@@ -519,23 +520,41 @@ def main() -> int:
     )
     p_teardown.add_argument("spec", help="Path to the same lab-spec YAML file used to generate the lab")
     p_teardown.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_teardown.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip the type-the-lab-name confirmation (required when stdin is not a terminal)",
+    )
     p_teardown.set_defaults(func=cmd_teardown)
 
     p_reset = sub.add_parser(
         "reset",
-        help="Roll a deployed lab back to its clean-state snapshot (taken at the end of deploy, after hardening+vulns, before any attack) — run the generated reset.sh. Lets an exercise restart from a pristine lab.",
+        help="Restore a running lab's software state: re-run the Ansible phase (site.yml) on the live VMs without destroying or powering them off — run the generated reset.sh. --snapshot instead rolls every VM back to the clean-state snapshot taken at the end of deploy.",
     )
     p_reset.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
     p_reset.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_reset.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Roll every VM back to its clean-state snapshot (rollback.sh) instead of re-running Ansible",
+    )
     p_reset.set_defaults(func=cmd_reset)
 
     p_stop = sub.add_parser(
         "stop",
-        help="Pause a deployed lab at minimal cost WITHOUT destroying it — run the generated stop.sh (deallocate/stop every VM; disks + AD state + clean snapshot survive). Resume with `forge deploy`.",
+        help="Pause a deployed lab at minimal cost WITHOUT destroying it or touching Terraform state — run the generated stop.sh (graceful guest shutdown of every VM; disks + AD state + clean snapshot survive). Resume with `forge start`.",
     )
     p_stop.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
     p_stop.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
     p_stop.set_defaults(func=cmd_stop)
+
+    p_start = sub.add_parser(
+        "start",
+        help="Power a stopped lab back on WITHOUT terraform apply — run the generated start.sh (start every VM, re-establish the WireGuard tunnel, verify bastion SSH + WinRM reachability).",
+    )
+    p_start.add_argument("spec", help="Path to the same lab-spec YAML file used to generate/deploy the lab")
+    p_start.add_argument("--out-dir", help="Override the generated lab directory (default: generated/<lab.name>/)")
+    p_start.set_defaults(func=cmd_start)
 
     p_restart = sub.add_parser(
         "restart",
@@ -659,7 +678,7 @@ __all__ = [
     "render_site_playbook", "render_verify_playbook", "render_vuln_injection", "resolve_defender_av_expected",
     "write_lab_secrets",
     # lifecycle
-    "clean_snapshot_name", "cmd_deploy", "cmd_destroy", "cmd_reset", "cmd_restart", "cmd_stop", "cmd_teardown", "run_terraform_plan",
+    "clean_snapshot_name", "cmd_deploy", "cmd_destroy", "cmd_reset", "cmd_restart", "cmd_start", "cmd_stop", "cmd_teardown", "run_terraform_plan",
     "verify_azure_teardown",
     # validate
     "LDAP_APPLIED_FILTERS", "ROAST_FLAGS", "VALID_RESULT", "WINRM_APPLIED_CHECKS", "build_vuln_check",

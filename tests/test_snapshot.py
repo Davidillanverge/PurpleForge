@@ -37,18 +37,19 @@ def test_azure_deploy_snapshots_after_site_yml(tmp_path):
     assert deploy.index("run_site") < deploy.index("snapshot_clean\n  log \"DEPLOY COMPLETE")
 
 
-def test_azure_reset_sh_rendered_with_clean_snapshot_name(tmp_path):
+def test_azure_rollback_sh_rendered_with_clean_snapshot_name(tmp_path):
     _, out = _generate(tmp_path, provider="azure", vulns=["kerberoasting"])
-    reset = out / "reset.sh"
+    assert "rollback.sh" in (out / "reset.sh").read_text(encoding="utf-8")  # reset --snapshot
+    reset = out / "rollback.sh"
     assert reset.exists()
     body = reset.read_text(encoding="utf-8")
     assert '${LAB}-${vm}-clean' in body  # matches clean_snapshot_name's format
     assert "az vm update" in body and "--os-disk" in body
 
 
-def test_proxmox_reset_sh_uses_pf_clean(tmp_path):
+def test_proxmox_rollback_sh_uses_pf_clean(tmp_path):
     _, out = _generate(tmp_path, provider="proxmox", region="node-1", vulns=["kerberoasting"])
-    reset = (out / "reset.sh").read_text(encoding="utf-8")
+    reset = (out / "rollback.sh").read_text(encoding="utf-8")
     assert "pf-clean" in reset and "rollback" in reset
     deploy = (out / "deploy.sh").read_text(encoding="utf-8")
     assert "snapname=pf-clean" in deploy

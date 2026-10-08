@@ -186,7 +186,7 @@ Edit the copy (gitignored, never commit):
 | `jumpbox_external_ip`/`_prefix`/`_gateway` | bastion's static address on `vmbr0` |
 
 **Credentials — `.pf-proxmox-env` (no manual exports needed).** `deploy.sh`,
-`teardown.sh` and `reset.sh` **auto-source `generated/<lab>/.pf-proxmox-env`** if
+`start.sh`, `stop.sh`, `reset.sh`, `rollback.sh` and `teardown.sh` **auto-source `generated/<lab>/.pf-proxmox-env`** if
 the `PROXMOX_VE_*` vars are not already exported. Run `deploy.sh` once with nothing
 set and it writes a **`.pf-proxmox-env.example`** to fill in (gitignored, holds no
 lab state). Put your host credentials there instead of exporting by hand:
@@ -236,15 +236,25 @@ snippets carry all first-boot bootstrap, so the templates stay minimal:
   critical steps — the earlier fragile version aborted on the first error and left the
   workstation without WinRM and the DC un-promotable.
 
-## 6. Verify + teardown
+## 6. Verify, pause/resume, reset, teardown
 
 ```bash
 forge validate specs/<lab>.yml --run
-./generated/<lab>/teardown.sh
+./generated/<lab>/stop.sh               # graceful status/shutdown (hard stop after PF_SHUTDOWN_TIMEOUT, default 300 s)
+./generated/<lab>/start.sh              # status/start + tunnel + VLAN routing + reachability check (no apply)
+./generated/<lab>/reset.sh              # re-run site.yml on the running VMs
+./generated/<lab>/reset.sh --snapshot   # qm rollback to pf-clean (rollback.sh)
+./generated/<lab>/teardown.sh           # type the lab name to confirm (or --force)
 ```
 
-No per-hour billing, but `teardown.sh` still removes the pool/VMs/firewall rules +
-local Terraform state.
+Every script takes the lab dir as an optional first argument
+(`./teardown.sh generated/<lab>`). `start.sh` re-asserts the bastion VLAN
+sub-interfaces, because they do not survive a bastion reboot.
+
+No per-hour billing, but `teardown.sh` still removes the pool/VMs/firewall rules.
+The local Terraform state is the only record of the VMs, so it is purged (with
+`.terraform/`, `ssh_keys/` and the caches) **only** when `terraform destroy`
+succeeded **and** the pool verified empty; otherwise it is kept for a re-run.
 
 ## Known limitations
 

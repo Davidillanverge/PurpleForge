@@ -7,7 +7,10 @@
 # NOT in Terraform state and `terraform destroy` leaves them — this script
 # deregisters them explicitly.
 #
-#   ./teardown.sh          # destroy + verify + sweep AMIs + local cleanup
+#   ./teardown.sh [<generated-lab-dir>]           # asks you to type the lab name
+#   ./teardown.sh [<generated-lab-dir>] --force   # no prompt (CI / scripted)
+# After a verified destroy it also purges .terraform/, local tfstate, ssh_keys/,
+# deploy overlays, terraform-outputs.json and Ansible caches.
 # =============================================================================
 set -uo pipefail
 
@@ -16,16 +19,46 @@ REGION="${PF_REGION:-{{ region }}}"
 SPEC_REL="{{ spec_rel }}"
 STATE_TABLE="purpleforge-tfstate-lock"
 
-cd "$(dirname "$0")"
-LAB_DIR="$PWD"
-TF_DIR="$LAB_DIR/terraform/aws"
-REPO="$(cd "$LAB_DIR/../.." && pwd)"
-
 export AWS_DEFAULT_REGION="$REGION"
 
-log()  { printf '\n\033[1;35m== %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
+{% include "_lifecycle-common.sh.j2" %}
+# usage: teardown.sh [<generated-lab-dir>] [--force]
+pf_resolve_lab_dir "$@"
+TF_DIR="$LAB_DIR/terraform/aws"
+# ---- confirmation (destructive, irreversible) -------------------------------
+# Type the lab name at the prompt, or pass --force (required when stdin is not
+# a terminal, e.g. CI / an agent — never destroys silently by default).
+confirm_teardown() {
+  if pf_has_flag --force; then
+    warn "--force given — skipping confirmation"
+    return 0
+  fi
+  [ -t 0 ] || die "refusing to destroy '$LAB' without confirmation: stdin is not a terminal — re-run with --force"
+  printf '
+[1;31mThis DESTROYS every resource of lab "%s" (irreversible).[0m
+' "$LAB"
+  local answer
+  read -r -p "Type the lab name to confirm: " answer
+  [ "$answer" = "$LAB" ] || die "confirmation did not match '$LAB' — nothing was destroyed"
+}
+
+# ---- local residue (only after a VERIFIED destroy) --------------------------
+# Terraform plugin cache + lock, any local state files, the deploy-time
+# overlays/keys/outputs, the tunnel config and Ansible's temp/cache files. The
+# generated sources (*.tf, playbooks, inventory/hosts.yml, secrets) stay, so the
+# lab can be redeployed with ./deploy.sh without regenerating.
+purge_local() {
+  log "Purging local caches, temp inventories and residual state files"
+  rm -rf "$TF_DIR/.terraform" "$TF_DIR/.terraform.lock.hcl" \
+         "$TF_DIR"/terraform.tfstate "$TF_DIR"/terraform.tfstate.* "$TF_DIR"/*.tfplan \
+         "$TF_DIR/ssh_keys" \
+         "$TF_DIR/sizes.auto.tfvars.json" "$TF_DIR/region.auto.tfvars.json" \
+         "$TF_DIR/images.auto.tfvars.json" "$TF_DIR/template.auto.tfvars.json" \
+         "$LAB_DIR/$OUTPUTS_JSON_NAME" "$LAB_DIR/connectivity.json" \
+         "$LAB_DIR/ansible/.ansible" "$LAB_DIR/ansible/fact_cache" "$LAB_DIR/ansible/.cache"
+  find "$LAB_DIR/ansible" \( -name '*.retry' -o -name '__pycache__' \) -prune -exec rm -rf {} + 2>/dev/null || true
+  echo "  removed .terraform/, lock file, local tfstate*, ssh_keys/, deploy overlays, outputs + ansible caches"
+}
 
 command -v aws >/dev/null 2>&1 || die "missing prerequisite: aws"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" \
@@ -58,7 +91,7 @@ destroy() {
   log "1. terraform destroy + cost-zero verification"
   local tries=0
   while true; do
-    if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --yes; then
+    if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --out-dir "$LAB_DIR" --yes; then
       return 0
     fi
     tries=$((tries+1))
@@ -92,12 +125,10 @@ sweep_amis() {
 # ---- 3. local session state (nothing billable, but left dangling) ----------
 local_cleanup() {
   log "3. Local session cleanup"
-  docker rm -f pf-ansible >/dev/null 2>&1 || true
-  sudo wg-quick down "$LAB_DIR/terraform/aws/ssh_keys/pf-lab.conf" 2>/dev/null \
-    || sudo ip link delete pf-lab 2>/dev/null || true
-  echo "  removed pf-ansible container + pf-lab WireGuard interface"
+  pf_local_down
 }
 
+confirm_teardown
 ensure_backend
 if destroy; then destroy_ok=1; else destroy_ok=0; fi
 sweep_amis
@@ -107,6 +138,7 @@ if [ "$destroy_ok" != 1 ]; then
   Check AWS creds and that the state bucket exists, then re-run ./teardown.sh.
   Verify by hand: aws ec2 describe-instances --filters Name=tag:lab,Values=$LAB --region $REGION"
 fi
+purge_local
 log "TEARDOWN COMPLETE — $LAB"
 echo "verify: aws ec2 describe-instances --filters Name=tag:lab,Values=$LAB --region $REGION  (should list none running)"
 echo "NOTE: the shared state bucket + DynamoDB lock table are per-deployer and intentionally kept"

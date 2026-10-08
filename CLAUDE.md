@@ -60,15 +60,19 @@ Determinista y sin IA: `forge generate` emite `deploy.sh`/`teardown.sh` en
 `site.yml` fija el orden hardening→vulns. `deploy.sh` encadena: `ensure_secrets`
 (mintea admin/ansible) → backend de estado → auto-sizing (SKU más barato,
 override `PF_VM_SIZE`) → `terraform apply` → túnel WireGuard → `site.yml`.
-Validación: `forge validate --run`. Desmontaje: `forge teardown`.
+Validación: `forge validate --run`. Ciclo de vida: `forge stop` (apagado ordenado,
+sin tocar el estado TF) / `forge start` (encendido + túnel + chequeo de
+conectividad, sin `terraform apply`) / `forge reset` (reejecuta `site.yml` sobre
+las VMs encendidas). Desmontaje: `forge teardown` (pide teclear el nombre del lab
+o `--force`; tras un destroy verificado purga cachés y estado local).
 
 > Nota: el snapshot de estado limpio se toma como último paso de `deploy.sh`
 > (`snapshot_clean`, tras hardening+vulns y ANTES de cualquier ataque): un
 > snapshot de disco por VM en Azure (`<lab>-<vm>-clean`) o `pf-clean` en Proxmox.
-> `forge reset <spec>` restaura ese estado (Azure: swap del disco OS desde el
+> `forge reset <spec> --snapshot` restaura ese estado (Azure: swap del disco OS desde el
 > snapshot; Proxmox: `qm rollback`) para reiniciar entre ejercicios. `deploy.sh`
 > y el paso de snapshot limpio ya se han ejercitado contra un despliegue real en
-> AWS (crea un AMI por host Windows); `forge reset` y `verify.yml` siguen
+> AWS (crea un AMI por host Windows); `forge reset --snapshot` y `verify.yml` siguen
 > renderizados pero sin ejercitar en vivo — trátalos con esa cautela.
 
 ## Convenciones del repositorio

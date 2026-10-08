@@ -301,7 +301,7 @@ def cmd_deploy(args: argparse.Namespace) -> int:
     print(f"\n=== DEPLOY {lab_name} — this creates BILLABLE {billable} resources ===")
     print(f"    running {deploy_sh.relative_to(REPO_ROOT) if deploy_sh.is_relative_to(REPO_ROOT) else deploy_sh}")
     extra = ["--sizes-only"] if args.sizes_only else []
-    return subprocess.run(["bash", str(deploy_sh), *extra]).returncode
+    return subprocess.run(["bash", str(deploy_sh), str(lab_dir), *extra]).returncode
 
 
 def cmd_teardown(args: argparse.Namespace) -> int:
@@ -320,7 +320,10 @@ def cmd_teardown(args: argparse.Namespace) -> int:
         )
         return _run_self(["destroy", str(spec_path), "--yes", *(["--out-dir", str(lab_dir)] if args.out_dir else [])])
     print(f"=== TEARDOWN {lab_name} — destroy to cost-zero + verify ===")
-    return subprocess.run(["bash", str(teardown_sh)]).returncode
+    # teardown.sh asks the operator to type the lab name; --force skips that
+    # prompt (and is required when stdin is not a terminal).
+    extra = ["--force"] if getattr(args, "force", False) else []
+    return subprocess.run(["bash", str(teardown_sh), str(lab_dir), *extra]).returncode
 
 
 def clean_snapshot_name(lab_name: str, vm_name: str) -> str:
@@ -334,12 +337,12 @@ def clean_snapshot_name(lab_name: str, vm_name: str) -> str:
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
-    """Deterministic no-AI reset: run the generated reset.sh to roll every lab VM
-    back to the clean-state snapshot deploy.sh took after hardening + vuln
-    injection (before any attack). Lets an exercise restart from a pristine,
-    fully-instrumented lab instead of whatever the last attack left behind. Thin
-    wrapper around reset.sh (the single source of truth for the exact commands),
-    mirroring cmd_teardown."""
+    """Deterministic no-AI reset: run the generated reset.sh, which re-runs the
+    Ansible phase (site.yml) against the RUNNING VMs to restore the spec's clean
+    logical state — nothing is destroyed or powered off. With --snapshot it
+    instead rolls every VM back to the clean-state snapshot deploy.sh took after
+    hardening + vuln injection (rollback.sh). Thin wrapper around reset.sh (the
+    single source of truth for the exact commands), mirroring cmd_teardown."""
     spec_path = Path(args.spec).resolve()
     if not spec_path.exists():
         print(f"error: spec file not found: {spec_path}", file=sys.stderr)
@@ -354,8 +357,12 @@ def cmd_reset(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    print(f"=== RESET {lab_name} — roll every VM back to its clean-state snapshot ===")
-    return subprocess.run(["bash", str(reset_sh)]).returncode
+    snapshot = getattr(args, "snapshot", False)
+    if snapshot:
+        print(f"=== RESET {lab_name} — roll every VM back to its clean-state snapshot ===")
+    else:
+        print(f"=== RESET {lab_name} — re-run the Ansible phase on the running VMs ===")
+    return subprocess.run(["bash", str(reset_sh), str(lab_dir), *(["--snapshot"] if snapshot else [])]).returncode
 
 
 def _run_power_script(args: argparse.Namespace, script: str, banner: str) -> int:
@@ -378,15 +385,22 @@ def _run_power_script(args: argparse.Namespace, script: str, banner: str) -> int
         )
         return 2
     print(f"=== {banner.format(lab=lab_name)} ===")
-    return subprocess.run(["bash", str(script_sh)]).returncode
+    return subprocess.run(["bash", str(script_sh), str(lab_dir)]).returncode
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    """Deterministic no-AI stop: run the generated stop.sh to deallocate/stop
-    every VM, dropping the lab to minimal cost WITHOUT destroying it. Resume with
-    `forge deploy` (deploy.sh starts stopped VMs). Not a teardown, not a
-    snapshot rollback."""
-    return _run_power_script(args, "stop.sh", "STOP {lab} — deallocate every VM to minimal cost (no destroy)")
+    """Deterministic no-AI stop: run the generated stop.sh to gracefully power
+    off (and on Azure deallocate) every VM, dropping the lab to minimal cost
+    WITHOUT destroying it or touching Terraform state. Resume with `forge start`.
+    Not a teardown, not a snapshot rollback."""
+    return _run_power_script(args, "stop.sh", "STOP {lab} — graceful power-off of every VM (no destroy, state untouched)")
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """Deterministic no-AI start: run the generated start.sh to power a stopped
+    lab back on, re-establish the WireGuard tunnel and verify network/SSH +
+    WinRM reachability — WITHOUT terraform apply (no resource is rewritten)."""
+    return _run_power_script(args, "start.sh", "START {lab} — power on + reconnect + verify (no terraform apply)")
 
 
 def cmd_restart(args: argparse.Namespace) -> int:
