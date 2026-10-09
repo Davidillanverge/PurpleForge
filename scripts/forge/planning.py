@@ -152,10 +152,19 @@ BROKEN_UPSTREAM_CIS_RULES: dict[str, list[str]] = {
 # for groups that include a domain controller — member servers / workstations set
 # them locally without issue. The domain still carries a lockout policy from the
 # Default Domain Policy; this only drops the two keys the local secedit can't set.
+#
+# 1.2.3 (Allow Administrator account lockout) MUST be skipped alongside them: the
+# role itself warns the lockout controls "WILL FAIL UNLESS IN THE ORDER 1.2.2,
+# 1.2.4, 1.2.1, 1.2.3 FOR LOCAL-BASED Systems". Dropping 1.2.1+1.2.4 breaks that
+# ordered group, so on any host taking the role's local-system path 1.2.3 fails hard
+# with "The key 'AllowAdministratorLockout' in section 'System Access' is not a
+# valid key" (seen live on a member-server, kingdom-lab 2026-10-09 — mixed-path
+# across identical hosts, so skip it for the whole DC-containing group). Skipping a
+# control never neutralizes a vuln (invariant #3), so this is always safe.
 DC_LOCAL_SECEDIT_UNSETTABLE_RULES: dict[str, list[str]] = {
-    "windows-server-2019": ["win19cis_rule_1_2_1", "win19cis_rule_1_2_4"],
-    "windows-server-2022": ["win22cis_rule_1_2_1", "win22cis_rule_1_2_4"],
-    "windows-server-2025": ["win25cis_rule_1_2_1", "win25cis_rule_1_2_4"],
+    "windows-server-2019": ["win19cis_rule_1_2_1", "win19cis_rule_1_2_3", "win19cis_rule_1_2_4"],
+    "windows-server-2022": ["win22cis_rule_1_2_1", "win22cis_rule_1_2_3", "win22cis_rule_1_2_4"],
+    "windows-server-2025": ["win25cis_rule_1_2_1", "win25cis_rule_1_2_3", "win25cis_rule_1_2_4"],
 }
 
 
