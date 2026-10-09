@@ -205,6 +205,21 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
         existing = _aws_existing_ids(aws_bin, region, "describe-snapshots",
                                      "--owner-ids", "self", query="Snapshots[].SnapshotId")
         gone |= set(snap_ids) - existing
+    # The instances' root EBS volumes are delete_on_termination, so terminating a
+    # VM deletes its volume ASYNCHRONOUSLY: the volume sits in state `deleting`
+    # (and lingers in the tagging API) for a bit after `terraform destroy` returns.
+    # A `deleting`/`deleted` volume bears no cost and needs no action, so it is
+    # NOT a leftover — only a volume still in a live state (available/in-use/
+    # creating/error) is. describe-volumes returns every state, so filter to the
+    # live ones and drop any vol ARN that is not among them (deleting, or gone).
+    vol_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":volume/" in arn]
+    if vol_ids:
+        live = _aws_existing_ids(
+            aws_bin, region, "describe-volumes",
+            "--filters", "Name=status,Values=creating,available,in-use,error",
+            query="Volumes[].VolumeId",
+        )
+        gone |= set(vol_ids) - live
     remaining = [arn for arn in remaining if arn.rsplit("/", 1)[-1] not in gone]
 
     if remaining:
