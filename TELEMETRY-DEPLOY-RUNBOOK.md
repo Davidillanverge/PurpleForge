@@ -25,6 +25,16 @@ telemetry:
 ```
 One `elastic-agent` serves both `edr` and `siem` (the Fleet policy you build
 decides which integrations run). `swg` is the WARP client. Omit a layer to skip it.
+
+`edr` can instead be **Microsoft Defender for Endpoint** — a separate, Windows-only
+agent (NOT the elastic-agent), onboarded from your Windows package:
+
+```yaml
+telemetry:
+  edr: { provider: microsoft-defender, enabled: true }   # MDE Sense sensor
+```
+`siem`/`swg` are independent and may still be set alongside it. MDE is mutually
+exclusive with `edr: elastic` (one `edr` provider per lab).
 Agents install AFTER vuln-injection, BEFORE the clean snapshot (part of the
 defended baseline). Each agent runs in block/rescue, so one failing layer does not
 abort the others.
@@ -42,6 +52,13 @@ export PF_ELASTIC_AGENT_VERSION="9.5.4"                 # MUST match your stack 
 export PF_CLOUDFLARE_TEAM="<your-team-slug>"            # <team>.cloudflareaccess.com
 export PF_CLOUDFLARE_ENROLL_CLIENT_ID="<hex>.access"    # service token Client ID
 export PF_CLOUDFLARE_ENROLL_CLIENT_SECRET="cfast_..."   # service token Client Secret
+
+# Microsoft Defender for Endpoint (edr: microsoft-defender)
+export MDE_WIN_ONBOARDING_PATH="/path/to/WindowsDefenderATPOnboardingScript.cmd"
+# the Windows onboarding .cmd from the Defender portal (Settings -> Endpoints ->
+# Onboarding -> Windows Server / Local Script). deploy.sh stages it into the
+# gitignored generated/<lab>/ansible/files/mde/ so the pf-ansible container can
+# copy it to each host — it is NEVER written into the generated playbook.
 ```
 `deploy.sh` (AWS/Azure/Proxmox) validates the ones the selected layers need and
 passes them to `site.yml` as extra-vars. Keep them out of the repo (e.g. a file you
@@ -76,6 +93,20 @@ passes them to `site.yml` as extra-vars. Keep them out of the repo (e.g. a file 
 6. Split-tunnel: the lab's `10.x` range is in WARP's default RFC1918 exclude, so
    the WinRM/WireGuard management path is safe — just don't switch to Include mode.
 
+### 3c. Microsoft Defender for Endpoint (MDE)
+
+1. Microsoft Defender portal → **Settings → Endpoints → Onboarding**.
+2. OS = the lab's Windows (e.g. **Windows Server 1803+/2019/2022**), method =
+   **Local Script** → **Download onboarding package**; unzip to get
+   `WindowsDefenderATPOnboardingScript.cmd` → point `MDE_WIN_ONBOARDING_PATH` at it.
+3. The role runs the script (writes the tenant blob, starts the **Sense** service),
+   then health-checks: `Sense` running + auto-start, `OnboardingState = 1`, and
+   `Get-MpComputerStatus` real-time protection. Devices appear under **Assets →
+   Devices** a few minutes later; device groups / policies / detections are yours.
+4. Windows-only by design — the role skips/guards non-Windows hosts (every current
+   lab host is Windows). The local-script onboarding is for servers/VMs; at scale
+   you would normally use Intune/GPO, out of scope here.
+
 ## 4. Deploy
 
 ```bash
@@ -92,6 +123,7 @@ Terraform state; manual cleanup by tag required if you do).
 - **Elastic**: Kibana → **Fleet → Agents** → each host **Healthy**. (On-host:
   `elastic-agent status` → `(HEALTHY) Connected`.)
 - **WARP**: on-host `warp-cli status` → **Connected**; device appears in Zero Trust.
+- **MDE**: on-host `Get-Service Sense` → **Running**, registry `OnboardingState=1`; device appears in the Defender portal (Assets → Devices).
 
 ## 6. Troubleshooting (all seen live)
 

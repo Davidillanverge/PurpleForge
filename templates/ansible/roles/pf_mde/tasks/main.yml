@@ -1,0 +1,106 @@
+---
+# PurpleForge DETECT agent: Microsoft Defender for Endpoint (MDE) onboarding.
+# WINDOWS-ONLY. Transfers + runs the OPERATOR's official Windows onboarding
+# package (WindowsDefenderATPOnboardingScript.cmd / local onboarding .cmd), then
+# confirms the Sense service (the MDE sensor) is running + set to auto-start and
+# that onboarding actually completed. This role only ONBOARDS the sensor; the
+# tenant, device groups, policies and detections are operator-configured in the
+# Microsoft Defender portal.
+#
+# Backend input is a DEPLOY-TIME extra-var (NOT in the spec, not seed-derived —
+# the same deliberate exception to account-independence as the other telemetry
+# agents). deploy.sh stages the operator's package into ansible/files/mde/ and
+# passes its in-container path:
+#   pf_mde_onboarding_src   (required)  path (on the Ansible control node) to the
+#                                       onboarding .cmd — from MDE_WIN_ONBOARDING_PATH
+#
+# The onboarding .cmd carries a tenant-specific blob; it is NEVER hardcoded in
+# the generated playbooks — it is copied in at deploy time and lands only under
+# the gitignored generated/<lab>/ansible/files/.
+#
+# LIVE-TEST CAVEAT: not yet exercised against a real MDE tenant — the onboarding
+# .cmd + Sense/OnboardingState checks follow Microsoft's documented local-script
+# onboarding; verify on first live run.
+# Idempotent: skips the onboarding run when the host already reports onboarded.
+
+- name: "pf_mde | require the onboarding package path (deploy-time env)"
+  ansible.builtin.assert:
+    that:
+      - pf_mde_onboarding_src | default('') | length > 0
+    fail_msg: >-
+      MDE needs the onboarding package: export MDE_WIN_ONBOARDING_PATH to your
+      Windows onboarding .cmd (from the Microsoft Defender portal) before deploy.
+      It is never baked into the spec.
+
+# WINDOWS-ONLY guard: MDE's Sense sensor is a Windows component. Skip (don't fail)
+# any non-Windows host so a heterogeneous inventory is safe — every current lab
+# host is Windows, but this keeps the role honest if that ever changes.
+- name: "pf_mde | detect OS family"
+  ansible.windows.win_shell: "(Get-CimInstance Win32_OperatingSystem).Caption"
+  register: pf_mde_os
+  changed_when: false
+
+- name: "pf_mde | ensure the setup directory exists"
+  ansible.windows.win_file:
+    path: C:\setup\mde
+    state: directory
+
+# Current onboarding state BEFORE running the script, so a re-run is a no-op.
+# HKLM\...\Windows Advanced Threat Protection\Status\OnboardingState = 1 once done.
+- name: "pf_mde | read current onboarding state"
+  ansible.windows.win_shell: |
+    (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status' -Name OnboardingState -ErrorAction SilentlyContinue).OnboardingState
+  register: pf_mde_state
+  changed_when: false
+  failed_when: false
+
+- name: "pf_mde | copy the operator onboarding script to the host"
+  ansible.windows.win_copy:
+    src: "{{ pf_mde_onboarding_src }}"
+    dest: C:\setup\mde\WindowsDefenderATPOnboardingScript.cmd
+  when: (pf_mde_state.stdout | default('') | trim) != '1'
+
+# The onboarding .cmd must run elevated; it writes the onboarding blob and starts
+# Sense. Run it via cmd.exe and treat a non-zero rc as a failure to surface.
+- name: "pf_mde | run the onboarding script (elevated)"
+  ansible.windows.win_command: cmd.exe /c C:\setup\mde\WindowsDefenderATPOnboardingScript.cmd
+  register: pf_mde_onboard
+  when: (pf_mde_state.stdout | default('') | trim) != '1'
+  changed_when: pf_mde_onboard is not skipped
+
+# ---- health check: Sense running + auto-start, onboarding complete, RTP on ----
+- name: "pf_mde | ensure the Sense service is running and set to auto-start"
+  ansible.windows.win_service:
+    name: Sense
+    state: started
+    start_mode: auto
+  register: pf_mde_sense
+  retries: 6
+  delay: 10
+  until: pf_mde_sense is succeeded
+
+- name: "pf_mde | confirm onboarding completed (OnboardingState = 1)"
+  ansible.windows.win_shell: |
+    (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status' -Name OnboardingState -ErrorAction SilentlyContinue).OnboardingState
+  register: pf_mde_onboarded
+  changed_when: false
+  retries: 6
+  delay: 10
+  until: (pf_mde_onboarded.stdout | default('') | trim) == '1'
+  failed_when: (pf_mde_onboarded.stdout | default('') | trim) != '1'
+
+- name: "pf_mde | check Defender real-time protection + sensor health"
+  ansible.windows.win_shell: |
+    $s = Get-MpComputerStatus
+    "RTP={0};AM={1};Sense={2}" -f $s.RealTimeProtectionEnabled, $s.AMRunningMode, (Get-Service Sense).Status
+  register: pf_mde_mp
+  changed_when: false
+  failed_when: false
+
+- name: "pf_mde | record onboarding state"
+  ansible.builtin.debug:
+    msg: >-
+      MDE onboarded on {{ inventory_hostname }} ({{ pf_mde_os.stdout | trim }}):
+      Sense service {{ (pf_mde_sense.state | default('running')) }} / auto-start,
+      OnboardingState=1. Defender status: {{ pf_mde_mp.stdout | default('n/a') | trim }}.
+      Tenant device groups / policies / detections are operator-configured.

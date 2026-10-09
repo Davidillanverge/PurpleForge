@@ -1046,6 +1046,16 @@ def plan_telemetry(spec: dict, machines: list[dict]) -> dict[str, list[str]]:
         if hosts:
             plan["elastic-agent"] = hosts
 
+    # Microsoft Defender for Endpoint (MDE) is a SEPARATE edr provider (its own
+    # agent, onboarded from the operator's Windows package) — never folded into
+    # the elastic-agent. Windows-only: every lab host is Windows (the bastion is
+    # not an Ansible target), and the role guards non-Windows hosts anyway.
+    edr = tel.get("edr") or {}
+    if edr.get("provider") == "microsoft-defender" and edr.get("enabled", True):
+        hosts = _hosts(edr.get("targets", "all"))
+        if hosts:
+            plan["mde"] = hosts
+
     swg = tel.get("swg") or {}
     if swg.get("provider") == "cloudflare" and swg.get("enabled", True):
         hosts = _hosts(swg.get("targets", "all"))

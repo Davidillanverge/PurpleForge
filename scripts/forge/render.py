@@ -554,6 +554,7 @@ def render_telemetry(agent_hosts: dict[str, list[str]], lab_name: str, out_dir: 
             lab_name=lab_name,
             elastic_agent_hosts=agent_hosts.get("elastic-agent", []),
             warp_hosts=agent_hosts.get("warp", []),
+            mde_hosts=agent_hosts.get("mde", []),
         ),
         encoding="utf-8",
     )
@@ -646,6 +647,8 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
     )
     _swg = _tel.get("swg") or {}
     telemetry_warp = _swg.get("provider") == "cloudflare" and _swg.get("enabled", True)
+    _edr = _tel.get("edr") or {}
+    telemetry_mde = _edr.get("provider") == "microsoft-defender" and _edr.get("enabled", True)
     # BAS (adversary-emulation) agents selected -> deploy.sh validates the
     # operator's C2 server creds (cloud or local Kali) + passes them to site.yml.
     _bas = spec.get("bas") or {}
@@ -666,6 +669,7 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         # backend creds + passes them to site.yml as extra-vars.
         "telemetry_elastic": telemetry_elastic,
         "telemetry_warp": telemetry_warp,
+        "telemetry_mde": telemetry_mde,
         "bas_caldera": bas_caldera,
     }
     template_suffix = {"proxmox": "-proxmox", "aws": "-aws"}.get(provider, "")
@@ -905,6 +909,10 @@ def render_lab_report(
         )
     if telemetry_plan.get("warp"):
         telemetry_rows.append({"product": "Cloudflare WARP", "role": "SWG", "targets": telemetry_plan["warp"]})
+    if telemetry_plan.get("mde"):
+        telemetry_rows.append(
+            {"product": "Microsoft Defender for Endpoint", "role": "EDR (onboarded)", "targets": telemetry_plan["mde"]}
+        )
     bas_rows = []
     if bas_plan.get("caldera-sandcat"):
         bas_rows.append({"product": "MITRE Caldera (sandcat beacon)", "targets": bas_plan["caldera-sandcat"]})

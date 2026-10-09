@@ -294,6 +294,20 @@ run_site() {
   [ -n "${PF_CLOUDFLARE_ENROLL_CLIENT_SECRET:-}" ] || die "telemetry: PF_CLOUDFLARE_ENROLL_CLIENT_SECRET unset"
   TELEMETRY_EV="$TELEMETRY_EV -e pf_cloudflare_team=$PF_CLOUDFLARE_TEAM -e pf_cloudflare_enroll_client_id=$PF_CLOUDFLARE_ENROLL_CLIENT_ID -e pf_cloudflare_enroll_client_secret=$PF_CLOUDFLARE_ENROLL_CLIENT_SECRET"
 {% endif %}
+{% if telemetry_mde %}
+  # MDE (Microsoft Defender for Endpoint) — Windows onboarding. The onboarding
+  # .cmd carries a TENANT-SPECIFIC blob and is never baked into the generated
+  # playbooks: the operator points MDE_WIN_ONBOARDING_PATH at the Windows package
+  # from the Defender portal, and it is staged into the gitignored
+  # generated/<lab>/ansible/files/mde/ (visible to the pf-ansible container at
+  # /repo/...), then passed by path. Creds are deploy-time only.
+  [ -n "${MDE_WIN_ONBOARDING_PATH:-}" ] || die "telemetry: MDE_WIN_ONBOARDING_PATH unset (path to your Windows MDE onboarding .cmd from the Microsoft Defender portal)"
+  [ -f "$MDE_WIN_ONBOARDING_PATH" ] || die "telemetry: MDE_WIN_ONBOARDING_PATH '$MDE_WIN_ONBOARDING_PATH' is not a readable file"
+  mkdir -p "$ANS_DIR/files/mde"
+  cp -f "$MDE_WIN_ONBOARDING_PATH" "$ANS_DIR/files/mde/WindowsDefenderATPOnboardingScript.cmd" \
+    || die "could not stage the MDE onboarding script into the lab's ansible/files/mde/"
+  TELEMETRY_EV="$TELEMETRY_EV -e pf_mde_onboarding_src=/repo/$LAB_REL/ansible/files/mde/WindowsDefenderATPOnboardingScript.cmd"
+{% endif %}
 {% if bas_caldera %}
   # BAS (adversary emulation) — MITRE Caldera sandcat beacon. The Caldera server is
   # operator-run: a cloud server (agents reach it via bastion egress) or a local

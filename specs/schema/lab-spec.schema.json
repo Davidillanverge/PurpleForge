@@ -5,44 +5,83 @@
   "description": "Declarative specification for a Purple-Team-instrumented Active Directory lab. Validated and reconciled by the lab-spec skill before any Terraform/Ansible is generated.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["lab", "forest", "machines", "population", "vulnerabilities", "defense"],
+  "required": [
+    "lab",
+    "forest",
+    "machines",
+    "population",
+    "vulnerabilities",
+    "defense"
+  ],
   "properties": {
-    "lab": { "$ref": "#/$defs/lab" },
+    "lab": {
+      "$ref": "#/$defs/lab"
+    },
     "forest": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/domain" }
+      "items": {
+        "$ref": "#/$defs/domain"
+      }
     },
     "machines": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/machine" }
+      "items": {
+        "$ref": "#/$defs/machine"
+      }
     },
-    "population": { "$ref": "#/$defs/population" },
+    "population": {
+      "$ref": "#/$defs/population"
+    },
     "vulnerabilities": {
       "type": "array",
-      "description": "Vulnerability ids from catalog/vulnerabilities/*.yml — the intentional gaps.",
-      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "description": "Vulnerability ids from catalog/vulnerabilities/*.yml \u2014 the intentional gaps.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
       "uniqueItems": true
     },
-    "defense": { "$ref": "#/$defs/defense" },
-    "attack_chain": { "$ref": "#/$defs/attack_chain" },
+    "defense": {
+      "$ref": "#/$defs/defense"
+    },
+    "attack_chain": {
+      "$ref": "#/$defs/attack_chain"
+    },
     "on_conflict": {
       "type": "string",
       "description": "How to resolve a hardening control that would neutralize a selected vulnerability (see catalog vuln 'neutralized_by').",
-      "enum": ["warn", "exclude-control", "fail"],
+      "enum": [
+        "warn",
+        "exclude-control",
+        "fail"
+      ],
       "default": "warn"
     },
-    "validation": { "$ref": "#/$defs/validation" },
-    "telemetry": { "$ref": "#/$defs/telemetry" },
-    "bas": { "$ref": "#/$defs/bas" }
+    "validation": {
+      "$ref": "#/$defs/validation"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/telemetry"
+    },
+    "bas": {
+      "$ref": "#/$defs/bas"
+    }
   },
-
   "$defs": {
     "lab": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "theme", "provider", "region", "isolation", "auto_shutdown", "budget_alert_usd"],
+      "required": [
+        "name",
+        "theme",
+        "provider",
+        "region",
+        "isolation",
+        "auto_shutdown",
+        "budget_alert_usd"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -56,7 +95,11 @@
         },
         "provider": {
           "type": "string",
-          "enum": ["aws", "azure", "proxmox"]
+          "enum": [
+            "aws",
+            "azure",
+            "proxmox"
+          ]
         },
         "region": {
           "type": "string",
@@ -80,15 +123,19 @@
         "bastion_size": {
           "type": "string",
           "minLength": 1,
-          "description": "Cloud VM size for the WireGuard bastion, overriding the default (Azure: 'Standard_B1s'). Set it when the subscription's regional vCPU quota restricts the B-series (the #1 deploy blocker) — no need to touch templates. When absent, forge's default applies."
+          "description": "Cloud VM size for the WireGuard bastion, overriding the default (Azure: 'Standard_B1s'). Set it when the subscription's regional vCPU quota restricts the B-series (the #1 deploy blocker) \u2014 no need to touch templates. When absent, forge's default applies."
         }
       }
     },
-
     "domain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["domain", "netbios", "functional_level", "domain_controllers"],
+      "required": [
+        "domain",
+        "netbios",
+        "functional_level",
+        "domain_controllers"
+      ],
       "properties": {
         "domain": {
           "type": "string",
@@ -102,7 +149,12 @@
         },
         "functional_level": {
           "type": "string",
-          "enum": ["2008_r2", "2012", "2012_r2", "2016"]
+          "enum": [
+            "2008_r2",
+            "2012",
+            "2012_r2",
+            "2016"
+          ]
         },
         "domain_controllers": {
           "type": "integer",
@@ -112,7 +164,10 @@
         "trust": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["target", "type"],
+          "required": [
+            "target",
+            "type"
+          ],
           "properties": {
             "target": {
               "type": "string",
@@ -120,21 +175,34 @@
             },
             "type": {
               "type": "string",
-              "enum": ["parent-child", "external", "forest", "shortcut"]
+              "enum": [
+                "parent-child",
+                "external",
+                "forest",
+                "shortcut"
+              ]
             }
           }
         }
       }
     },
-
     "machine": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "os", "domain", "count"],
+      "required": [
+        "role",
+        "os",
+        "domain",
+        "count"
+      ],
       "properties": {
         "role": {
           "type": "string",
-          "enum": ["domain-controller", "member-server", "workstation"]
+          "enum": [
+            "domain-controller",
+            "member-server",
+            "workstation"
+          ]
         },
         "os": {
           "type": "string",
@@ -161,7 +229,14 @@
           "description": "Only meaningful on member-server; enables prerequisites for some catalog vulnerabilities (e.g. adcs-esc1 requires adcs).",
           "items": {
             "type": "string",
-            "enum": ["adcs", "mssql", "iis", "ftp", "wsus", "sccm"]
+            "enum": [
+              "adcs",
+              "mssql",
+              "iis",
+              "ftp",
+              "wsus",
+              "sccm"
+            ]
           },
           "uniqueItems": true
         },
@@ -170,36 +245,48 @@
           "description": "Third-party applications (full products, not Windows services) provisioned securely on this host by the application-provisioning phase; catalog vulns then reopen gaps on top via attack.requires_apps (e.g. jenkins -> jenkins-unauth-script-console). See NON-AD-VULNS-ROADMAP.md 'Application catalog'.",
           "items": {
             "type": "string",
-            "enum": ["jenkins"]
+            "enum": [
+              "jenkins"
+            ]
           },
           "uniqueItems": true
         },
         "image_id": {
           "type": "string",
           "minLength": 1,
-          "description": "Use an existing image instead of the marketplace publisher/offer/sku for `os` — e.g. a golden workstation image with an EDR agent pre-installed. Azure: a full resource ID, either a managed image (.../Microsoft.Compute/images/<name>) or a Shared Image Gallery version (.../Microsoft.Compute/galleries/<gallery>/images/<definition>/versions/<version>) — consumed by infra-azure today. AWS: intended to hold an AMI id (ami-xxxxxxxx) once infra-aws exists; not consumed by anything yet. `os` is still required when image_id is set — it still drives which ansible-lockdown role/OS-specific behavior applies, independent of which image backs the VM."
+          "description": "Use an existing image instead of the marketplace publisher/offer/sku for `os` \u2014 e.g. a golden workstation image with an EDR agent pre-installed. Azure: a full resource ID, either a managed image (.../Microsoft.Compute/images/<name>) or a Shared Image Gallery version (.../Microsoft.Compute/galleries/<gallery>/images/<definition>/versions/<version>) \u2014 consumed by infra-azure today. AWS: intended to hold an AMI id (ami-xxxxxxxx) once infra-aws exists; not consumed by anything yet. `os` is still required when image_id is set \u2014 it still drives which ansible-lockdown role/OS-specific behavior applies, independent of which image backs the VM."
         },
         "vm_size": {
           "type": "string",
           "minLength": 1,
-          "description": "Cloud VM size for this machine, overriding the per-role default (Azure: e.g. 'Standard_B2s'). Set it here when a role needs a bigger box or the subscription's regional vCPU quota forces a specific SKU (the #1 deploy blocker) — no need to touch templates. When absent, windows.tf's per-role default applies. On a quota-restricted subscription, verify the size exists in the region with the Azure MCP / `az vm list-skus` before deploy."
+          "description": "Cloud VM size for this machine, overriding the per-role default (Azure: e.g. 'Standard_B2s'). Set it here when a role needs a bigger box or the subscription's regional vCPU quota forces a specific SKU (the #1 deploy blocker) \u2014 no need to touch templates. When absent, windows.tf's per-role default applies. On a quota-restricted subscription, verify the size exists in the region with the Azure MCP / `az vm list-skus` before deploy."
         }
       }
     },
-
     "population": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["users", "density", "seed"],
+      "required": [
+        "users",
+        "density",
+        "seed"
+      ],
       "properties": {
-        "users": { "type": "integer", "minimum": 1 },
+        "users": {
+          "type": "integer",
+          "minimum": 1
+        },
         "density": {
           "type": "string",
-          "enum": ["sparse", "realistic", "messy"]
+          "enum": [
+            "sparse",
+            "realistic",
+            "messy"
+          ]
         },
         "seed": {
           "type": "integer",
-          "description": "Drives PurpleForge's own deterministic population generator (scripts/population.py) and theming — same seed always produces the same OU tree/users/groups/computers."
+          "description": "Drives PurpleForge's own deterministic population generator (scripts/population.py) and theming \u2014 same seed always produces the same OU tree/users/groups/computers."
         },
         "include_noise_acls": {
           "type": "boolean",
@@ -208,50 +295,75 @@
         }
       }
     },
-
     "role_or_all": {
       "description": "'all', or an explicit list of machine roles.",
       "oneOf": [
-        { "type": "string", "const": "all" },
+        {
+          "type": "string",
+          "const": "all"
+        },
         {
           "type": "array",
-          "items": { "type": "string", "enum": ["domain-controller", "member-server", "workstation"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "domain-controller",
+              "member-server",
+              "workstation"
+            ]
+          },
           "uniqueItems": true,
           "minItems": 1
         }
       ]
     },
-
     "defense": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile"],
+      "required": [
+        "profile"
+      ],
       "properties": {
         "profile": {
           "type": "string",
           "description": "Fixes defaults for edr/hardening/deception; entries below are fine-grained overrides on top of the profile.",
-          "enum": ["none", "realistic", "hardened"]
+          "enum": [
+            "none",
+            "realistic",
+            "hardened"
+          ]
         },
         "edr": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["product", "mode"],
+            "required": [
+              "product",
+              "mode"
+            ],
             "properties": {
               "product": {
                 "type": "string",
-                "enum": ["defender-av"]
+                "enum": [
+                  "defender-av"
+                ]
               },
               "mode": {
                 "type": "string",
-                "enum": ["enabled", "detect", "prevent"]
+                "enum": [
+                  "enabled",
+                  "detect",
+                  "prevent"
+                ]
               },
               "settings": {
                 "type": "object",
                 "description": "Product-specific settings, e.g. { asr_rules: audit, tamper_protection: true }."
               },
-              "targets": { "$ref": "#/$defs/role_or_all" }
+              "targets": {
+                "$ref": "#/$defs/role_or_all"
+              }
             }
           }
         },
@@ -261,26 +373,58 @@
           "properties": {
             "baseline": {
               "type": "string",
-              "enum": ["none", "cis-l1", "cis-l2", "stig", "baseline-controls"]
+              "enum": [
+                "none",
+                "cis-l1",
+                "cis-l2",
+                "stig",
+                "baseline-controls"
+              ]
             },
-            "apply_to": { "$ref": "#/$defs/role_or_all" },
+            "apply_to": {
+              "$ref": "#/$defs/role_or_all"
+            },
             "controls": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "laps": { "type": "boolean" },
-                "lsa_protection": { "type": "boolean" },
-                "credential_guard": { "type": "boolean" },
-                "smb_signing": { "type": "string", "enum": ["disable", "enable", "enforce"] },
-                "ldap_signing": { "type": "string", "enum": ["disable", "enable", "enforce"] },
-                "disable_llmnr_nbtns_mdns": { "type": "boolean" },
+                "laps": {
+                  "type": "boolean"
+                },
+                "lsa_protection": {
+                  "type": "boolean"
+                },
+                "credential_guard": {
+                  "type": "boolean"
+                },
+                "smb_signing": {
+                  "type": "string",
+                  "enum": [
+                    "disable",
+                    "enable",
+                    "enforce"
+                  ]
+                },
+                "ldap_signing": {
+                  "type": "string",
+                  "enum": [
+                    "disable",
+                    "enable",
+                    "enforce"
+                  ]
+                },
+                "disable_llmnr_nbtns_mdns": {
+                  "type": "boolean"
+                },
                 "ntlmv2_only": {
                   "type": "boolean",
-                  "description": "Restricts LAN Manager auth to NTLMv2-only, refusing LM/NTLMv1 (LMCompatibilityLevel=5). Verified against ansible-lockdown CIS rule 2.3.11.7 (level1, identical on Windows-2019-CIS/Windows-2022-CIS) — see catalog/defense/hardening/control-cis-rules.yml. Neutralizes catalog/vulnerabilities/ntlm-downgrade.yml."
+                  "description": "Restricts LAN Manager auth to NTLMv2-only, refusing LM/NTLMv1 (LMCompatibilityLevel=5). Verified against ansible-lockdown CIS rule 2.3.11.7 (level1, identical on Windows-2019-CIS/Windows-2022-CIS) \u2014 see catalog/defense/hardening/control-cis-rules.yml. Neutralizes catalog/vulnerabilities/ntlm-downgrade.yml."
                 },
                 "protected_users_group": {
                   "type": "array",
-                  "items": { "type": "string" }
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "mssql_hardening": {
                   "type": "boolean",
@@ -302,73 +446,116 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "honey_accounts": { "type": "integer", "minimum": 0 }
+            "honey_accounts": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
     },
-
     "telemetry": {
       "type": "object",
       "additionalProperties": false,
-      "description": "DETECT-pillar telemetry AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agents; the backends, Fleet policies, integrations and detection rules are operator-configured, and the backend credentials are deploy-time env vars (never in the spec — not seed-derived, see NON-AD-VULNS-ROADMAP.md 'Telemetry'). telemetry.edr and telemetry.siem (both elastic) are served by a SINGLE elastic-agent install; telemetry.swg (cloudflare) is the WARP client.",
+      "description": "DETECT-pillar telemetry AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agents; the backends, Fleet policies, integrations and detection rules are operator-configured, and the backend credentials are deploy-time env vars (never in the spec \u2014 not seed-derived, see NON-AD-VULNS-ROADMAP.md 'Telemetry'). telemetry.edr and telemetry.siem (both elastic) are served by a SINGLE elastic-agent install; telemetry.swg (cloudflare) is the WARP client. telemetry.edr may instead be microsoft-defender (MDE): a separate Windows-only agent onboarded from the operator's package, not the elastic-agent.",
       "properties": {
         "swg": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provider"],
+          "required": [
+            "provider"
+          ],
           "properties": {
-            "provider": { "type": "string", "enum": ["cloudflare"] },
-            "enabled": { "type": "boolean" },
-            "targets": { "$ref": "#/$defs/role_or_all" }
+            "provider": {
+              "type": "string",
+              "enum": [
+                "cloudflare"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "targets": {
+              "$ref": "#/$defs/role_or_all"
+            }
           }
         },
         "edr": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provider"],
+          "required": [
+            "provider"
+          ],
           "properties": {
-            "provider": { "type": "string", "enum": ["elastic"] },
-            "enabled": { "type": "boolean" },
-            "targets": { "$ref": "#/$defs/role_or_all" }
+            "provider": {
+              "type": "string",
+              "enum": [
+                "elastic",
+                "microsoft-defender"
+              ],
+              "description": "elastic = Fleet-enrolled Elastic Agent (shared with telemetry.siem). microsoft-defender = Microsoft Defender for Endpoint (MDE) agent, onboarded from the operator's Windows onboarding package (MDE_WIN_ONBOARDING_PATH at deploy time); Windows hosts only, its own agent (not folded into elastic-agent)."
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "targets": {
+              "$ref": "#/$defs/role_or_all"
+            }
           }
         },
         "siem": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provider"],
+          "required": [
+            "provider"
+          ],
           "properties": {
-            "provider": { "type": "string", "enum": ["elastic"] },
-            "enabled": { "type": "boolean" },
-            "targets": { "$ref": "#/$defs/role_or_all" }
+            "provider": {
+              "type": "string",
+              "enum": [
+                "elastic"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "targets": {
+              "$ref": "#/$defs/role_or_all"
+            }
           }
         }
       }
     },
-
     "bas": {
       "type": "object",
       "additionalProperties": false,
-      "description": "BAS (breach-and-attack-simulation / adversary-emulation) AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agent (beacon); the C2 server and the operations/abilities that drive the emulation are operator-configured, and the server credentials are deploy-time env vars (never in the spec — not seed-derived, same deliberate exception as telemetry). The dormant agent installs as part of the defended baseline (before the clean snapshot); the emulations are attacks that run after it, like validation. See BAS-DEPLOY-RUNBOOK.md.",
+      "description": "BAS (breach-and-attack-simulation / adversary-emulation) AGENTS deployed on lab hosts. PurpleForge only installs/enrolls the agent (beacon); the C2 server and the operations/abilities that drive the emulation are operator-configured, and the server credentials are deploy-time env vars (never in the spec \u2014 not seed-derived, same deliberate exception as telemetry). The dormant agent installs as part of the defended baseline (before the clean snapshot); the emulations are attacks that run after it, like validation. See BAS-DEPLOY-RUNBOOK.md.",
       "properties": {
         "caldera": {
           "type": "object",
           "additionalProperties": false,
           "description": "MITRE Caldera sandcat beacon. The server (PF_CALDERA_SERVER) may be a cloud Caldera or a local Kali instance reachable over the WireGuard tunnel.",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "targets": { "$ref": "#/$defs/role_or_all" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "targets": {
+              "$ref": "#/$defs/role_or_all"
+            }
           }
         }
       }
     },
-
     "validation": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "bloodhound": { "type": "boolean" },
-        "pingcastle": { "type": "boolean" },
+        "bloodhound": {
+          "type": "boolean"
+        },
+        "pingcastle": {
+          "type": "boolean"
+        },
         "atomic_red_team": {
           "type": "array",
           "items": {
@@ -378,7 +565,6 @@
         }
       }
     },
-
     "attack_chain": {
       "type": "object",
       "additionalProperties": false,
@@ -386,7 +572,10 @@
         "mode": {
           "type": "string",
           "description": "'independent' (default): every selected vulnerability targets its own real population object, no deliberate overlap. 'ctf': resolve_attack_chain() prefers reusing the same real object across multiple selected vulnerabilities where their target_shape is compatible, so exploiting one is a real prerequisite for the next.",
-          "enum": ["independent", "ctf"],
+          "enum": [
+            "independent",
+            "ctf"
+          ],
           "default": "independent"
         }
       }

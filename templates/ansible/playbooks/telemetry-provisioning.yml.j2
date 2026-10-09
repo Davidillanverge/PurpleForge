@@ -47,3 +47,16 @@
         - ansible.builtin.debug:
             msg: "PF-TELEMETRY-FAILED warp on {{ '{{' }} inventory_hostname {{ '}}' }} — see error above; other layers/hosts continue."
 {% endfor %}
+{% for h in mde_hosts %}
+- name: "PurpleForge | telemetry | mde (microsoft defender for endpoint) -> {{ h }}"
+  hosts: {{ h }}
+  gather_facts: false
+  tasks:
+    - name: "mde | onboard"
+      block:
+        - ansible.builtin.include_role:
+            name: pf_mde
+      rescue:
+        - ansible.builtin.debug:
+            msg: "PF-TELEMETRY-FAILED mde on {{ '{{' }} inventory_hostname {{ '}}' }} — see error above; other layers/hosts continue."
+{% endfor %}
