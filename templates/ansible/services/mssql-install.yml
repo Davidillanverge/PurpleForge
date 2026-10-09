@@ -60,7 +60,7 @@
 
 - name: "mssql-install | download the SQL Server 2019 Express installer"
   ansible.windows.win_get_url:
-    url: "https://download.microsoft.com/download/7/f/8/7f8a9c43-8c8a-4f7c-9f92-83c18d96b681/SQL2019-SSEI-Expr.exe"
+    url: "https://go.microsoft.com/fwlink/?linkid=866658"  # evergreen SQL2019 Express SSEI (old direct download URL 404s as of 2026-10)
     dest: C:\setup\mssql\sql_installer.exe
   when: not mssql_installer_file.stat.exists
 
