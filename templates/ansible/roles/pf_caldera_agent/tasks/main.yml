@@ -83,21 +83,60 @@
       ansible.windows.win_shell: "Set-MpPreference -DisableRealtimeMonitoring $true; exit 0"
       changed_when: true
 
-    - name: "pf_caldera_agent | download the sandcat agent (Windows binary) from the Caldera server"
-      ansible.windows.win_get_url:
-        url: "{{ pf_caldera_server_url }}/file/download"
-        dest: "C:\\setup\\caldera\\sandcat.exe"
-        headers: "{{ pf_caldera_headers }}"
+    - name: "pf_caldera_agent | download the sandcat agent straight into the AV-excluded dir"
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $h = @{ 'platform' = 'windows'; 'file' = 'sandcat.go' }
+        {% if (pf_caldera_api_key | default('')) | length > 0 %}$h['KEY'] = '{{ pf_caldera_api_key }}'
+        {% endif %}Invoke-WebRequest -UseBasicParsing -Uri '{{ pf_caldera_server_url }}/file/download' -Headers $h -OutFile 'C:\setup\caldera\sandcat.exe' -TimeoutSec 90
+        if ((Test-Path 'C:\setup\caldera\sandcat.exe') -and ((Get-Item 'C:\setup\caldera\sandcat.exe').Length -gt 0)) { 'PF-DL-OK' } else { throw 'sandcat not written' }
+      register: pf_cal_dl
+      # Download DIRECTLY into C:\setup\caldera, which was added to Defender's
+      # exclusions above. The old win_get_url staged the stream through %TEMP% (NOT
+      # excluded), so Block-At-First-Sight quarantined sandcat there whenever EDR
+      # ran with tamper_protection=true (real-time can't be paused under TP, so the
+      # download failed with "the file contains a virus"). A direct -OutFile write
+      # into the excluded path is never scanned -> works with tamper protection ON.
+      # Still strictly best-effort: BAS must NEVER fail the deploy, so swallow every
+      # error (transient Caldera unreachability, or a host where exclusions did not
+      # take) and skip the install below, gated on the file actually existing. On
+      # such hosts, enroll the beacon post-deploy — see BAS-DEPLOY-RUNBOOK.md.
+      changed_when: "'PF-DL-OK' in (pf_cal_dl.stdout | default(''))"
+      failed_when: false
+      retries: 3
+      delay: 15
+      until: "'PF-DL-OK' in (pf_cal_dl.stdout | default(''))"
   always:
     - name: "pf_caldera_agent | re-enable Defender real-time monitoring"
       ansible.windows.win_shell: "Set-MpPreference -DisableRealtimeMonitoring $false; exit 0"
       changed_when: true
       failed_when: false
 
+# Did the agent actually land? On a host where Defender (with tamper protection)
+# quarantined the download, the file is absent — skip the install/start/verify
+# below so the host stays green and the deploy still completes + snapshots,
+# instead of registering a scheduled task that points at a missing binary.
+- name: "pf_caldera_agent | check whether the sandcat binary landed"
+  ansible.windows.win_stat:
+    path: C:\setup\caldera\sandcat.exe
+  register: pf_cal_exe
+
+- name: "pf_caldera_agent | note when the beacon could not be staged (Defender/transient — non-fatal)"
+  ansible.builtin.debug:
+    msg: >-
+      PF-BAS-SKIPPED sandcat not staged on {{ inventory_hostname }} (Defender
+      quarantine under tamper protection, or Caldera unreachable) — host left
+      green; enroll the beacon post-deploy. See BAS-DEPLOY-RUNBOOK.md.
+  when:
+    - "'present' not in (pf_cal_task.stdout | default(''))"
+    - not (pf_cal_exe.stat.exists | default(false))
+
 # Persist as an at-boot SYSTEM scheduled task (survives reboot -> part of the
 # baseline the clean snapshot captures) AND kick it off now so it is already
 # beaconing when the snapshot is taken.
 - name: "pf_caldera_agent | register the sandcat agent as an at-boot SYSTEM task"
+  when: pf_cal_exe.stat.exists | default(false) or ('present' in (pf_cal_task.stdout | default('')))
   community.windows.win_scheduled_task:
     name: PFCalderaSandcat
     description: "PurpleForge BAS — MITRE Caldera sandcat beacon (group {{ pf_caldera_group }})"
@@ -116,6 +155,7 @@
   register: pf_cal_start
   changed_when: true
   failed_when: pf_cal_start.rc != 0
+  when: pf_cal_exe.stat.exists | default(false) or ('present' in (pf_cal_task.stdout | default('')))
 
 - name: "pf_caldera_agent | verify the sandcat process is running (best-effort, retries)"
   ansible.windows.win_shell: "if (Get-Process -Name 'sandcat' -ErrorAction SilentlyContinue) { 'running' } else { 'not-running' }"
@@ -125,6 +165,7 @@
   retries: 8
   delay: 10
   until: "'running' in (pf_cal_proc.stdout | default(''))"
+  when: pf_cal_exe.stat.exists | default(false) or ('present' in (pf_cal_task.stdout | default('')))
 
 - name: "pf_caldera_agent | record state"
   ansible.builtin.debug:
