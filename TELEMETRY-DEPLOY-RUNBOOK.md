@@ -97,8 +97,13 @@ passes them to `site.yml` as extra-vars. Keep them out of the repo (e.g. a file 
 
 1. Microsoft Defender portal → **Settings → Endpoints → Onboarding**.
 2. OS = the lab's Windows (e.g. **Windows Server 1803+/2019/2022**), method =
-   **Local Script** → **Download onboarding package**; unzip to get
-   `WindowsDefenderATPOnboardingScript.cmd` → point `MDE_WIN_ONBOARDING_PATH` at it.
+   **Local Script** → **Download onboarding package**; unzip and point
+   `MDE_WIN_ONBOARDING_PATH` at the `.cmd`. Either variant works — the Local
+   Script (`WindowsDefenderATPLocalOnboardingScript.cmd`, which prompts Y/N and
+   ends with `pause`) or the GPO package (`WindowsDefenderATPOnboardingScript.cmd`,
+   non-interactive). The role feeds "Y" on stdin, so the interactive Local script
+   does NOT hang head-less (a bare run blocks forever on its `set /p` prompt —
+   found + fixed live 2026-10-09).
 3. The role runs the script (writes the tenant blob, starts the **Sense** service),
    then health-checks: `Sense` running + auto-start, `OnboardingState = 1`, and
    `Get-MpComputerStatus` real-time protection. Devices appear under **Assets →

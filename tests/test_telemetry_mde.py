@@ -75,8 +75,19 @@ def test_mde_role_is_windows_only_and_requires_the_package():
     role = forge.core.TEMPLATES_DIR / "ansible" / "roles" / "pf_mde" / "tasks" / "main.yml"
     body = role.read_text(encoding="utf-8")
     assert "pf_mde_onboarding_src" in body and "ansible.builtin.assert" in body
-    assert "name: Sense" in body and "start_mode: auto" in body
+    # health check VERIFIES read-only (Get-Service) — it must NOT try to modify the
+    # Sense service with win_service/start_mode, which MDE tamper-protection denies
+    # once onboarded (regression: Access Denied Win32 5, live 2026-10-09).
+    assert "Get-Service Sense" in body
+    # no win_service MODULE call and no start_mode PARAM (comments may mention them)
+    assert "ansible.windows.win_service:" not in body
+    assert "\n    start_mode:" not in body
     assert "OnboardingState" in body and "ansible.windows" in body
+    # the LOCAL onboarding .cmd is interactive (set /p + pause); the run task must
+    # feed "Y" on stdin and bound the run so a head-less hang fails instead of
+    # blocking the deploy forever (regression: live hang 2026-10-09).
+    assert '"Y" | cmd.exe /c' in body
+    assert "async:" in body and "poll:" in body
 
 
 def test_no_telemetry_means_no_mde(tmp_path):

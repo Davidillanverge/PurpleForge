@@ -18,9 +18,12 @@
 # the generated playbooks — it is copied in at deploy time and lands only under
 # the gitignored generated/<lab>/ansible/files/.
 #
-# LIVE-TEST CAVEAT: not yet exercised against a real MDE tenant — the onboarding
-# .cmd + Sense/OnboardingState checks follow Microsoft's documented local-script
-# onboarding; verify on first live run.
+# Handles BOTH Microsoft script variants: the GPO-package
+# WindowsDefenderATPOnboardingScript.cmd (non-interactive) and the LOCAL
+# WindowsDefenderATPLocalOnboardingScript.cmd (interactive — prompts Y/N and ends
+# with `pause`); the run task feeds "Y" on stdin so neither blocks head-less.
+# Live-validated on AWS (Windows Server 2022, 2026-10-09): Sense Running+Automatic,
+# OnboardingState=1, real-time protection on.
 # Idempotent: skips the onboarding run when the host already reports onboarded.
 
 - name: "pf_mde | require the onboarding package path (deploy-time env)"
@@ -61,23 +64,40 @@
   when: (pf_mde_state.stdout | default('') | trim) != '1'
 
 # The onboarding .cmd must run elevated; it writes the onboarding blob and starts
-# Sense. Run it via cmd.exe and treat a non-zero rc as a failure to surface.
-- name: "pf_mde | run the onboarding script (elevated)"
-  ansible.windows.win_command: cmd.exe /c C:\setup\mde\WindowsDefenderATPOnboardingScript.cmd
+# Sense. Microsoft ships TWO script variants and the LOCAL one
+# (WindowsDefenderATPLocalOnboardingScript.cmd) is INTERACTIVE: it prompts
+# `set /p shouldContinue=` for a Y/N and ends with a `pause`. Run head-less it
+# blocks forever waiting for a keypress (confirmed live). Feed "Y" on stdin so it
+# proceeds; the GPO-package script (no prompt) simply ignores the extra input,
+# and the trailing `pause` returns on EOF. win_shell runs via PowerShell, whose
+# pipeline input becomes the child process's stdin. async+poll bound the run so a
+# future interactive variant fails (-> rescue) instead of hanging the deploy.
+- name: "pf_mde | run the onboarding script (elevated, non-interactive)"
+  ansible.windows.win_shell: '"Y" | cmd.exe /c C:\setup\mde\WindowsDefenderATPOnboardingScript.cmd'
   register: pf_mde_onboard
   when: (pf_mde_state.stdout | default('') | trim) != '1'
   changed_when: pf_mde_onboard is not skipped
+  async: 300
+  poll: 10
 
 # ---- health check: Sense running + auto-start, onboarding complete, RTP on ----
-- name: "pf_mde | ensure the Sense service is running and set to auto-start"
-  ansible.windows.win_service:
-    name: Sense
-    state: started
-    start_mode: auto
+# VERIFY, don't enforce. Once onboarded, MDE tamper-protects the Sense service:
+# opening it with write/change-config access (what win_service does to set
+# start_mode) is DENIED even to admins ("Failed to open service 'Sense' (Access
+# is denied, Win32ErrorCode 5)" — confirmed live). The onboarding script already
+# set Sense to Automatic + started it, so we only READ its state (Get-Service is
+# read-only and works on the protected service) and assert Running + Automatic.
+- name: "pf_mde | verify the Sense service is running and auto-start (read-only; Sense is tamper-protected)"
+  ansible.windows.win_shell: |
+    $s = Get-Service Sense
+    "{0};{1}" -f $s.Status, $s.StartType
   register: pf_mde_sense
-  retries: 6
+  changed_when: false
+  retries: 12
   delay: 10
-  until: pf_mde_sense is succeeded
+  until: >-
+    pf_mde_sense.stdout is search('Running') and pf_mde_sense.stdout is search('Automatic')
+  failed_when: not (pf_mde_sense.stdout is search('Running'))
 
 - name: "pf_mde | confirm onboarding completed (OnboardingState = 1)"
   ansible.windows.win_shell: |
@@ -101,6 +121,6 @@
   ansible.builtin.debug:
     msg: >-
       MDE onboarded on {{ inventory_hostname }} ({{ pf_mde_os.stdout | trim }}):
-      Sense service {{ (pf_mde_sense.state | default('running')) }} / auto-start,
+      Sense service [{{ pf_mde_sense.stdout | default('') | trim }}],
       OnboardingState=1. Defender status: {{ pf_mde_mp.stdout | default('n/a') | trim }}.
       Tenant device groups / policies / detections are operator-configured.
