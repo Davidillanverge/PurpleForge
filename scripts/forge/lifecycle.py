@@ -166,27 +166,25 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
 
     remaining = result.stdout.split()
 
-    # Terminated (and shutting-down) EC2 instances keep their tags and linger in
-    # the tagging API for up to ~1h after terminate before AWS purges them, but
-    # they bear NO cost — a stopped/running one would. Drop them so a successful
-    # teardown doesn't report a false "still exist". One describe-instances call
-    # resolves every instance ARN's state.
-    inst_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":instance/" in arn]
-    live_terminated = set()
-    if inst_ids:
-        q = subprocess.run(
-            [
-                aws_bin, "ec2", "describe-instances", "--region", region,
-                "--instance-ids", *inst_ids,
-                "--filters", "Name=instance-state-name,Values=terminated,shutting-down",
-                "--query", "Reservations[].Instances[].InstanceId", "--output", "text",
-            ],
-            capture_output=True, text=True,
-        )
-        if q.returncode == 0:
-            live_terminated = set(q.stdout.split())
+    gone: set[str] = set()
 
-    remaining = [arn for arn in remaining if arn.rsplit("/", 1)[-1] not in live_terminated]
+    # Terminated (and shutting-down) EC2 instances keep their tags and linger in
+    # the Resource Groups Tagging API for up to ~1h after terminate (and, once
+    # fully aged out, can STILL appear there as ghosts) before AWS purges them —
+    # but they bear NO cost; only a pending/running/stopping/stopped one does.
+    # Classify by what is ACTUALLY ALIVE, queried BY TAG (not by id: a ghost that
+    # no longer exists errors / returns nothing on a by-id lookup, which is the
+    # bug that made aged-out terminated instances count as leftovers). Any tagged
+    # instance ARN not in the alive set is terminated/gone -> not a leftover.
+    inst_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":instance/" in arn]
+    if inst_ids:
+        alive = _aws_existing_ids(
+            aws_bin, region, "describe-instances",
+            "--filters", f"Name=tag:lab,Values={lab_name}",
+            "Name=instance-state-name,Values=pending,running,stopping,stopped",
+            query="Reservations[].Instances[].InstanceId",
+        )
+        gone |= set(inst_ids) - alive
 
     # Deregistered AMIs and deleted EBS snapshots linger in the tagging API the
     # same way terminated instances do. sweep_aws_clean_images runs BEFORE this
@@ -196,7 +194,6 @@ def verify_aws_teardown(lab_name: str, region: str) -> bool:
     # (list what remains and subtract) so a clean teardown doesn't false-FAIL.
     img_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":image/" in arn]
     snap_ids = [arn.rsplit("/", 1)[-1] for arn in remaining if ":snapshot/" in arn]
-    gone: set[str] = set()
     if img_ids:
         existing = _aws_existing_ids(aws_bin, region, "describe-images",
                                      "--owners", "self", query="Images[].ImageId")

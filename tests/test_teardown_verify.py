@@ -34,7 +34,7 @@ def test_deleting_volume_is_not_a_leftover(monkeypatch):
     tagged = f"{acct}volume/vol-DEL {acct}instance/i-TERM {acct}snapshot/snap-GONE"
     mapping = {
         "resourcegroupstaggingapi": tagged,
-        "describe-instances": "i-TERM",           # terminated -> dropped
+        "describe-instances": "",                  # no ALIVE instance by tag -> i-TERM dropped
         "describe-images": "",
         "describe-snapshots": "",                  # snap gone -> dropped
         "describe-volumes": "",                    # NO live volume (vol-DEL is deleting) -> dropped
@@ -52,6 +52,37 @@ def test_live_volume_is_a_leftover(monkeypatch):
         "describe-images": "",
         "describe-snapshots": "",
         "describe-volumes": "vol-LIVE",            # still available/in-use -> real leftover
+    }
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda _: "/usr/bin/aws")
+    monkeypatch.setattr(lifecycle.subprocess, "run", _fake_aws(mapping))
+    assert lifecycle.verify_aws_teardown("lab", "eu-west-1") is False
+
+
+def test_ghost_terminated_instance_is_not_a_leftover(monkeypatch):
+    """A terminated instance that has aged out of EC2 but still lingers in the
+    tagging API (returns nothing on an alive-by-tag query) is not a leftover.
+    Regression: aged-out ghosts made teardown false-FAIL (live 2026-10-09)."""
+    acct = "arn:aws:ec2:eu-west-1:1:"
+    mapping = {
+        "resourcegroupstaggingapi": f"{acct}instance/i-GHOST1 {acct}instance/i-GHOST2",
+        "describe-instances": "",       # no ALIVE (pending/running/stopping/stopped) instance by tag
+        "describe-images": "",
+        "describe-snapshots": "",
+        "describe-volumes": "",
+    }
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda _: "/usr/bin/aws")
+    monkeypatch.setattr(lifecycle.subprocess, "run", _fake_aws(mapping))
+    assert lifecycle.verify_aws_teardown("lab", "eu-west-1") is True
+
+
+def test_running_instance_is_a_leftover(monkeypatch):
+    acct = "arn:aws:ec2:eu-west-1:1:"
+    mapping = {
+        "resourcegroupstaggingapi": f"{acct}instance/i-LIVE",
+        "describe-instances": "i-LIVE",   # alive-by-tag returns it -> real leftover
+        "describe-images": "",
+        "describe-snapshots": "",
+        "describe-volumes": "",
     }
     monkeypatch.setattr(lifecycle.shutil, "which", lambda _: "/usr/bin/aws")
     monkeypatch.setattr(lifecycle.subprocess, "run", _fake_aws(mapping))
