@@ -15,3 +15,11 @@ output "windows_hosts" {
   description = "name -> private IP for every generated Windows VM (all private-IP-only, reachable only via the WireGuard tunnel)."
   value       = { for m in var.machines : m.name => azurerm_network_interface.windows[m.name].private_ip_address }
 }
+
+output "lab_endpoints" {
+  description = "node -> {role, ip, probes} for EVERY node (bastion + Windows hosts). The generated deploy/start/reset scripts read this (terraform output -json) and open all probes' TCP sockets in parallel — no port or provider is hardcoded in the scripts."
+  value = merge(
+    { bastion = { role = "bastion", ip = azurerm_public_ip.bastion.ip_address, probes = lookup(var.endpoint_probes, "bastion", []) } },
+    { for m in var.machines : m.name => { role = m.role, ip = azurerm_network_interface.windows[m.name].private_ip_address, probes = lookup(var.endpoint_probes, m.role, []) } },
+  )
+}

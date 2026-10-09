@@ -41,6 +41,39 @@ ROLE_ABBREV = {"domain-controller": "dc", "member-server": "mbr", "workstation":
 WINDOWS_ADMIN_USERNAME = "purpleforge"
 WINRM_AUTOMATION_USERNAME = "ansible"
 
+# WinRM-over-HTTPS port Ansible drives every Windows host on (inventory
+# ansible_port) — and the REQUIRED reachability probe for those hosts.
+WINRM_PORT = 5986
+
+# Connectivity probes per node role: the single source of truth for "which
+# protocol/port proves this node is reachable". Rendered into every provider's
+# terraform.tfvars.json (endpoint_probes) and published by Terraform as the
+# `lab_endpoints` output (node -> ip + probes), which the generated lifecycle
+# scripts read to probe every node IN PARALLEL — they hardcode no port or
+# provider. `required` probes gate deploy/start/reset; the rest are reported
+# only (a hardened host may legitimately filter them). TCP only: WireGuard is
+# UDP, so the tunnel is checked by its handshake instead.
+ENDPOINT_PROBES: dict[str, list[dict]] = {
+    "bastion": [{"proto": "ssh", "port": 22, "required": True}],
+    "domain-controller": [
+        {"proto": "winrm-https", "port": WINRM_PORT, "required": True},
+        {"proto": "ldap", "port": 389, "required": False},
+        {"proto": "kerberos", "port": 88, "required": False},
+        {"proto": "smb", "port": 445, "required": False},
+        {"proto": "wmi-rpc", "port": 135, "required": False},
+    ],
+    "member-server": [
+        {"proto": "winrm-https", "port": WINRM_PORT, "required": True},
+        {"proto": "smb", "port": 445, "required": False},
+        {"proto": "wmi-rpc", "port": 135, "required": False},
+    ],
+    "workstation": [
+        {"proto": "winrm-https", "port": WINRM_PORT, "required": True},
+        {"proto": "smb", "port": 445, "required": False},
+        {"proto": "wmi-rpc", "port": 135, "required": False},
+    ],
+}
+
 # Per-vuln (account_var, password_var) in that vuln's build_vuln_vars() output
 # — used to render a "account / password" row. Vulns absent here have no
 # credentialed account (a machine-wide policy change, a computer-object flag,

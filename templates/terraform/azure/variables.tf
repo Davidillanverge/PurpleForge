@@ -133,3 +133,13 @@ variable "auto_shutdown_timezone" {
   description = "Legacy Windows timezone ID (e.g. \"Romance Standard Time\" for Europe/Madrid) required by azurerm_dev_test_global_vm_shutdown_schedule.timezone — verified against a real `terraform plan` (azurerm 3.117.1) that IANA names like \"Europe/Madrid\" are rejected outright, not just discouraged. forge's IANA_TO_WINDOWS_TIMEZONE map does the lab.auto_shutdown IANA-zone -> Windows-ID translation before this variable is set in terraform.tfvars.json."
   type        = string
 }
+
+variable "endpoint_probes" {
+  description = "role -> TCP connectivity probes (proto/port/required), rendered by forge from core.ENDPOINT_PROBES. Published per node in the lab_endpoints output so the lifecycle scripts discover what to probe instead of hardcoding ports."
+  type = map(list(object({
+    proto    = string
+    port     = number
+    required = bool
+  })))
+  default = {}
+}

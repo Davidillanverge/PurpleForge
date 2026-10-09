@@ -190,9 +190,11 @@ tf_apply() {
   log "3. terraform init + apply"
   terraform -chdir="$TF_DIR" init -backend-config=backend.hcl -input=false -reconfigure \
     || die "terraform init failed"
-  local tries=0 max=4
-  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false; do
+  local tries=0 max=4 par="$PF_TF_PARALLELISM"
+  # First attempt at high concurrency; retries drop to PF_TF_RETRY_PARALLELISM.
+  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false -parallelism="$par"; do
     tries=$((tries+1))
+    par="$PF_TF_RETRY_PARALLELISM"   # retries: low concurrency is what cures API lag/locks
     [ "$tries" -ge "$max" ] && die "terraform apply still failing after $tries tries — see the error above (AWS-DEPLOY-RUNBOOK.md step 4)"
     warn "apply failed (attempt $tries/$max) — retrying in 15s (transient API/eventual-consistency lag is expected)"
     sleep 15
@@ -210,8 +212,6 @@ start_vms() {
   [ -z "$ids" ] && { echo "  no stopped VMs — continuing"; return; }
   echo "  starting: $ids"
   aws ec2 start-instances --instance-ids $ids >/dev/null 2>&1 || true
-  # brief settle so WinRM/SSH have a chance to come up before wg_up/ansible probe
-  sleep 30
 }
 
 # ---- WireGuard tunnel (the only path into the lab) --------------------------
@@ -269,17 +269,8 @@ EOF
 
 # ---- Ansible control node in Docker (Python 3.10 GOAD needs) ----------------
 ansible_up() {
-  log "5. Ansible control node (Docker, --network host to see the tunnel)"
-  docker rm -f pf-ansible >/dev/null 2>&1 || true
-  docker run -d --name pf-ansible --network host -v "$REPO:/repo" \
-    -w "/repo/$LAB_REL/ansible" python:3.10-slim sleep infinity >/dev/null \
-    || die "could not start the pf-ansible container"
-  docker exec pf-ansible bash -c "pip install --quiet ansible-core==2.12.6 pywinrm rich psutil Jinja2 pyyaml ansible_runner" \
-    || die "pip install in pf-ansible failed"
-  docker exec pf-ansible bash -c "ansible-galaxy collection install ansible.windows:1.11.0 community.windows:1.11.0 chocolatey.chocolatey" \
-    || die "ansible-galaxy collection install failed"
-  docker exec pf-ansible python3 -c "import urllib.request; urllib.request.urlretrieve('https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-6.6.2.tar.gz','/tmp/cg.tar.gz')" \
-    && docker exec pf-ansible ansible-galaxy collection install /tmp/cg.tar.gz || warn "community.general install failed (only some roles need it) — continuing"
+  log "5. Ansible control node (cached Docker image, --network host to see the tunnel)"
+  pf_ansible_up
 }
 
 # ---- provision AD (site.yml enforces hardening-before-vulns order) ----------
@@ -314,12 +305,12 @@ run_site() {
   [ -n "${PF_CALDERA_API_KEY:-}" ] && TELEMETRY_EV="$TELEMETRY_EV -e pf_caldera_api_key=$PF_CALDERA_API_KEY"
 {% endif %}
   local i=0
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
+  until pf_ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }
     echo "  waiting for WinRM on all hosts ($i)..."; sleep 20
   done
   local tries=0 max=6
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
+  until pf_ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "site.yml still failing after $tries runs — inspect the error above (AWS-DEPLOY-RUNBOOK.md step 7)"
     warn "site.yml failed (attempt $tries/$max) — re-running (idempotent; picks up where it left off)"
@@ -341,26 +332,29 @@ snapshot_clean() {
   rows="$(aws ec2 describe-instances --filters "Name=tag:lab,Values=$LAB" \
           --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`]|[0].Value]' --output text 2>/dev/null || true)"
   [ -z "$rows" ] && { warn "no instances found — skipping snapshot"; return 0; }
-  printf '%s\n' "$rows" | while IFS=$'\t' read -r id name; do
+  # one create-image per instance, all in flight at once, then a single wait
+  while IFS=$'\t' read -r id name; do
     [ -n "$id" ] || continue
     [ -n "$name" ] || name="$id"
     # The bastion is disposable infra, not part of the clean lab state `forge
     # reset` restores — skip it (also avoids a doubled "<lab>-<lab>-bastion-clean"
     # AMI name, since its Name tag already carries the lab prefix).
     [ "$name" = "${LAB}-bastion" ] && { echo "  skip bastion (disposable infra)"; continue; }
-    local snap="${LAB}-${name}-clean"
+    snap="${LAB}-${name}-clean"
     echo "  snapshot $name -> AMI $snap"
+    (
     # Capture stdout+stderr so a failure surfaces the ACTUAL AWS error instead of
     # an opaque "could not snapshot" (which hid the cause across live runs). On
     # success $out is the new AMI id, harmlessly ignored.
-    local out
     if ! out="$(aws ec2 create-image --instance-id "$id" --name "$snap" --no-reboot \
       --tag-specifications "ResourceType=image,Tags=[{Key=purpleforge,Value=clean-state},{Key=lab,Value=$LAB}]" \
       "ResourceType=snapshot,Tags=[{Key=purpleforge,Value=clean-state},{Key=lab,Value=$LAB}]" 2>&1)"; then
       warn "could not snapshot $name (continuing) — AWS said: ${out} — take it manually or re-run this step"
     fi
-  done
-  echo "  clean-state AMI(s) requested — reset with: forge reset {{ spec_rel }}"
+    ) &
+  done <<< "$rows"
+  wait
+  echo "  clean-state AMI(s) requested — restore with: forge reset {{ spec_rel }} --snapshot"
 }
 
 # ---- provisioning guard -----------------------------------------------------

@@ -80,8 +80,9 @@ except Exception: d={}
 [print(v["id"]) for v in d.get("value",[])]' || true)"
   [ -z "$ids" ] && { echo "  no VMs found (already destroyed?) — continuing"; return; }
   for id in $ids; do
-    az rest --method post --url "https://management.azure.com${id}/start?api-version=2023-07-01" >/dev/null 2>&1 || true
+    az rest --method post --url "https://management.azure.com${id}/start?api-version=2023-07-01" >/dev/null 2>&1 &
   done
+  wait   # all start requests in flight at once
   # brief settle; destroy retries anyway if one is still 'starting'
   sleep 30
 }
@@ -89,6 +90,9 @@ except Exception: d={}
 # ---- 2. destroy + verify cost-zero (reuses `forge destroy`) ----------------
 destroy() {
   log "2. terraform destroy + cost-zero verification"
+  # forge destroy runs plain `terraform destroy`; inject the concurrency via
+  # TF_CLI_ARGS_destroy (high first, low on a retry — same policy as apply).
+  export TF_CLI_ARGS_destroy="-parallelism=$PF_TF_PARALLELISM"
   local tries=0
   while true; do
     if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --out-dir "$LAB_DIR" --yes; then
@@ -97,6 +101,7 @@ destroy() {
     tries=$((tries+1))
     [ "$tries" -ge 3 ] && return 1
     warn "destroy failed (attempt $tries) — starting VMs again and retrying"
+    export TF_CLI_ARGS_destroy="-parallelism=$PF_TF_RETRY_PARALLELISM"
     start_vms
   done
 }

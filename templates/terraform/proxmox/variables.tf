@@ -200,3 +200,13 @@ variable "lab_upstream_dns" {
   type        = list(string)
   default     = ["1.1.1.1", "8.8.8.8"]
 }
+
+variable "endpoint_probes" {
+  description = "role -> TCP connectivity probes (proto/port/required), rendered by forge from core.ENDPOINT_PROBES. Published per node in the lab_endpoints output so the lifecycle scripts discover what to probe instead of hardcoding ports."
+  type = map(list(object({
+    proto    = string
+    port     = number
+    required = bool
+  })))
+  default = {}
+}

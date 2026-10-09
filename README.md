@@ -108,6 +108,38 @@ tunnel, `connectivity.json` (bastion SSH, WireGuard handshake, WinRM 5986 on eve
 host); `start.sh` and `reset.sh` re-run the same probe. `PF_CONNECT_TIMEOUT`
 (default 900 s) bounds the wait.
 
+**Performance.** The scripts are generated for minimum wall-clock time:
+
+- *Connectivity is probed in parallel and discovered, not hardcoded.* Terraform
+  publishes a `lab_endpoints` output (node → IP + TCP probes), built from the
+  per-role probe table in `scripts/forge/core.py` (`ENDPOINT_PROBES`: SSH on the
+  bastion; WinRM-HTTPS required, plus LDAP/Kerberos/SMB/WMI-RPC informational on
+  Windows hosts). Every probe of every node is its own background job (`&` +
+  one `wait`), so a round costs one `PF_PROBE_TIMEOUT` (3 s) however many nodes
+  there are. Measured: 52 probes against packet-dropping hosts in 3 s (~156 s
+  serially). Labs deployed before `lab_endpoints` existed fall back to
+  `windows_hosts` + the inventory's `ansible_port`.
+- *Terraform*: `-parallelism=$PF_TF_PARALLELISM` (30) on the first apply/destroy
+  attempt; retries drop to `$PF_TF_RETRY_PARALLELISM` (1), because the failures
+  that trigger a retry (Azure ARM read-after-write lag, Proxmox clone locks) are
+  cured by low concurrency. Providers are cached in `TF_PLUGIN_CACHE_DIR`.
+- *Ansible*: every `ansible`/`ansible-playbook` call runs with
+  `ANSIBLE_FORKS`/`-f $PF_ANSIBLE_FORKS` (50), `ANSIBLE_PIPELINING=True` and SSH
+  `ControlPersist`. Pipelining and ControlPersist only help SSH-managed hosts;
+  the Windows hosts use WinRM, where forks is what parallelises. The control
+  node runs from a locally cached image (`PF_ANSIBLE_IMAGE`, built once) instead of
+  re-running `pip`/`ansible-galaxy` on every deploy/reset.
+- *Per-VM provider calls* (start, graceful stop, status polling, clean-state
+  snapshots) run concurrently, and there is no fixed `sleep` after starting VMs.
+  The probe waits exactly as long as needed.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `PF_TF_PARALLELISM` / `PF_TF_RETRY_PARALLELISM` | 30 / 1 | terraform apply/destroy concurrency, first attempt / retries |
+| `PF_ANSIBLE_FORKS` | 50 | Ansible forks |
+| `PF_ANSIBLE_IMAGE` | `purpleforge/ansible-control:2.12.6-1` | cached control-node image (bump the tag to rebuild) |
+| `PF_PROBE_TIMEOUT` / `PF_PROBE_INTERVAL` / `PF_CONNECT_TIMEOUT` | 3 / 10 / 900 s | per-probe timeout / pause between rounds / overall wait |
+
 ```text
 script        terraform            VMs                       Ansible
 deploy.sh     init + apply         create / start            site.yml + snapshot

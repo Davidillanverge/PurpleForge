@@ -123,3 +123,13 @@ variable "auto_shutdown_timezone" {
   description = "IANA timezone name (e.g. \"Europe/Madrid\") for the auto_shutdown schedule. EventBridge Scheduler accepts IANA names natively."
   type        = string
 }
+
+variable "endpoint_probes" {
+  description = "role -> TCP connectivity probes (proto/port/required), rendered by forge from core.ENDPOINT_PROBES. Published per node in the lab_endpoints output so the lifecycle scripts discover what to probe instead of hardcoding ports."
+  type = map(list(object({
+    proto    = string
+    port     = number
+    required = bool
+  })))
+  default = {}
+}

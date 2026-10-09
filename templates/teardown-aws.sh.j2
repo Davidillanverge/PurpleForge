@@ -89,6 +89,9 @@ ensure_backend() {
 # never verified clean, so the caller does NOT falsely claim COMPLETE.
 destroy() {
   log "1. terraform destroy + cost-zero verification"
+  # forge destroy runs plain `terraform destroy`; inject the concurrency via
+  # TF_CLI_ARGS_destroy (high first, low on a retry — same policy as apply).
+  export TF_CLI_ARGS_destroy="-parallelism=$PF_TF_PARALLELISM"
   local tries=0
   while true; do
     if PYTHONPATH="$REPO/scripts" python3 -m forge destroy "$REPO/$SPEC_REL" --out-dir "$LAB_DIR" --yes; then
@@ -97,6 +100,7 @@ destroy() {
     tries=$((tries+1))
     [ "$tries" -ge 3 ] && return 1
     warn "destroy failed (attempt $tries) — retrying in 15s"
+    export TF_CLI_ARGS_destroy="-parallelism=$PF_TF_RETRY_PARALLELISM"
     sleep 15
   done
 }

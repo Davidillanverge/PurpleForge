@@ -254,12 +254,16 @@ tf_apply() {
   log "3. terraform init + apply"
   terraform -chdir="$TF_DIR" init -backend-config=backend.hcl -input=false -reconfigure \
     || die "terraform init failed"
-  local tries=0 max=6 applog
+  local tries=0 max=6 applog par="$PF_TF_PARALLELISM"
   applog="$(mktemp)"
-  # -refresh=false + -parallelism=1 dodge ARM read-after-write lag; retrying makes
-  # real progress (imported/created resources persist) — it is not spinning.
-  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false -refresh=false -parallelism=1 2>&1 | tee "$applog"; do
+  # First attempt at high concurrency (-parallelism=$PF_TF_PARALLELISM). ARM's
+  # read-after-write lag can fail some creates under load; every RETRY therefore
+  # drops to -parallelism=$PF_TF_RETRY_PARALLELISM (default 1, the setting the
+  # runbook proved reliable). -refresh=false skips the slow per-resource GETs;
+  # retrying makes real progress (created resources persist) — it is not spinning.
+  until terraform -chdir="$TF_DIR" apply -auto-approve -input=false -refresh=false -parallelism="$par" 2>&1 | tee "$applog"; do
     tries=$((tries+1))
+    par="$PF_TF_RETRY_PARALLELISM"   # retries: low concurrency is what cures API lag/locks
     [ "$tries" -ge "$max" ] && { rm -f "$applog"; die "terraform apply still failing after $tries tries — see the error above (AZURE-DEPLOY-RUNBOOK.md step 4)"; }
     # Self-heal the recurring 'already exists' state drift: a resource that lives
     # in Azure but not in state (typically a VM ansible-prep extension left by a
@@ -311,11 +315,12 @@ try: d=json.load(sys.stdin)
 except Exception: d={}
 [print(v["id"]) for v in d.get("value",[])]' || true)"
   [ -z "$ids" ] && { echo "  no VMs found yet — continuing"; return; }
+  # one background request per VM, then a single wait (start is async on ARM anyway)
   for id in $ids; do
-    az rest --method post --url "https://management.azure.com${id}/start?api-version=2023-07-01" >/dev/null 2>&1 || true
+    az rest --method post --url "https://management.azure.com${id}/start?api-version=2023-07-01" >/dev/null 2>&1 &
   done
-  # brief settle so WinRM/SSH have a chance to come up before wg_up/ansible_up probe them
-  sleep 30
+  wait
+  echo "  start requested for every VM (in parallel) — reachability is gated by the connectivity probe"
 }
 
 # ---- WireGuard tunnel (the only path into the lab) --------------------------
@@ -372,18 +377,8 @@ EOF
 
 # ---- Ansible control node in Docker (Python 3.10 GOAD needs) ----------------
 ansible_up() {
-  log "5. Ansible control node (Docker, --network host to see the tunnel)"
-  docker rm -f pf-ansible >/dev/null 2>&1 || true
-  docker run -d --name pf-ansible --network host -v "$REPO:/repo" \
-    -w "/repo/$LAB_REL/ansible" python:3.10-slim sleep infinity >/dev/null \
-    || die "could not start the pf-ansible container"
-  docker exec pf-ansible bash -c "pip install --quiet ansible-core==2.12.6 pywinrm rich psutil Jinja2 pyyaml ansible_runner" \
-    || die "pip install in pf-ansible failed"
-  docker exec pf-ansible bash -c "ansible-galaxy collection install ansible.windows:1.11.0 community.windows:1.11.0 chocolatey.chocolatey" \
-    || die "ansible-galaxy collection install failed"
-  # community.general (unpinned) breaks ansible-core 2.12's galaxy client — pinned tarball instead.
-  docker exec pf-ansible python3 -c "import urllib.request; urllib.request.urlretrieve('https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-6.6.2.tar.gz','/tmp/cg.tar.gz')" \
-    && docker exec pf-ansible ansible-galaxy collection install /tmp/cg.tar.gz || warn "community.general install failed (only some roles need it) — continuing"
+  log "5. Ansible control node (cached Docker image, --network host to see the tunnel)"
+  pf_ansible_up
 }
 
 # ---- provision AD (site.yml enforces hardening-before-vulns order) ----------
@@ -418,7 +413,7 @@ run_site() {
 {% endif %}
   # WinRM can lag while VMs finish first boot; wait, don't fail hard.
   local i=0
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
+  until pf_ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }
     echo "  waiting for WinRM on all hosts ($i)..."; sleep 20
   done
@@ -427,7 +422,7 @@ run_site() {
   # ends an attempt mid-run — re-run. The pf-ansible container can also vanish
   # between attempts (a host docker hiccup); recreate it if it is gone so the
   # retry actually runs instead of erroring 'No such container: pf-ansible'.
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
+  until pf_ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "site.yml still failing after $tries runs — inspect the error above (AZURE-DEPLOY-RUNBOOK.md step 7)"
     warn "site.yml failed (attempt $tries/$max) — re-running (idempotent; picks up where it left off)"
@@ -455,14 +450,15 @@ for v in d.get("value",[]):
     disk=(((v.get("properties") or {}).get("storageProfile") or {}).get("osDisk") or {}).get("managedDisk") or {}
     if disk.get("id"): print(v["name"]+"\t"+disk["id"])' || true)"
   [ -z "$vms" ] && { warn "no VMs with a managed OS disk found — skipping snapshot"; return 0; }
-  printf '%s\n' "$vms" | while IFS=$'\t' read -r vm diskid; do
+  # every VM's snapshot is created concurrently (independent disks), then one wait
+  while IFS=$'\t' read -r vm diskid; do
     [ -n "$vm" ] || continue
-    local snap="${LAB}-${vm}-clean"
-    echo "  snapshot $vm -> $snap"
-    az snapshot create -g "$LAB" -n "$snap" --source "$diskid" --tags purpleforge=clean-state lab="$LAB" >/dev/null 2>&1 \
-      || warn "could not snapshot $vm (continuing) — take it manually or re-run this step"
-  done
-  echo "  clean-state snapshot(s) done — reset with: forge reset {{ spec_rel }}"
+    echo "  snapshot $vm -> ${LAB}-${vm}-clean"
+    ( az snapshot create -g "$LAB" -n "${LAB}-${vm}-clean" --source "$diskid" --tags purpleforge=clean-state lab="$LAB" >/dev/null 2>&1 \
+      || warn "could not snapshot $vm (continuing) — take it manually or re-run this step" ) &
+  done <<< "$vms"
+  wait
+  echo "  clean-state snapshot(s) done — restore with: forge reset {{ spec_rel }} --snapshot"
 }
 
 main() {

@@ -62,27 +62,37 @@ timeout="${PF_SHUTDOWN_TIMEOUT:-300}"
 while read -r node vmid; do
   [ -n "${node:-}" ] && [ -n "${vmid:-}" ] || continue
   echo "  shutdown vm $vmid (timeout ${timeout}s)"
-  curl -s $K -H "$AUTH" -X POST "$BASE/api2/json/nodes/$node/qemu/$vmid/status/shutdown" \
-    --data-urlencode "timeout=$timeout" >/dev/null 2>&1 || warn "shutdown request failed for vm $vmid"
+  ( curl -s $K -H "$AUTH" -X POST "$BASE/api2/json/nodes/$node/qemu/$vmid/status/shutdown" \
+    --data-urlencode "timeout=$timeout" >/dev/null 2>&1 || warn "shutdown request failed for vm $vmid" ) &
 done <<< "$running"
+wait   # every shutdown request in flight at once
 
 if [ -n "$running" ]; then
   echo "  waiting for the guests to power off..."
   deadline=$(( $(date +%s) + timeout + 30 ))
   while :; do
+    # poll every VM's status concurrently, then collect
+    sdir="$(mktemp -d)"
+    while read -r node vmid; do
+      [ -n "${node:-}" ] || continue
+      ( vm_status "$node" "$vmid" > "$sdir/$node.$vmid" ) &
+    done <<< "$running"
+    wait
     left=""
     while read -r node vmid; do
       [ -n "${node:-}" ] || continue
-      [ "$(vm_status "$node" "$vmid")" = "stopped" ] || left="$left$node $vmid"$'\n'
+      [ "$(cat "$sdir/$node.$vmid" 2>/dev/null)" = "stopped" ] || left="$left$node $vmid"$'\n'
     done <<< "$running"
+    rm -rf "$sdir"
     [ -z "$left" ] && { echo "  all VMs powered off cleanly"; break; }
     if [ "$(date +%s)" -ge "$deadline" ]; then
       while read -r node vmid; do
         [ -n "${node:-}" ] || continue
         warn "vm $vmid ignored the graceful shutdown — hard stop"
-        curl -s $K -H "$AUTH" -X POST "$BASE/api2/json/nodes/$node/qemu/$vmid/status/stop" >/dev/null 2>&1 \
-          || warn "could not stop vm $vmid — stop it in the Proxmox UI"
+        ( curl -s $K -H "$AUTH" -X POST "$BASE/api2/json/nodes/$node/qemu/$vmid/status/stop" >/dev/null 2>&1 \
+          || warn "could not stop vm $vmid — stop it in the Proxmox UI" ) &
       done <<< "$left"
+      wait
       break
     fi
     sleep 10

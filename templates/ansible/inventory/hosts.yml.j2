@@ -23,7 +23,7 @@ all:
     # NSG rules), not Basic-over-HTTP.
     ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
-    ansible_port: 5986
+    ansible_port: {{ winrm_port }}
     local_admin_username: "{{ local_admin_username }}"
     # Provider baked in at generate time so provider-specific playbook steps can
     # branch (e.g. ad-topology's pre-promotion local-admin handling differs on

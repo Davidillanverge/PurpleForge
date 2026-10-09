@@ -15,3 +15,11 @@ output "windows_hosts" {
 output "region" {
   value = var.region
 }
+
+output "lab_endpoints" {
+  description = "node -> {role, ip, probes} for EVERY node (bastion + Windows hosts). The generated deploy/start/reset scripts read this (terraform output -json) and open all probes' TCP sockets in parallel — no port or provider is hardcoded in the scripts."
+  value = merge(
+    { bastion = { role = "bastion", ip = aws_eip.bastion.public_ip, probes = lookup(var.endpoint_probes, "bastion", []) } },
+    { for m in var.machines : m.name => { role = m.role, ip = aws_network_interface.windows[m.name].private_ip, probes = lookup(var.endpoint_probes, m.role, []) } },
+  )
+}

@@ -80,18 +80,19 @@ remove_cron() {
 destroy() {
   log "2. terraform destroy"
   terraform -chdir="$TF_DIR" init -input=false >/dev/null 2>&1 || true
-  local tries=0
+  local tries=0 par="$PF_TF_PARALLELISM"
   # -refresh=false: the bpg provider's pre-destroy REFRESH reads each VM through
   # the QEMU guest agent and BLOCKS on it (the same agent-wait that slows apply) —
   # on teardown that hangs indefinitely. We're tearing everything down anyway, so
   # destroy straight from the recorded state without re-reading the guests.
   while true; do
-    if terraform -chdir="$TF_DIR" destroy -refresh=false -auto-approve -input=false; then
+    if terraform -chdir="$TF_DIR" destroy -refresh=false -auto-approve -input=false -parallelism="$par"; then
       return 0
     fi
     tries=$((tries+1))
     [ "$tries" -ge 3 ] && { warn "destroy still failing after $tries tries — check the Proxmox UI for leftover VMs in pool '$LAB'"; return 1; }
     warn "destroy failed (attempt $tries) — retrying in 15s"
+    par="$PF_TF_RETRY_PARALLELISM"
     sleep 15
   done
 }

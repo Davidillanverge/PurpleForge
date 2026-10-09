@@ -83,50 +83,186 @@ else:
 PY
 }
 
-# ---- connectivity probe (network + SSH) ---------------------------------------
-# 1) SSH to the bastion (the only routable host), 2) a WireGuard handshake on
-# the pf-lab tunnel, 3) a TCP connect to WinRM (5986) on every Windows host's
-# private IP THROUGH the tunnel. Retries until PF_CONNECT_TIMEOUT seconds
-# (default 900: Windows first boot / reboot is slow). Writes connectivity.json.
-# Uses $BASTION_SSH (set by wg_up). Returns non-zero if anything is unreachable.
-pf_check_connectivity() {
-  log "Connectivity check (bastion SSH -> WireGuard -> WinRM on every host)"
-  local deadline=$(( $(date +%s) + ${PF_CONNECT_TIMEOUT:-900} ))
-  local ssh_ok=0 wg_ok=0 hosts
-  hosts="$(pf_out windows_hosts)"
-  [ -n "$hosts" ] || { warn "no windows_hosts in $OUTPUTS_JSON_NAME"; return 1; }
-  while :; do
-    ssh_ok=0; wg_ok=0
-    $BASTION_SSH true >/dev/null 2>&1 && ssh_ok=1
-    sudo wg show pf-lab latest-handshakes 2>/dev/null | awk '$2>0{f=1} END{exit !f}' && wg_ok=1
-    if HOSTS="$hosts" SSH_OK="$ssh_ok" WG_OK="$wg_ok" python3 - "$LAB_DIR/connectivity.json" <<'PY'
-import json, os, socket, sys, time
-res = {"checked_at": int(time.time()),
-       "bastion_ssh": os.environ["SSH_OK"] == "1",
-       "wireguard_handshake": os.environ["WG_OK"] == "1",
-       "winrm": {}}
-for line in os.environ["HOSTS"].splitlines():
-    name, ip = line.split("\t")
+# ---- performance knobs (all overridable from the environment) ----------------
+# Terraform: high graph concurrency on the FIRST apply/destroy attempt; a retry
+# drops to PF_TF_RETRY_PARALLELISM (default 1) because the failures that cause a
+# retry are mostly API read-after-write lag (ARM) / clone locks (Proxmox), which
+# low concurrency is what actually cures. Provider plugins are cached once per
+# machine instead of downloaded per lab.
+PF_TF_PARALLELISM="${PF_TF_PARALLELISM:-30}"
+PF_TF_RETRY_PARALLELISM="${PF_TF_RETRY_PARALLELISM:-1}"
+# (skipped when neither TF_PLUGIN_CACHE_DIR nor HOME is set — e.g. a bare cron env)
+TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${HOME:+$HOME/.terraform.d/plugin-cache}}"
+if [ -n "$TF_PLUGIN_CACHE_DIR" ] && mkdir -p "$TF_PLUGIN_CACHE_DIR" 2>/dev/null; then
+  export TF_PLUGIN_CACHE_DIR
+else
+  unset TF_PLUGIN_CACHE_DIR
+fi
+# Ansible: wide fan-out across hosts. Pipelining + ControlPersist only speed up
+# SSH-managed hosts (they are no-ops for the WinRM Windows hosts, which have no
+# persistent-connection plugin); forks is what parallelises WinRM.
+PF_ANSIBLE_FORKS="${PF_ANSIBLE_FORKS:-50}"
+PF_ANSIBLE_ENV=(
+  -e "ANSIBLE_FORKS=$PF_ANSIBLE_FORKS"
+  -e "ANSIBLE_PIPELINING=True"
+  -e "ANSIBLE_SSH_ARGS=-o ControlMaster=auto -o ControlPersist=600s"
+  -e "ANSIBLE_HOST_KEY_CHECKING=False"
+  -e "ANSIBLE_RETRY_FILES_ENABLED=False"
+)
+# Usage: pf_ansible <ansible|ansible-playbook> <args...>  (runs in pf-ansible)
+pf_ansible() {
+  local bin="$1"; shift
+  docker exec "${PF_ANSIBLE_ENV[@]}" -w "/repo/$LAB_REL/ansible" pf-ansible "$bin" -f "$PF_ANSIBLE_FORKS" "$@"
+}
+
+# ---- Ansible control node (cached image) ----------------------------------------
+# The toolchain (ansible-core 2.12.6 + pywinrm + collections — Python 3.10, what
+# GOAD needs) is installed ONCE and committed to a local image; every later
+# deploy/reset starts the container from it in ~1s instead of re-running pip +
+# galaxy. Bump PF_ANSIBLE_IMAGE's tag to rebuild.
+PF_ANSIBLE_IMAGE="${PF_ANSIBLE_IMAGE:-purpleforge/ansible-control:2.12.6-1}"
+pf_ansible_up() {
+  docker rm -f pf-ansible >/dev/null 2>&1 || true
+  if ! docker image inspect "$PF_ANSIBLE_IMAGE" >/dev/null 2>&1; then
+    echo "  building cached control-node image $PF_ANSIBLE_IMAGE (one-time)"
+    docker rm -f pf-ansible-build >/dev/null 2>&1 || true
+    docker run -d --name pf-ansible-build python:3.10-slim sleep infinity >/dev/null \
+      || die "could not start the image-build container"
+    docker exec pf-ansible-build bash -c "pip install --quiet ansible-core==2.12.6 pywinrm rich psutil Jinja2 pyyaml ansible_runner" \
+      || { docker rm -f pf-ansible-build >/dev/null 2>&1; die "pip install in the control-node image failed"; }
+    docker exec pf-ansible-build bash -c "ansible-galaxy collection install ansible.windows:1.11.0 community.windows:1.11.0 chocolatey.chocolatey" \
+      || { docker rm -f pf-ansible-build >/dev/null 2>&1; die "ansible-galaxy collection install failed"; }
+    # community.general (unpinned) breaks ansible-core 2.12's galaxy client — pinned tarball instead.
+    docker exec pf-ansible-build python3 -c "import urllib.request; urllib.request.urlretrieve('https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-6.6.2.tar.gz','/tmp/cg.tar.gz')" \
+      && docker exec pf-ansible-build ansible-galaxy collection install /tmp/cg.tar.gz \
+      || warn "community.general install failed (only some roles need it) — continuing"
+    docker commit pf-ansible-build "$PF_ANSIBLE_IMAGE" >/dev/null || die "could not commit $PF_ANSIBLE_IMAGE"
+    docker rm -f pf-ansible-build >/dev/null 2>&1 || true
+  fi
+  docker run -d --name pf-ansible --network host -v "$REPO:/repo" \
+    -w "/repo/$LAB_REL/ansible" "$PF_ANSIBLE_IMAGE" sleep infinity >/dev/null \
+    || die "could not start the pf-ansible container"
+  echo "  pf-ansible up from $PF_ANSIBLE_IMAGE (forks=$PF_ANSIBLE_FORKS)"
+}
+
+# ---- endpoint discovery (from terraform output -json) ---------------------------
+# One line per probe: "node<TAB>role<TAB>ip<TAB>proto<TAB>port<TAB>required",
+# read from the lab_endpoints output (Terraform publishes, per node, the probes
+# forge rendered from the spec's roles — see core.ENDPOINT_PROBES). Nothing here
+# knows a port or a provider. Fallback for a lab deployed before lab_endpoints
+# existed: windows_hosts + the inventory's ansible_port (still discovered, not
+# hardcoded) — re-run ./deploy.sh once to publish lab_endpoints.
+pf_endpoints() {
+  python3 - "$LAB_DIR/$OUTPUTS_JSON_NAME" "$LAB_DIR/ansible/inventory/hosts.yml" <<'PY'
+import json, re, sys
+out = json.load(open(sys.argv[1]))
+eps = (out.get("lab_endpoints") or {}).get("value")
+if not eps:
+    port = None
     try:
-        socket.create_connection((ip, 5986), timeout=5).close(); ok = True
+        m = re.search(r"^\s*ansible_port:\s*(\d+)", open(sys.argv[2]).read(), re.M)
+        port = int(m.group(1)) if m else None
     except OSError:
+        pass
+    hosts = (out.get("windows_hosts") or {}).get("value") or {}
+    if port is None or not hosts:
+        sys.exit("no lab_endpoints output and no windows_hosts/ansible_port to fall back on")
+    sys.stderr.write("  (legacy outputs: no lab_endpoints — probing windows_hosts on ansible_port %d; re-run ./deploy.sh to publish lab_endpoints)\n" % port)
+    eps = {n: {"role": "windows", "ip": ip, "probes": [{"proto": "winrm", "port": port, "required": True}]}
+           for n, ip in hosts.items()}
+for node, e in sorted(eps.items()):
+    for p in e.get("probes") or []:
+        print("\t".join([node, e.get("role", "?"), e["ip"], p["proto"], str(p["port"]), "1" if p.get("required") else "0"]))
+PY
+}
+
+# ---- parallel connectivity probe (network + SSH) --------------------------------
+# Every probe of every node runs as its OWN background subprocess (`&` + one
+# `wait`): a TCP connect via bash's /dev/tcp bounded by `timeout`, so a host that
+# drops packets costs PF_PROBE_TIMEOUT once, not once per host. The bastion's
+# authenticated SSH login runs concurrently too, and the WireGuard handshake is
+# read in the same round. A round therefore takes ~max(probe), not sum(probes).
+# Rounds repeat every PF_PROBE_INTERVAL until PF_CONNECT_TIMEOUT (default 900s —
+# Windows first boot is slow). REQUIRED probes + SSH login + handshake gate
+# success; optional probes are only reported. Results -> connectivity.json.
+# Uses $BASTION_SSH (set by wg_up); PF_BASTION_ENDPOINT/PF_BASTION_SSH_PORT (the
+# Proxmox DNAT override) redirect the bastion's ssh probe.
+PF_PROBE_TIMEOUT="${PF_PROBE_TIMEOUT:-3}"
+PF_PROBE_INTERVAL="${PF_PROBE_INTERVAL:-10}"
+
+pf_probe_tcp() {  # <outfile> <ip> <port>
+  if timeout "$PF_PROBE_TIMEOUT" bash -c ': > "/dev/tcp/$1/$2"' _ "$2" "$3" 2>/dev/null; then
+    echo up > "$1"
+  else
+    echo down > "$1"
+  fi
+}
+
+pf_check_connectivity() {
+  log "Connectivity check — every node/protocol probed in parallel (terraform output lab_endpoints)"
+  need timeout
+  local eps
+  eps="$(pf_endpoints)" || { warn "could not discover endpoints from $OUTPUTS_JSON_NAME"; return 1; }
+  [ -n "$eps" ] || { warn "lab_endpoints lists no probes"; return 1; }
+  local deadline=$(( $(date +%s) + ${PF_CONNECT_TIMEOUT:-900} ))
+  local round=0 dir node role ip proto port req t0 i
+  while :; do
+    round=$((round+1)); t0=$(date +%s)
+    dir="$(mktemp -d)"
+    ( if $BASTION_SSH true >/dev/null 2>&1; then echo up; else echo down; fi ) > "$dir/_ssh_login" &
+    i=0
+    while IFS=$'\t' read -r node role ip proto port req; do
+      [ -n "$node" ] || continue
+      if [ "$role" = "bastion" ] && [ "$proto" = "ssh" ]; then
+        ip="${PF_BASTION_ENDPOINT:-$ip}"; port="${PF_BASTION_SSH_PORT:-$port}"
+      fi
+      i=$((i+1))
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$node" "$role" "$ip" "$proto" "$port" "$req" > "$dir/$i.meta"
+      pf_probe_tcp "$dir/$i.res" "$ip" "$port" &
+    done <<< "$eps"
+    if sudo -n wg show pf-lab latest-handshakes 2>/dev/null | awk '$2>0{f=1} END{exit !f}'; then
+      echo up > "$dir/_wg"
+    else
+      echo down > "$dir/_wg"
+    fi
+    wait
+    if python3 - "$dir" "$LAB_DIR/connectivity.json" "$round" "$(( $(date +%s) - t0 ))" <<'PY'
+import glob, json, os, sys, time
+d, out, rnd, secs = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+def rd(f):
+    p = os.path.join(d, f)
+    return open(p).read().strip() if os.path.exists(p) else "down"
+res = {"checked_at": int(time.time()), "round": rnd, "round_seconds": secs,
+       "bastion_ssh_login": rd("_ssh_login") == "up",
+       "wireguard_handshake": rd("_wg") == "up", "nodes": {}}
+ok = res["bastion_ssh_login"] and res["wireguard_handshake"]
+metas = sorted(glob.glob(os.path.join(d, "*.meta")), key=lambda p: int(os.path.basename(p).split(".")[0]))
+for meta in metas:
+    node, role, ip, proto, port, req = open(meta).read().rstrip("\n").split("\t")
+    up = rd(os.path.basename(meta)[:-5] + ".res") == "up"
+    n = res["nodes"].setdefault(node, {"role": role, "ip": ip, "probes": []})
+    n["probes"].append({"proto": proto, "port": int(port), "required": req == "1", "reachable": up})
+    if req == "1" and not up:
         ok = False
-    res["winrm"][name] = {"ip": ip, "port": 5986, "reachable": ok}
-json.dump(res, open(sys.argv[1], "w"), indent=2)
-all_ok = res["bastion_ssh"] and res["wireguard_handshake"] and all(h["reachable"] for h in res["winrm"].values())
-for n, h in res["winrm"].items():
-    print(f"  {'OK  ' if h['reachable'] else 'DOWN'} {n:<20} {h['ip']}:5986")
-print(f"  {'OK  ' if res['bastion_ssh'] else 'DOWN'} bastion SSH")
+json.dump(res, open(out, "w"), indent=2)
+for node, n in res["nodes"].items():
+    req_ok = all(p["reachable"] for p in n["probes"] if p["required"])
+    detail = " ".join(f"{p['proto']}/{p['port']}:{'up' if p['reachable'] else ('DOWN' if p['required'] else 'down')}" for p in n["probes"])
+    print(f"  {'OK  ' if req_ok else 'DOWN'} {node:<18} {n['ip']:<15} {detail}")
+print(f"  {'OK  ' if res['bastion_ssh_login'] else 'DOWN'} bastion SSH login")
 print(f"  {'OK  ' if res['wireguard_handshake'] else 'DOWN'} WireGuard handshake (pf-lab)")
-sys.exit(0 if all_ok else 1)
+print(f"  round {rnd}: {len(metas) + 1} probes in parallel in {secs}s")
+sys.exit(0 if ok else 1)
 PY
     then
-      echo "  all reachable (details: connectivity.json)"
+      rm -rf "$dir"
+      echo "  every required endpoint reachable (details: connectivity.json)"
       return 0
     fi
-    [ "$(date +%s)" -ge "$deadline" ] && { warn "still unreachable after ${PF_CONNECT_TIMEOUT:-900}s (details: connectivity.json)"; return 1; }
-    echo "  not all reachable yet — retrying in 20s"
-    sleep 20
+    rm -rf "$dir"
+    [ "$(date +%s)" -ge "$deadline" ] && { warn "required endpoints still unreachable after ${PF_CONNECT_TIMEOUT:-900}s (details: connectivity.json)"; return 1; }
+    echo "  not all required endpoints reachable yet — next round in ${PF_PROBE_INTERVAL}s"
+    sleep "$PF_PROBE_INTERVAL"
   done
 }
 

@@ -211,3 +211,40 @@ def test_teardown_refuses_without_confirmation(tmp_path):
                        capture_output=True, text=True, env=env)
     assert r.returncode != 0
     assert "without confirmation" in r.stderr and "--force" in r.stderr
+
+
+@pytest.mark.parametrize("provider,tf_sub", [("azure", "azure"), ("aws", "aws"), ("proxmox", "proxmox")])
+def test_lifecycle_performance_patterns(tmp_path, provider, tf_sub):
+    """Scripts are generated for speed: high-then-low terraform parallelism,
+    parallel connectivity probes (background jobs + wait, never a serial
+    per-host loop) driven by the lab_endpoints output (no hardcoded port), and
+    a wide-fan-out Ansible environment on every ansible invocation."""
+    out = _generate(tmp_path, provider=provider, members=1, vulns=["kerberoasting"])
+    deploy = (out / "deploy.sh").read_text(encoding="utf-8")
+    teardown = (out / "teardown.sh").read_text(encoding="utf-8")
+
+    # Terraform concurrency: apply AND destroy carry -parallelism, with a retry fallback.
+    assert '-parallelism="$par"' in deploy and 'par="$PF_TF_RETRY_PARALLELISM"' in deploy
+    assert "-parallelism=1" not in deploy
+    assert "PF_TF_PARALLELISM" in teardown and "-parallelism" in teardown
+    assert "TF_PLUGIN_CACHE_DIR" in deploy
+
+    # Parallel probe: one background job per probe + a single wait; endpoints from outputs.
+    probe = deploy.split("pf_check_connectivity() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'pf_probe_tcp "$dir/$i.res" "$ip" "$port" &' in probe and "\n    wait\n" in probe
+    assert "pf_endpoints" in probe and "5986" not in probe
+    assert "socket.create_connection" not in deploy  # the old serial python loop is gone
+
+    # Ansible: every ansible/ansible-playbook call goes through pf_ansible (forks/pipelining).
+    assert "ANSIBLE_FORKS=" in deploy and "ANSIBLE_PIPELINING=True" in deploy and "ControlPersist" in deploy
+    assert 'pf-ansible "$bin" -f "$PF_ANSIBLE_FORKS"' in deploy
+    assert "pf-ansible ansible-playbook" not in deploy and "pf-ansible ansible all" not in deploy
+    # cached control-node image instead of pip/galaxy on every run
+    assert "pf_ansible_up" in deploy and "docker commit" in deploy
+
+    # Endpoint discovery is published by Terraform from the spec-derived probe table.
+    tf = out / "terraform" / tf_sub
+    assert 'output "lab_endpoints"' in (tf / "outputs.tf").read_text(encoding="utf-8")
+    probes = json.loads((tf / "terraform.tfvars.json").read_text(encoding="utf-8"))["endpoint_probes"]
+    assert probes == forge.core.ENDPOINT_PROBES
+    assert all(any(p["required"] for p in v) for v in probes.values())

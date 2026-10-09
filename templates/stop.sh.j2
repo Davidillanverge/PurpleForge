@@ -36,7 +36,8 @@ preflight() {
 }
 
 # "<vm-id> <power-state>" for every VM in the lab RG (az rest: avoids the broken
-# `az vm` command-loading path some environments hit).
+# `az vm` command-loading path some environments hit). The per-VM instanceView
+# GETs run concurrently (one background job each, one wait).
 vm_states() {
   local id
   for id in $(az rest --method get --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$LAB/providers/Microsoft.Compute/virtualMachines?$API" 2>/dev/null \
@@ -48,8 +49,9 @@ except Exception: d={}
       | python3 -c 'import json,sys
 try: s=json.load(sys.stdin).get("statuses",[])
 except Exception: s=[]
-print(next((x["code"].split("/")[1] for x in s if x.get("code","").startswith("PowerState/")),"unknown"))')"
+print(next((x["code"].split("/")[1] for x in s if x.get("code","").startswith("PowerState/")),"unknown"))')" &
   done
+  wait
 }
 
 stop_vms() {
@@ -59,16 +61,18 @@ stop_vms() {
   [ -n "$states" ] || { echo "  no VMs in resource group $LAB — not deployed (nothing to stop)"; return 0; }
   todo="$(printf '%s\n' "$states" | awk '$2!="deallocated"{print $1}')"
   [ -n "$todo" ] || { echo "  every VM already deallocated"; return 0; }
+  # Per VM: graceful powerOff THEN deallocate (ordered within the VM), every VM
+  # concurrently (one background job each, one wait).
   for id in $todo; do
-    echo "  power off (graceful guest shutdown): ${id##*/}"
-    az rest --method post --url "https://management.azure.com${id}/powerOff?skipShutdown=false&$API" >/dev/null 2>&1 \
-      || warn "powerOff request failed for ${id##*/} — deallocate will still stop it"
+    echo "  power off (graceful guest shutdown) + deallocate: ${id##*/}"
+    (
+      az rest --method post --url "https://management.azure.com${id}/powerOff?skipShutdown=false&$API" >/dev/null 2>&1 \
+        || warn "powerOff request failed for ${id##*/} — deallocate will still stop it"
+      az rest --method post --url "https://management.azure.com${id}/deallocate?$API" >/dev/null 2>&1 \
+        || warn "deallocate request failed for ${id##*/}"
+    ) &
   done
-  for id in $todo; do
-    echo "  deallocate: ${id##*/}"
-    az rest --method post --url "https://management.azure.com${id}/deallocate?$API" >/dev/null 2>&1 \
-      || warn "deallocate request failed for ${id##*/}"
-  done
+  wait
   echo "  waiting until every VM is deallocated..."
   local deadline=$(( $(date +%s) + 900 ))
   while :; do

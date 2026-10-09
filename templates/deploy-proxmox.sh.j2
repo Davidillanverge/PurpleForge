@@ -148,13 +148,16 @@ PY
 tf_apply() {
   log "1. terraform init + apply (local state backend)"
   terraform -chdir="$TF_DIR" init -input=false || die "terraform init failed"
-  local tries=0 max=5
+  local tries=0 max=5 par="$PF_TF_PARALLELISM"
   # -refresh=false: on a RE-RUN, bpg's refresh reads each existing VM through the
   # QEMU guest agent and can block for minutes per VM (same agent-wait that hangs
   # teardown). A fresh apply has nothing to refresh, so this is a no-op there and
   # only speeds up idempotent re-runs; drift isn't expected in a deterministic lab.
-  until terraform -chdir="$TF_DIR" apply -refresh=false -auto-approve -input=false; do
+  # First attempt at high concurrency (parallel clones); a retry — typically a
+  # template clone-lock — drops to PF_TF_RETRY_PARALLELISM.
+  until terraform -chdir="$TF_DIR" apply -refresh=false -auto-approve -input=false -parallelism="$par"; do
     tries=$((tries+1))
+    par="$PF_TF_RETRY_PARALLELISM"   # retries: low concurrency is what cures API lag/locks
     [ "$tries" -ge "$max" ] && die "terraform apply still failing after $tries tries — see the error above"
     warn "apply failed (attempt $tries/$max) — retrying in 15s (Proxmox API/clone lag is expected)"
     sleep 15
@@ -184,10 +187,10 @@ for m in d.get("members",[]):
   [ -z "$members" ] && { echo "  no VMs found yet — continuing"; return; }
   while read -r node vmid; do
     [ -n "$node" ] && [ -n "$vmid" ] || continue
-    curl -s $k -H "$auth" -X POST "$base/api2/json/nodes/$node/qemu/$vmid/status/start" >/dev/null 2>&1 || true
+    curl -s $k -H "$auth" -X POST "$base/api2/json/nodes/$node/qemu/$vmid/status/start" >/dev/null 2>&1 &
   done <<< "$members"
-  # brief settle so WinRM/SSH have a chance to come up before wg_up/ansible_up probe them
-  sleep 30
+  wait
+  echo "  start requested for every VM (in parallel) — reachability is gated by the connectivity probe"
 }
 
 # ---- WireGuard tunnel (the only path into the lab) --------------------------
@@ -304,17 +307,8 @@ REMOTE
 
 # ---- Ansible control node in Docker (Python 3.10 GOAD needs) ----------------
 ansible_up() {
-  log "4. Ansible control node (Docker, --network host to see the tunnel)"
-  docker rm -f pf-ansible >/dev/null 2>&1 || true
-  docker run -d --name pf-ansible --network host -v "$REPO:/repo" \
-    -w "/repo/$LAB_REL/ansible" python:3.10-slim sleep infinity >/dev/null \
-    || die "could not start the pf-ansible container"
-  docker exec pf-ansible bash -c "pip install --quiet ansible-core==2.12.6 pywinrm rich psutil Jinja2 pyyaml ansible_runner" \
-    || die "pip install in pf-ansible failed"
-  docker exec pf-ansible bash -c "ansible-galaxy collection install ansible.windows:1.11.0 community.windows:1.11.0 chocolatey.chocolatey" \
-    || die "ansible-galaxy collection install failed"
-  docker exec pf-ansible python3 -c "import urllib.request; urllib.request.urlretrieve('https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-6.6.2.tar.gz','/tmp/cg.tar.gz')" \
-    && docker exec pf-ansible ansible-galaxy collection install /tmp/cg.tar.gz || warn "community.general install failed (only some roles need it) — continuing"
+  log "4. Ansible control node (cached Docker image, --network host to see the tunnel)"
+  pf_ansible_up
 }
 
 # ---- provision AD (site.yml enforces hardening-before-vulns order) ----------
@@ -348,12 +342,12 @@ run_site() {
   [ -n "${PF_CALDERA_API_KEY:-}" ] && TELEMETRY_EV="$TELEMETRY_EV -e pf_caldera_api_key=$PF_CALDERA_API_KEY"
 {% endif %}
   local i=0
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
+  until pf_ansible ansible all -i inventory/hosts.yml -m ansible.windows.win_ping >/dev/null 2>&1; do
     i=$((i+1)); [ "$i" -ge 20 ] && { warn "win_ping never went green for every host — running site.yml anyway (it will retry)"; break; }
     echo "  waiting for WinRM on all hosts ($i)..."; sleep 20
   done
   local tries=0 max=6
-  until docker exec -w "/repo/$LAB_REL/ansible" pf-ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
+  until pf_ansible ansible-playbook -i inventory/hosts.yml playbooks/site.yml $TELEMETRY_EV; do
     tries=$((tries+1))
     [ "$tries" -ge "$max" ] && die "site.yml still failing after $tries runs — inspect the error above"
     warn "site.yml failed (attempt $tries/$max) — re-running (idempotent; picks up where it left off)"
@@ -437,13 +431,16 @@ for m in d.get("members",[]):
   while read -r node vmid; do
     [ -n "$node" ] && [ -n "$vmid" ] || continue
     echo "  snapshot vm $vmid -> pf-clean"
+    (
     # delete a stale pf-clean first so re-deploys refresh it (ignore if absent)
     curl -s $k -H "$auth" -X DELETE "$base/api2/json/nodes/$node/qemu/$vmid/snapshot/pf-clean" >/dev/null 2>&1 || true
     curl -s $k -H "$auth" -X POST "$base/api2/json/nodes/$node/qemu/$vmid/snapshot" \
       --data-urlencode "snapname=pf-clean" --data-urlencode "description=PurpleForge clean state (post-hardening+vulns, pre-attack)" >/dev/null 2>&1 \
       || warn "could not snapshot vm $vmid (continuing)"
+    ) &
   done <<< "$members"
-  echo "  clean-state snapshot(s) done — reset with: forge reset {{ spec_rel }}"
+  wait
+  echo "  clean-state snapshot(s) done — restore with: forge reset {{ spec_rel }} --snapshot"
 }
 
 main() {

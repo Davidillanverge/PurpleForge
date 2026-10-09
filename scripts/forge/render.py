@@ -20,8 +20,10 @@ from .core import (
     REPO_ROOT,
     TEMPLATES_DIR,
     VULN_CREDENTIAL_VARS,
+    ENDPOINT_PROBES,
     WINDOWS_ADMIN_USERNAME,
     WINRM_AUTOMATION_USERNAME,
+    WINRM_PORT,
     generate_password,
     yaml_scalar,
 )
@@ -175,6 +177,8 @@ def render_azure_terraform(
         "jumpbox_username": WINDOWS_ADMIN_USERNAME,
         "wireguard_port": 51820,
         "wireguard_allowed_cidrs": ["0.0.0.0/0"],
+        # role -> TCP probes; published as the lab_endpoints output (see core.ENDPOINT_PROBES)
+        "endpoint_probes": ENDPOINT_PROBES,
         "bastion_ssh_allowed_cidrs": [],
         "bastion_size": lab.get("bastion_size") or "Standard_B1s",
     }
@@ -242,6 +246,8 @@ def render_proxmox_terraform(
         "jumpbox_username": WINDOWS_ADMIN_USERNAME,
         "wireguard_port": 51820,
         "wireguard_allowed_cidrs": ["0.0.0.0/0"],
+        # role -> TCP probes; published as the lab_endpoints output (see core.ENDPOINT_PROBES)
+        "endpoint_probes": ENDPOINT_PROBES,
     }
     (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
     (dst / "secrets.auto.tfvars.json").write_text(
@@ -328,6 +334,8 @@ def render_aws_terraform(
         "jumpbox_username": WINDOWS_ADMIN_USERNAME,
         "wireguard_port": 51820,
         "wireguard_allowed_cidrs": ["0.0.0.0/0"],
+        # role -> TCP probes; published as the lab_endpoints output (see core.ENDPOINT_PROBES)
+        "endpoint_probes": ENDPOINT_PROBES,
         "bastion_ssh_allowed_cidrs": [],
     }
     (dst / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
@@ -811,6 +819,7 @@ def render_ansible(
         ansible_password=ansible_password,
         groups=groups,
         local_admin_username=WINDOWS_ADMIN_USERNAME,
+        winrm_port=WINRM_PORT,
         provider=provider,
         dns_server_forwarder=dns_server_forwarder,
         domain_adapter=domain_adapter,

@@ -16,3 +16,11 @@ output "windows_hosts" {
   description = "name -> private IP for every Windows VM (all private-only on the isolated lab bridge, reachable only via the WireGuard tunnel)."
   value       = { for m in var.machines : m.name => m.ip }
 }
+
+output "lab_endpoints" {
+  description = "node -> {role, ip, probes} for EVERY node (bastion + Windows hosts). The generated deploy/start/reset scripts read this (terraform output -json) and open all probes' TCP sockets in parallel — no port or provider is hardcoded in the scripts."
+  value = merge(
+    { bastion = { role = "bastion", ip = var.jumpbox_external_ip, probes = lookup(var.endpoint_probes, "bastion", []) } },
+    { for m in var.machines : m.name => { role = m.role, ip = m.ip, probes = lookup(var.endpoint_probes, m.role, []) } },
+  )
+}
