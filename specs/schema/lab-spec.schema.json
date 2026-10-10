@@ -577,6 +577,10 @@
             "ctf"
           ],
           "default": "independent"
+        },
+        "primary_domain": {
+          "type": "string",
+          "description": "Which forest[] domain is the AD attack surface: the domain whose DC hosts the domain-object vulnerabilities (asreproast, kerberoasting, dcsync-acl, shadow-credentials, ...) and whose population the chain is cast onto. Defaults to the first forest[] entry (historically the forest root). Set it to a CHILD domain to build a child->parent CTF: the child is compromised directly and the root becomes the objective reached by abusing the parent-child trust (SID-History), which no injected vuln models. Must name a forest[] domain that has a domain-controller in machines[]."
         }
       }
     }

@@ -196,6 +196,20 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
         if trust and trust["target"] == d["domain"]:
             errors.append(f"forest: domain '{d['domain']}' cannot trust itself")
 
+    primary_domain = (spec.get("attack_chain") or {}).get("primary_domain")
+    if primary_domain is not None:
+        if primary_domain not in domain_set:
+            errors.append(
+                f"attack_chain.primary_domain: '{primary_domain}' is not a domain declared in forest[]"
+            )
+        elif not any(
+            m["role"] == "domain-controller" and m["domain"] == primary_domain for m in spec["machines"]
+        ):
+            errors.append(
+                f"attack_chain.primary_domain: '{primary_domain}' has no domain-controller in machines[] "
+                f"to host the domain-object vulnerabilities"
+            )
+
     for i, m in enumerate(spec["machines"]):
         if m["domain"] not in domain_set:
             errors.append(f"machines[{i}]: references unknown domain '{m['domain']}'")
@@ -739,7 +753,17 @@ def resolve_attack_chain(spec: dict, catalog: dict[str, dict], population_plans:
     Vulns with target_shape 'none' (or when there's no population to cast
     from) are untouched — build_vuln_vars falls back to today's synthetic
     naming for those, unchanged."""
-    primary_plan = population_plans[0] if population_plans else None
+    # Which domain's population the chain is cast onto: attack_chain.primary_domain
+    # when set (e.g. a child domain for a child->parent CTF), else the first forest
+    # entry — the historical default. plan_vuln_injection picks the matching DC the
+    # same way, so cast objects and their target DC always agree.
+    primary_domain = (spec.get("attack_chain") or {}).get("primary_domain")
+    if primary_domain and population_plans:
+        primary_plan = next(
+            (p for p in population_plans if p["domain"] == primary_domain), population_plans[0]
+        )
+    else:
+        primary_plan = population_plans[0] if population_plans else None
     rng = random.Random(spec["population"]["seed"] + 8000)  # distinct offset from population.py's own per-domain seeds
 
     steps = []
@@ -923,10 +947,25 @@ def plan_vuln_injection(
     (at risk, on_conflict:warn), or never in scope (clear)."""
     if not spec["vulnerabilities"]:
         return []
-    root_dcs = groups["domain_controllers"]
-    if not root_dcs:
-        raise SpecError("vuln-injection needs at least one root (non-child) domain controller to target")
-    primary_dc = root_dcs[0]
+    # The DC that hosts the domain-object (AD) vulns. With attack_chain.primary_domain
+    # set, target that domain's DC — which may be a CHILD DC (groups["domain_controllers"]
+    # holds only root/non-child DCs, so select from `machines`, the same list run_on
+    # names come from). Without it, keep the historical default: the first root DC.
+    primary_domain = (spec.get("attack_chain") or {}).get("primary_domain")
+    if primary_domain:
+        primary_dc = next(
+            (m for m in machines if m["role"] == "domain-controller" and m["domain"] == primary_domain),
+            None,
+        )
+        if primary_dc is None:
+            raise SpecError(
+                f"attack_chain.primary_domain '{primary_domain}' has no domain-controller to target"
+            )
+    else:
+        root_dcs = groups["domain_controllers"]
+        if not root_dcs:
+            raise SpecError("vuln-injection needs at least one root (non-child) domain controller to target")
+        primary_dc = root_dcs[0]
 
     excluded = {c["vuln"] for c in reconciliation.get("excluded_controls", [])}
     warned = {c.get("vuln") for c in reconciliation.get("warnings", [])}
