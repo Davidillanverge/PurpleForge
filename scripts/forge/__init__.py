@@ -117,6 +117,7 @@ from .planning import (
     plan_service_provisioning,
     plan_telemetry,
     plan_vuln_injection,
+    needs_replication_wait,
     reconcile,
     resolve_attack_chain,
     resolve_hardening_skip_rules,
@@ -134,6 +135,7 @@ from .render import (
     render_azure_terraform,
     render_backend_config,
     render_bas,
+    render_replication_convergence,
     render_defensive_controls,
     render_deploy_scripts,
     render_lab_report,
@@ -271,8 +273,17 @@ def cmd_generate(args: argparse.Namespace) -> int:
     render_telemetry(tel_hosts, spec["lab"]["name"], out_dir)
     bas_hosts = plan_bas(spec, machines)
     render_bas(bas_hosts, spec["lab"]["name"], out_dir)
+    repl_wait = needs_replication_wait(spec)
+    if repl_wait:
+        render_replication_convergence(out_dir)
     render_site_playbook(
-        bool(planned_vulns), bool(service_hosts), out_dir, bool(app_hosts), bool(tel_hosts), bool(bas_hosts)
+        bool(planned_vulns),
+        bool(service_hosts),
+        out_dir,
+        bool(app_hosts),
+        bool(tel_hosts),
+        bool(bas_hosts),
+        repl_wait,
     )
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
@@ -670,7 +681,7 @@ __all__ = [
     "build_vuln_vars", "compute_population_counts", "derive_infra_secrets", "estimate_cost", "eval_expiry_notes",
     "expand_role_or_all", "flatten_machines", "load_and_resolve", "parse_auto_shutdown", "plan_deception",
     "plan_application_provisioning", "plan_bas", "plan_edr", "plan_telemetry", "plan_hardening", "plan_service_provisioning", "plan_vuln_injection", "reconcile",
-    "resolve_attack_chain", "resolve_hardening_skip_rules", "semantic_checks", "validate_schema",
+    "resolve_attack_chain", "resolve_hardening_skip_rules", "needs_replication_wait", "semantic_checks", "validate_schema",
     # render
     "DEFENDER_ASR_RULE_IDS", "VULN_CREDENTIAL_NOTES", "describe_vuln_credentials", "render_ad_population",
     "render_ansible", "render_azure_terraform", "render_backend_config", "render_defensive_controls",

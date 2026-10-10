@@ -30,6 +30,13 @@
 {% endif %}
 - import_playbook: ad-population.yml
 - import_playbook: defensive-controls.yml
+{% if has_replication_wait %}
+# Multi-DC / multi-domain: wait for AD replication to converge so every object,
+# ACL and GPO change from the steps above is present on all DCs before vulns are
+# injected and before validation hits a different DC (Creation -> Replication
+# Delay -> Misconfiguration Injection). No-ops fast on a single-DC domain.
+- import_playbook: replication-convergence.yml
+{% endif %}
 {% if has_vuln_injection %}
 - import_playbook: vuln-injection.yml
 {% endif %}

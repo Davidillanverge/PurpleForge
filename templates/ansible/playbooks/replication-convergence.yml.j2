@@ -1,0 +1,49 @@
+{#
+  PurpleForge — AD replication-convergence gate (GENERATED, do not edit).
+  Rendered only for labs with >1 DC in a domain or >1 domain (cross-domain
+  GC/trust). Inserted AFTER hardening and BEFORE vuln-injection: the objects,
+  ACLs and SPNs that ad-population created, and the GPO changes hardening made,
+  must have replicated to every DC before vuln-injection reads/modifies them and
+  before validation hits a different DC than the one they were written on
+  ("Creation -> Replication Delay -> Misconfiguration Injection"). Read-only
+  polling with retries; a lone DC with no inbound partners converges trivially
+  and this no-ops in one pass.
+#}
+---
+- name: "Wait for Active Directory replication to converge"
+  hosts: domain_controllers:child_domain_controllers:domain_controllers_additional
+  gather_facts: false
+  tasks:
+    - name: "replication | nudge a syncall, then poll inbound partner metadata until healthy"
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'SilentlyContinue'
+          Import-Module ActiveDirectory
+          # Best-effort push so we don't just wait out the default interval; a
+          # no-op (and errorless) on a single-DC domain. /AdeP = all partitions,
+          # enterprise-wide, pushing changes outbound.
+          & repadmin /syncall /AdeP $env:USERDNSDOMAIN 2>$null | Out-Null
+          $meta = Get-ADReplicationPartnerMetadata -Target $env:COMPUTERNAME -Scope Server -ErrorAction SilentlyContinue
+          if (-not $meta) {
+            # No inbound replication partners -> single DC -> nothing to converge.
+            $Ansible.Changed = $false
+            Write-Output 'REPL-CONVERGED: no inbound partners (single DC)'
+          } else {
+            $failing = @($meta | Where-Object { $_.LastReplicationResult -ne 0 })
+            $stale   = @($meta | Where-Object { $_.LastReplicationSuccess -lt (Get-Date).AddMinutes(-15) })
+            if ($failing.Count -eq 0 -and $stale.Count -eq 0) {
+              $Ansible.Changed = $false
+              Write-Output ("REPL-CONVERGED: {0} inbound partner link(s) healthy" -f @($meta).Count)
+            } else {
+              Write-Output ("REPL-PENDING: failing={0} stale={1}" -f $failing.Count, $stale.Count)
+            }
+          }
+      vars:
+        ansible_become: yes
+        ansible_become_method: runas
+        ansible_become_user: "{{ domain_username }}"
+        ansible_become_password: "{{ domain_password }}"
+      register: pf_repl
+      retries: 30
+      delay: 10
+      until: "'REPL-CONVERGED' in (pf_repl.output | default([]) | join('\n'))"

@@ -218,6 +218,15 @@ def validate_schema(spec: dict, schema: dict) -> list[str]:
     return [f"{'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}" for e in errors]
 
 
+def needs_replication_wait(spec: dict) -> bool:
+    """True when the lab has more than one DC in a domain, or more than one
+    domain (cross-domain GC/trust convergence) — the cases where AD objects
+    written on one DC must replicate before vuln-injection/validation touch
+    another DC. A single DC in a single domain has no partners to wait on."""
+    forest = spec.get("forest", [])
+    return len(forest) > 1 or any(d.get("domain_controllers", 1) > 1 for d in forest)
+
+
 def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
     errors: list[str] = []
 

@@ -586,6 +586,20 @@ def render_bas(agent_hosts: dict[str, list[str]], lab_name: str, out_dir: Path) 
     )
 
 
+def render_replication_convergence(out_dir: Path) -> None:
+    """Emit the AD replication-convergence gate playbook (read-only poll with
+    retries). Rendered only for multi-DC / multi-domain labs — see
+    needs_replication_wait() — and imported between hardening and vuln-injection
+    by site.yml so injected misconfigurations land on a converged directory."""
+    dst = out_dir / "ansible" / "playbooks"
+    dst.mkdir(parents=True, exist_ok=True)
+    template = jinja2.Template(
+        (TEMPLATES_DIR / "ansible" / "playbooks" / "replication-convergence.yml.j2").read_text(encoding="utf-8"),
+        keep_trailing_newline=True,
+    )
+    (dst / "replication-convergence.yml").write_text(template.render(), encoding="utf-8")
+
+
 def render_site_playbook(
     has_vuln_injection: bool,
     has_service_provisioning: bool,
@@ -593,6 +607,7 @@ def render_site_playbook(
     has_application_provisioning: bool = False,
     has_telemetry: bool = False,
     has_bas: bool = False,
+    has_replication_wait: bool = False,
 ) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
@@ -610,6 +625,7 @@ def render_site_playbook(
             has_application_provisioning=has_application_provisioning,
             has_telemetry=has_telemetry,
             has_bas=has_bas,
+            has_replication_wait=has_replication_wait,
         ),
         encoding="utf-8",
     )
