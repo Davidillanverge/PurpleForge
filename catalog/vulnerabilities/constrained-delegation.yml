@@ -37,3 +37,6 @@ validate:
   atomic: null
 chain:
   target_shape: account
+
+
+  role: grant

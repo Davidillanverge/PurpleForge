@@ -29,3 +29,6 @@ validate:
   local_check: "nxc smb <dc_ip> -u <user> -p <pass> --share SYSVOL -M spider_plus (o Select-String -Path C:\\Windows\\SYSVOL\\sysvol\\<dominio>\\scripts\\*.bat -Pattern 'net use') revela la credencial en claro"
 chain:
   target_shape: account
+
+
+  role: pivot

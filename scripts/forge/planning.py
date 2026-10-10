@@ -107,13 +107,57 @@ IANA_TO_WINDOWS_TIMEZONE = {
 }
 
 # Intentionally weak, dictionary-crackable passwords for the roastable accounts —
-# being crackable offline IS the vulnerability (kerberoasting/asreproast). They
-# are non-secret by design and still only ever written into generated/<lab>/
-# (gitignored). Accounts whose weakness is NOT about the password (dcsync-acl,
-# passwords-in-description) get a strong random one instead.
-VULN_WEAK_PASSWORD = "Password123!"
-VULN_WEAK_PASSWORD_ALT = "Summer2024!"
-VULN_WEAK_PASSWORD_3 = "Welcome2024!"
+# being crackable offline IS the vulnerability (kerberoasting/asreproast), so the
+# password MUST be in the attacker's wordlist or the stage is unsolvable. Every
+# value here and in ROCKYOU_CRACKABLE was verified present in rockyou.txt (the de
+# facto CTF wordlist). They are non-secret by design and still only ever written
+# into generated/<lab>/ (gitignored). The domain's hardened password policy would
+# reject them, so each roastable/pivot account is exempted via a Fine-Grained
+# Password Policy in its inject task (see templates/ansible/vulns/asreproast.yml).
+VULN_WEAK_PASSWORD = "Password1"       # in rockyou.txt
+VULN_WEAK_PASSWORD_ALT = "Welcome1"    # in rockyou.txt
+VULN_WEAK_PASSWORD_3 = "Liverpool1"    # in rockyou.txt
+
+# Pool of passwords VERIFIED present in rockyou.txt, sampled deterministically
+# (seeded from population.seed) so each acquire/pivot account in a chain gets its
+# own crackable credential and the exact same one on every regenerate (invariant
+# #5). Grow this list freely — every entry must stay a real rockyou.txt line.
+ROCKYOU_CRACKABLE = [
+    "Password1", "Welcome1", "Liverpool1", "Football1", "Princess1", "Baseball1",
+    "Charlie1", "Michael1", "Letmein1", "Superman1", "Chocolate1", "Snowball1",
+    "Butterfly1", "Sunshine1", "Cheese123", "Dragon123", "Monkey123", "Qwerty123",
+    "Summer2008", "September1", "Thunder1", "Phoenix123", "Maverick1", "Tigger123",
+]
+
+# A vuln's ROLE in a ctf attack chain — where chain.role is absent in the catalog
+# this is the fallback. Drives resolve_attack_chain so a chain makes sense:
+#   acquire  — yields a credential by OFFLINE CRACKING (needs a rockyou password);
+#              casts a distinct fresh account every time (an AS-REP-roastable user
+#              can't also be the kerberoastable one).
+#   pivot    — yields ANOTHER account's credential by READING a planted secret
+#              (description/SYSVOL/registry); also a distinct fresh account.
+#   grant    — escalates by granting a right to a grantee the player ALREADY
+#              controls, so an earlier stage's loot is the real prerequisite; the
+#              grantee is a previously-compromised principal, not a random object.
+#   standalone — any-authenticated-user / host-local abuse with no object linkage.
+_CHAIN_ROLE_FALLBACK = {
+    "asreproast": "acquire",
+    "kerberoasting": "acquire",
+    "passwords-in-description": "pivot",
+    "sysvol-script-creds": "pivot",
+    "autologon-credentials": "pivot",
+    "dcsync-acl": "grant",
+    "shadow-credentials": "grant",
+    "writable-gpo": "grant",
+    "laps-read-acl": "grant",
+    "adminsdholder-acl": "grant",
+    "rbcd-abuse": "grant",
+    "constrained-delegation": "grant",
+    "backup-operators-membership": "grant",
+    "dnsadmins-privesc": "grant",
+    "esc4-template-acl": "grant",
+    "readable-gmsa": "grant",
+}
 
 BASELINE_LEVELS = {"cis-l1": {"l1"}, "cis-l2": {"l1", "l2"}}
 
@@ -765,40 +809,65 @@ def resolve_attack_chain(spec: dict, catalog: dict[str, dict], population_plans:
     else:
         primary_plan = population_plans[0] if population_plans else None
     rng = random.Random(spec["population"]["seed"] + 8000)  # distinct offset from population.py's own per-domain seeds
+    pw_rng = random.Random(spec["population"]["seed"] + 8500)  # distinct again, for rockyou password selection
 
     steps = []
     chained = []
-    cast_accounts: list[dict] = []  # users already cast into an 'account'-shaped vuln, in cast order
+    compromised: list[dict] = []  # principals the player controls so far, in the order the chain obtains them
+    used_names: set[str] = set()  # account names already cast as an acquire/pivot target (enforces distinctness)
+
+    def fresh_account() -> dict | None:
+        pool = [u for u in primary_plan["users"] if u["name"] not in used_names]
+        pick = rng.choice(pool) if pool else (rng.choice(primary_plan["users"]) if primary_plan["users"] else None)
+        if pick:
+            used_names.add(pick["name"])
+        return pick
 
     for vid in spec["vulnerabilities"]:
         v = catalog[vid]
         shape = v.get("chain", {}).get("target_shape", "none")
+        role = (v.get("chain", {}) or {}).get("role") or _CHAIN_ROLE_FALLBACK.get(vid, "standalone")
         cast = None
         shared_with = None
+        cast_password = None
 
-        if shape == "account" and primary_plan is not None:
-            if mode == "ctf" and cast_accounts:
-                cast = rng.choice(cast_accounts)
-                shared_with = cast["name"]
-            else:
-                pool = [u for u in primary_plan["users"] if u["name"] not in {c["name"] for c in cast_accounts}]
-                cast = rng.choice(pool) if pool else rng.choice(primary_plan["users"])
-                cast_accounts.append(cast)
-        elif shape == "group_scope" and primary_plan is not None:
-            if mode == "ctf" and cast_accounts:
-                # Narrow the reader/writer scope to an account already cast
-                # into an earlier vuln — dsacls' /G grantee accepts a user
-                # or a group name identically, so this is a real, working
-                # narrowing, not just a label.
-                cast = rng.choice(cast_accounts)
-                shared_with = cast["name"]
-            else:
-                bulk_groups = [g for g in primary_plan["groups"] if not g["curated"]]
-                cast = rng.choice(bulk_groups) if bulk_groups else None
+        if shape != "none" and primary_plan is not None:
+            if role in ("acquire", "pivot"):
+                # A credential-yielding stage: always a DISTINCT fresh account (an
+                # AS-REP-roastable user is never also the kerberoastable one), with
+                # its own rockyou-crackable / readable planted password. Obtaining
+                # it adds a principal the player now controls.
+                cast = fresh_account()
+                if cast:
+                    compromised.append(cast)
+                    cast_password = pw_rng.choice(ROCKYOU_CRACKABLE)
+            elif role == "grant":
+                if mode == "ctf" and compromised:
+                    # The right is granted to the principal the player just obtained,
+                    # so the previous stage's loot is what unlocks this one. dsacls /G
+                    # accepts a user or a group name identically, so a user grantee is
+                    # a real, working narrowing of a group_scope grant.
+                    cast = compromised[-1]
+                    shared_with = cast["name"]
+                elif shape == "group_scope":
+                    bulk_groups = [g for g in primary_plan["groups"] if not g["curated"]]
+                    cast = rng.choice(bulk_groups) if bulk_groups else None
+                else:
+                    cast = fresh_account()
+            else:  # standalone — any-auth-user / host-local, no object linkage
+                cast = None
 
         if shared_with:
             chained.append({"vuln": vid, "shares_target_with": shared_with})
-        steps.append({"id": vid, "target_shape": shape, "cast_name": cast["name"] if cast else None})
+        steps.append(
+            {
+                "id": vid,
+                "target_shape": shape,
+                "role": role,
+                "cast_name": cast["name"] if cast else None,
+                "cast_password": cast_password,
+            }
+        )
 
     return {"mode": mode, "steps": steps, "chained": chained}
 
@@ -970,6 +1039,12 @@ def plan_vuln_injection(
     excluded = {c["vuln"] for c in reconciliation.get("excluded_controls", [])}
     warned = {c.get("vuln") for c in reconciliation.get("warnings", [])}
     cast_names = {s["id"]: s["cast_name"] for s in (attack_chain or {}).get("steps", [])}
+    # Per-account crackable/readable password chosen by resolve_attack_chain (from
+    # ROCKYOU_CRACKABLE) for acquire/pivot stages — threaded in as forced_password
+    # so the planted credential is the one that is actually in the wordlist.
+    cast_passwords = {
+        s["id"]: s.get("cast_password") for s in (attack_chain or {}).get("steps", []) if s.get("cast_password")
+    }
     cast_password_cache: dict[str, str] = {}  # cast_name -> password, see build_vuln_vars' forced_password doc
     # +9000: distinct from resolve_attack_chain's +8000 and population.py's own
     # per-domain seeds (population.seed + domain index) — makes every
@@ -1012,7 +1087,10 @@ def plan_vuln_injection(
             status = "clear (no selected hardening control neutralizes this vuln)"
 
         cast_name = cast_names.get(vid)
-        forced_password = cast_password_cache.get(cast_name) if cast_name else None
+        # Prefer this vuln's own rockyou password (acquire/pivot); else reuse the
+        # password already assigned to a shared/compromised account (grant reusing
+        # an earlier acquire/pivot account), so the credential stays consistent.
+        forced_password = cast_passwords.get(vid) or (cast_password_cache.get(cast_name) if cast_name else None)
         vvars = build_vuln_vars(vid, machines, primary_dc, cast_name, forced_password, vuln_password_rng)
 
         password_key = (VULN_CREDENTIAL_VARS.get(vid) or (None, None))[1]

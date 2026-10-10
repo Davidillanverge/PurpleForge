@@ -32,3 +32,6 @@ validate:
   atomic: T1558.004
 chain:
   target_shape: account
+
+
+  role: acquire

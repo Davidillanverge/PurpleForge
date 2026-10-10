@@ -31,3 +31,5 @@ validate:
 chain:
   # account: casts a real population user as the holder of the AdminSDHolder ACE.
   target_shape: account
+
+  role: grant

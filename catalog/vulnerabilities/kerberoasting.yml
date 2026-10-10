@@ -35,3 +35,5 @@ chain:
   # generator's own object, not a synthetic one — see scripts/population.py
   # and resolve_attack_chain() in scripts/forge/).
   target_shape: account
+
+  role: acquire

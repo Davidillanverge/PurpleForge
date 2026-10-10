@@ -37,3 +37,5 @@ chain:
   # group_scope: vuln_laps_reader_group (default "Domain Users") can be
   # narrowed to a real population group/account by resolve_attack_chain().
   target_shape: group_scope
+
+  role: grant

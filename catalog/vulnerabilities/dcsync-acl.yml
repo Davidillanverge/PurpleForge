@@ -32,3 +32,6 @@ validate:
   atomic: T1003.006
 chain:
   target_shape: account
+
+
+  role: grant

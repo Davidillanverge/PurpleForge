@@ -32,3 +32,5 @@ validate:
 chain:
   # account: casts a real population user as the delegate who can edit the GPO.
   target_shape: account
+
+  role: grant
