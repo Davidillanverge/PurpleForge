@@ -22,7 +22,7 @@ set -uo pipefail
 LAB="{{ lab_name }}"
 REGION="${PF_REGION:-{{ region }}}"
 
-export AWS_DEFAULT_REGION="$REGION"
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"  # pin AWS_REGION too: CLI v2 lets it beat AWS_DEFAULT_REGION, so a stale ambient AWS_REGION (e.g. from .env) would hijack every call
 
 log()  { printf '\n\033[1;35m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }

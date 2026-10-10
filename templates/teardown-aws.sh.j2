@@ -19,7 +19,7 @@ REGION="${PF_REGION:-{{ region }}}"
 SPEC_REL="{{ spec_rel }}"
 STATE_TABLE="purpleforge-tfstate-lock"
 
-export AWS_DEFAULT_REGION="$REGION"
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"  # pin AWS_REGION too: CLI v2 lets it beat AWS_DEFAULT_REGION, so a stale ambient AWS_REGION (e.g. from .env) would hijack every call
 
 {% include "_lifecycle-common.sh.j2" %}
 # usage: teardown.sh [<generated-lab-dir>] [--force]
