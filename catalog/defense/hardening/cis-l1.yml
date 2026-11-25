@@ -20,6 +20,9 @@ role_by_os:
 tags_by_role:
   domain-controller: [level1-domaincontroller]
   member-server: [level1-memberserver]
+  # standalone = workgroup server (no AD): CIS's Member Server profile is the
+  # one that applies to a non-DC server, domain-joined or not.
+  standalone: [level1-memberserver]
   # Windows-10-CIS/Windows-11-CIS use a different, older tag scheme (bare
   # "level1", not "level1-domaincontroller") — see SKILL.md's "structural
   # differences between role generations" note.

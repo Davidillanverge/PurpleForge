@@ -608,6 +608,7 @@ def render_site_playbook(
     has_telemetry: bool = False,
     has_bas: bool = False,
     has_replication_wait: bool = False,
+    has_population: bool = True,
 ) -> None:
     """The single entry point a /deploy command should run — enforces
     CLAUDE.md's deploy order (hardening before vuln-injection) instead of
@@ -626,6 +627,7 @@ def render_site_playbook(
             has_telemetry=has_telemetry,
             has_bas=has_bas,
             has_replication_wait=has_replication_wait,
+            has_population=has_population,
         ),
         encoding="utf-8",
     )
@@ -675,7 +677,8 @@ def render_deploy_scripts(spec: dict, manifest: dict, machines: list[dict], netw
         "provider": provider,
         "region": spec["lab"]["region"],
         "supernet": network_plan["supernet"],
-        "domain": spec["forest"][0]["domain"],
+        # No-AD (standalone-only) lab: no forest[] -> the hosts are in WORKGROUP.
+        "domain": spec["forest"][0]["domain"] if spec["forest"] else "WORKGROUP",
         "wireguard_port": network_plan.get("wireguard_port", 51820),
         "roles_json": json.dumps(roles),
         "spec_rel": manifest["source_spec"],

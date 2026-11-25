@@ -28,7 +28,9 @@
 {% if has_application_provisioning %}
 - import_playbook: application-provisioning.yml
 {% endif %}
+{% if has_population %}
 - import_playbook: ad-population.yml
+{% endif %}
 - import_playbook: defensive-controls.yml
 {% if has_replication_wait %}
 # Multi-DC / multi-domain: wait for AD replication to converge so every object,

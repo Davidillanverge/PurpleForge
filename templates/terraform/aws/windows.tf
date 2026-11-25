@@ -30,6 +30,7 @@ locals {
     "domain-controller" = "t3.medium"
     "member-server"     = "t3.medium"
     "workstation"       = "t3.medium"
+    "standalone"        = "t3.medium"
   }, var.instance_type_overrides)
 
   machines_by_name = { for m in var.machines : m.name => m }

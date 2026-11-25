@@ -24,6 +24,7 @@ from .core import (
     EDR_DIR,
     REPO_ROOT,
     ROLE_ABBREV,
+    STANDALONE_SEGMENT,
     THEMES_DIR,
     VULN_CREDENTIAL_VARS,
     SpecError,
@@ -59,12 +60,12 @@ ENUM_HARDENING_TOGGLES = {"smb_signing": "disable", "ldap_signing": "disable"}
 # order-of-magnitude budget signal. Not a substitute for the cloud provider's
 # own pricing calculator.
 HOURLY_RATE_USD = {
-    "aws": {"domain-controller": 0.10, "member-server": 0.12, "workstation": 0.08},
-    "azure": {"domain-controller": 0.11, "member-server": 0.13, "workstation": 0.09},
+    "aws": {"domain-controller": 0.10, "member-server": 0.12, "workstation": 0.08, "standalone": 0.12},
+    "azure": {"domain-controller": 0.11, "member-server": 0.13, "workstation": 0.09, "standalone": 0.13},
     # On-prem Proxmox has no per-hour cloud billing; rates are zero so the cost
     # estimate reads $0 rather than a misleading cloud figure. budget_alert_usd
     # stays in the spec (schema requires it) but is not a billing signal here.
-    "proxmox": {"domain-controller": 0.0, "member-server": 0.0, "workstation": 0.0},
+    "proxmox": {"domain-controller": 0.0, "member-server": 0.0, "workstation": 0.0, "standalone": 0.0},
 }
 
 WINDOWS_EVAL_EXPIRY_DAYS = 180
@@ -264,8 +265,21 @@ def semantic_checks(spec: dict, catalog: dict[str, dict]) -> list[str]:
             )
 
     for i, m in enumerate(spec["machines"]):
+        if m["role"] == "standalone":
+            continue  # workgroup host: no domain by schema (it lands on the STANDALONE_SEGMENT subnet)
         if m["domain"] not in domain_set:
             errors.append(f"machines[{i}]: references unknown domain '{m['domain']}'")
+
+    # No-AD (standalone-only) labs: there is no domain to populate or to inject
+    # AD/host vulns into yet, so the lab is defense + DETECT/BAS agents only. Every
+    # catalog vuln today targets a domain host (a DC, an ADCS/MSSQL/IIS member, or
+    # a member-server/workstation by attack.target_role) — reject rather than
+    # silently drop them (invariant #3: never quietly lose a selected vuln).
+    if not spec["forest"] and spec["vulnerabilities"]:
+        errors.append(
+            "vulnerabilities: a lab with no forest[] (only role: standalone hosts) cannot inject "
+            "vulnerabilities yet — every catalog vuln targets a domain host. Leave vulnerabilities: []."
+        )
 
     dc_count_by_domain: dict[str, int] = {}
     for m in spec["machines"]:
@@ -383,6 +397,32 @@ def assign_ips(spec: dict) -> dict:
                     }
                 )
         plan["domains"][d["domain"]] = {"subnet": subnet_cidr, "hosts": hosts}
+
+    # role: standalone (workgroup, no AD) hosts get their own /24 segment after
+    # the domains', keyed STANDALONE_SEGMENT — Terraform builds it a subnet + SG
+    # like any domain's (intra-segment + bastion only, deny-by-default).
+    standalone = [m for m in spec["machines"] if m["role"] == "standalone"]
+    if standalone:
+        i = len(spec["forest"]) + 1
+        hosts = []
+        host_octet = 10
+        for m in standalone:
+            for _ in range(m["count"]):
+                if host_octet > 249:
+                    raise SpecError("standalone: too many standalone instances for a /24 IP plan")
+                hosts.append(
+                    {
+                        "role": "standalone",
+                        "os": m["os"],
+                        "ip": f"10.{octet}.{i}.{host_octet}",
+                        "services": [],
+                        "applications": [],
+                        "image_id": m.get("image_id"),
+                        "vm_size": m.get("vm_size"),
+                    }
+                )
+                host_octet += 1
+        plan["domains"][STANDALONE_SEGMENT] = {"subnet": f"10.{octet}.{i}.0/24", "hosts": hosts}
     return plan
 
 
@@ -562,6 +602,16 @@ def load_and_resolve(spec_path: Path) -> tuple[dict, dict] | None:
             print(f"  - {e}", file=sys.stderr)
         return None
 
+    # forest[] is optional (a no-AD lab of role: standalone hosts omits it), and
+    # a standalone machine carries no domain (the schema forbids one). Normalize
+    # once, right after the schema gate: forest -> [], and each standalone
+    # machine's domain -> STANDALONE_SEGMENT, the network_plan key its subnet/SG
+    # live under — so every downstream consumer can keep reading m["domain"].
+    spec.setdefault("forest", [])
+    for m in spec["machines"]:
+        if m["role"] == "standalone":
+            m["domain"] = STANDALONE_SEGMENT
+
     catalog = load_vuln_catalog()
     sem_errors = semantic_checks(spec, catalog)
     if sem_errors:
@@ -574,12 +624,38 @@ def load_and_resolve(spec_path: Path) -> tuple[dict, dict] | None:
         resolved_defense = resolve_defense(spec)
         on_conflict = spec.get("on_conflict", "warn")
         resolved_defense, reconciliation = reconcile(resolved_defense, spec["vulnerabilities"], catalog, on_conflict)
+        check_ad_only_defense(spec, resolved_defense)
     except SpecError as e:
         print(f"FAIL: {spec_path.name} reconciliation error:\n{e}", file=sys.stderr)
         return None
 
     manifest = build_manifest(spec_path, spec, resolved_defense, reconciliation)
     return spec, manifest
+
+
+def check_ad_only_defense(spec: dict, resolved_defense: dict) -> None:
+    """A lab with no forest[] has no directory for the AD-backed defenses to live
+    in: Windows LAPS backs passwords up to AD DS, Protected Users is a domain
+    group and honey accounts are domain users planted on the root DC. Applying
+    them would silently do nothing (or fail mid-deploy), so reject them up front
+    — including when they come from a defense.profile default — and tell the
+    operator what to set instead of quietly dropping a control."""
+    if spec["forest"]:
+        return
+    controls = (resolved_defense.get("hardening") or {}).get("controls") or {}
+    problems = []
+    if controls.get("laps"):
+        problems.append("defense.hardening.controls.laps must be false (Windows LAPS backs up to AD DS)")
+    if controls.get("protected_users_group"):
+        problems.append("defense.hardening.controls.protected_users_group must be [] (it is a domain group)")
+    if (resolved_defense.get("deception") or {}).get("honey_accounts", 0) > 0:
+        problems.append("defense.deception.honey_accounts must be 0 (honey accounts are domain users)")
+    if problems:
+        raise SpecError(
+            "no-AD lab (no forest[], only role: standalone hosts) selects AD-only defenses "
+            "(set them explicitly in the spec — a defense.profile default may have turned them on):\n"
+            + "\n".join(f"  - {p}" for p in problems)
+        )
 
 
 def derive_infra_secrets(seed: int) -> tuple[str, str]:
@@ -612,11 +688,16 @@ def flatten_machines(spec: dict, network_plan: dict) -> list[dict]:
     network_plan.domains.*.hosts. This is the single naming authority shared
     by the Terraform machines[] list and the Ansible inventory — ad-topology,
     infra-aws and infra-azure must not invent their own names."""
-    multi_domain = len(spec["forest"]) > 1
+    # Segments = forest[] domains (in spec order) + the STANDALONE_SEGMENT when
+    # the lab has role: standalone hosts. A standalone host's "domain" field is
+    # that segment key: it picks the subnet/SG in Terraform, never an AD domain.
+    segments = [d["domain"] for d in spec["forest"]]
+    if STANDALONE_SEGMENT in network_plan["domains"]:
+        segments.append(STANDALONE_SEGMENT)
+    multi_domain = len(segments) > 1
     counters: dict[tuple[str, str], int] = {}
     machines = []
-    for d in spec["forest"]:
-        domain = d["domain"]
+    for domain in segments:
         slug = domain.split(".")[0]
         for host in network_plan["domains"][domain]["hosts"]:
             role = host["role"]
@@ -688,6 +769,7 @@ def build_ansible_groups(spec: dict, machines: list[dict], admin_password: str) 
         "trust_anchors": [],
         "member_servers": [],
         "workstations": [],
+        "standalone_servers": [],
     }
     root_dc_name: dict[str, str] = {}
 
@@ -773,6 +855,12 @@ def build_ansible_groups(spec: dict, machines: list[dict], admin_password: str) 
                     "dns_domain": root_dc_name.get(m["domain"], ""),
                 }
             )
+
+    # Workgroup hosts: never promoted or joined — ad-topology only sets their
+    # hostname (no domain/DNS vars; GOAD's AD roles never touch them).
+    for m in machines:
+        if m["role"] == "standalone":
+            groups["standalone_servers"].append({"name": m["name"], "ip": m["ip"]})
 
     return groups
 
@@ -1226,7 +1314,7 @@ def plan_bas(spec: dict, machines: list[dict]) -> dict[str, list[str]]:
 
 def expand_role_or_all(value) -> set[str]:
     if value == "all" or value is None:
-        return {"domain-controller", "member-server", "workstation"}
+        return {"domain-controller", "member-server", "workstation", "standalone"}
     return set(value)
 
 

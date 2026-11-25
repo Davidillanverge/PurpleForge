@@ -15,6 +15,9 @@ role_by_os:
 tags_by_role:
   domain-controller: [level1-domaincontroller, level2-domaincontroller]
   member-server: [level1-memberserver, level2-memberserver]
+  # standalone = workgroup server (no AD): CIS's Member Server profile is the
+  # one that applies to a non-DC server, domain-joined or not.
+  standalone: [level1-memberserver, level2-memberserver]
   workstation: [level1, level2]
 skip_rule_vars_prefix_by_os:
   windows-server-2019: win19cis

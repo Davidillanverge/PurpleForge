@@ -67,6 +67,7 @@ locals {
     "domain-controller" = "Standard_B2s"
     "member-server"     = "Standard_B2ms"
     "workstation"       = "Standard_B2s"
+    "standalone"        = "Standard_B2ms"
   }, var.vm_size_overrides)
 
   machines_by_name = { for m in var.machines : m.name => m }

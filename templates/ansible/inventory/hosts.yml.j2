@@ -127,3 +127,13 @@ all:
           dns_domain: "{{ h.dns_domain }}"
 {% endfor %}
 {% endif %}
+{% if groups.standalone_servers %}
+    # role: standalone — workgroup hosts, no AD (never promoted or joined).
+    standalone_servers:
+      hosts:
+{% for h in groups.standalone_servers %}
+        {{ h.name }}:
+          ansible_host: "{{ h.ip }}"
+          hostname: "{{ h.name }}"
+{% endfor %}
+{% endif %}

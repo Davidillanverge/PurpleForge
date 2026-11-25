@@ -46,6 +46,7 @@ locals {
   spec_map = merge({
     "domain-controller" = { cores = 2, memory = 4096 }
     "member-server"     = { cores = 2, memory = 4096 }
+    "standalone"        = { cores = 2, memory = 4096 }
     "workstation"       = { cores = 2, memory = 2048 }
   }, var.vm_specs_overrides)
 

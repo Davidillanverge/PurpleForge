@@ -20,6 +20,7 @@ tags_by_role:
   # applicability is instead handled inside each STIG rule's own `when:`.
   domain-controller: [cat1, cat2, cat3]
   member-server: [cat1, cat2, cat3]
+  standalone: [cat1, cat2, cat3]
   workstation: [cat1, cat2, cat3]
 skip_rule_vars_prefix_by_os:
   # IMPORTANT: STIG rules gate on per-STIG-ID vars (e.g. wn22_ac_000020), not

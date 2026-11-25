@@ -32,7 +32,14 @@ CONTROL_CIS_RULES_PATH = HARDENING_DIR / "control-cis-rules.yml"
 GENERATED_DIR = REPO_ROOT / "generated"
 TEMPLATES_DIR = REPO_ROOT / "templates"
 
-ROLE_ABBREV = {"domain-controller": "dc", "member-server": "mbr", "workstation": "ws"}
+ROLE_ABBREV = {"domain-controller": "dc", "member-server": "mbr", "workstation": "ws", "standalone": "srv"}
+
+# Network-plan segment key for role: standalone (workgroup, no-AD) machines. They
+# belong to no forest[] domain, so they get their own /24 under this key in
+# network_plan.domains — the Terraform layers then build it a private subnet +
+# SG exactly like a domain's, with no template change. "workgroup" is not a
+# valid AD FQDN (no dot), so it can never collide with a forest[] domain.
+STANDALONE_SEGMENT = "workgroup"
 
 # Single source of truth for the two Windows-side automation accounts every
 # generated VM gets (see render.render_azure_terraform / templates/ansible/roles/
@@ -68,6 +75,11 @@ ENDPOINT_PROBES: dict[str, list[dict]] = {
         {"proto": "wmi-rpc", "port": 135, "required": False},
     ],
     "workstation": [
+        {"proto": "winrm-https", "port": WINRM_PORT, "required": True},
+        {"proto": "smb", "port": 445, "required": False},
+        {"proto": "wmi-rpc", "port": 135, "required": False},
+    ],
+    "standalone": [
         {"proto": "winrm-https", "port": WINRM_PORT, "required": True},
         {"proto": "smb", "port": 445, "required": False},
         {"proto": "wmi-rpc", "port": 135, "required": False},

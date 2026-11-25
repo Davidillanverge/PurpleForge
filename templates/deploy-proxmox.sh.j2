@@ -477,8 +477,10 @@ main() {
 Next steps (no AI):
   # confirm the injected vulnerabilities are applied + exploitable:
   PYTHONPATH="$REPO/scripts" python3 -m forge validate "{{ spec_rel }}" --run
+{% if domain != "WORKGROUP" %}
   # verify the live domain matches the plan (users/groups/NT hashes):
   PYTHONPATH="$REPO/scripts" python3 -m forge ad-inventory "{{ spec_rel }}"
+{% endif %}
 
 When finished, tear everything down (removes every VM in the pool):
   ./teardown.sh

@@ -57,12 +57,19 @@
 
 ## Active Directory forest
 
+{% if forest %}
 | Domain | NetBIOS | Functional level | DCs | Trust |
 |---|---|---|---|---|
 {% for d in forest %}
 | {{ d.domain }} | {{ d.netbios }} | {{ d.functional_level }} | {{ d.domain_controllers }} | {{ (d.trust.type ~ " -> " ~ d.trust.target) if d.trust else "—" }} |
 {% endfor %}
+{% else %}
+None — this is a **no-AD lab**: every host is `role: standalone` (workgroup
+`WORKGROUP`), never promoted or domain-joined. There is no AD population and
+no AD-only defense (LAPS, Protected Users, honey accounts).
+{% endif %}
 
+{% if forest %}
 ## Population
 
 Requested: {{ population.users }} users, density `{{ population.density }}`, seed `{{ population.seed }}`.
@@ -98,8 +105,10 @@ The full per-user name/password/OU table is in **[Appendix A](#appendix-a--popul
 Plus {{ deception_plan.honey_accounts | length }} deception honey account(s) on `{{ deception_plan.run_on }}` — see Credentials below for names (passwords are randomized by an Ansible lookup at deploy time, not knowable from this report either).
 
 {% endif %}
+{% endif %}
 ## Credentials
 
+{% if forest %}
 ### Domain administrator
 
 `Administrator` is the domain's real RID-500 account, not a fresh object —
@@ -119,6 +128,19 @@ client credentials").
 {% for r in domain_admin_rows %}
 | {{ r.domain }} | {{ r.username }} | `{{ r.password }}` |
 {% endfor %}
+{% else %}
+### Local administrator (standalone hosts)
+
+No domain, so no domain administrator. Each standalone host's built-in
+`Administrator` (RID-500) carries the seed-derived infra admin password — the
+same value as "Local VM administrator" below. Log on as `.\Administrator`.
+
+| Host | Username | Password |
+|---|---|---|
+{% for m in machines %}
+| {{ m.name }} | `.\Administrator` | `{{ local_admin_password }}` |
+{% endfor %}
+{% endif %}
 
 ### Windows-side automation accounts (every host)
 

@@ -35,7 +35,7 @@ variable "machines" {
   type = list(object({
     name     = string
     domain   = string
-    role     = string # domain-controller | member-server | workstation
+    role     = string # domain-controller | member-server | workstation | standalone (workgroup, no AD)
     os       = string # one of lab-spec.schema.json's machines[].os enum
     ip       = string
     image_id = optional(string) # machines[].image_id override — an AMI id (ami-xxxxxxxx), e.g. a golden workstation image with an EDR agent pre-installed. null (the default) means "resolve the stock Windows AMI for os via SSM" — see windows.tf.

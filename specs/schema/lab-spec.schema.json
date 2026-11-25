@@ -7,7 +7,6 @@
   "additionalProperties": false,
   "required": [
     "lab",
-    "forest",
     "machines",
     "population",
     "vulnerabilities",
@@ -22,7 +21,8 @@
       "minItems": 1,
       "items": {
         "$ref": "#/$defs/domain"
-      }
+      },
+      "description": "AD forest: one entry per domain. Optional \u2014 omit it (or leave it empty) for a no-AD lab whose machines are all role: standalone (workgroup)."
     },
     "machines": {
       "type": "array",
@@ -192,7 +192,6 @@
       "required": [
         "role",
         "os",
-        "domain",
         "count"
       ],
       "properties": {
@@ -201,8 +200,10 @@
           "enum": [
             "domain-controller",
             "member-server",
-            "workstation"
-          ]
+            "workstation",
+            "standalone"
+          ],
+          "description": "standalone = a workgroup Windows host with no AD: never promoted or domain-joined; it takes no domain and lands on its own isolated 'workgroup' subnet."
         },
         "os": {
           "type": "string",
@@ -217,7 +218,7 @@
         },
         "domain": {
           "type": "string",
-          "description": "Must match a forest[].domain entry."
+          "description": "Must match a forest[].domain entry. Required for every role except standalone, which must not set it."
         },
         "count": {
           "type": "integer",
@@ -261,7 +262,44 @@
           "minLength": 1,
           "description": "Cloud VM size for this machine, overriding the per-role default (Azure: e.g. 'Standard_B2s'). Set it here when a role needs a bigger box or the subscription's regional vCPU quota forces a specific SKU (the #1 deploy blocker) \u2014 no need to touch templates. When absent, windows.tf's per-role default applies. On a quota-restricted subscription, verify the size exists in the region with the Azure MCP / `az vm list-skus` before deploy."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "standalone"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "domain"
+                  ]
+                },
+                {
+                  "required": [
+                    "services"
+                  ]
+                },
+                {
+                  "required": [
+                    "applications"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "domain"
+            ]
+          }
+        }
+      ]
     },
     "population": {
       "type": "object",
@@ -309,7 +347,8 @@
             "enum": [
               "domain-controller",
               "member-server",
-              "workstation"
+              "workstation",
+              "standalone"
             ]
           },
           "uniqueItems": true,

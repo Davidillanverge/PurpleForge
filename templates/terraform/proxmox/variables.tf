@@ -37,7 +37,7 @@ variable "machines" {
   type = list(object({
     name        = string
     domain      = string
-    role        = string # domain-controller | member-server | workstation
+    role        = string # domain-controller | member-server | workstation | standalone (workgroup, no AD)
     os          = string # one of lab-spec.schema.json's machines[].os enum
     ip          = string
     template_id = optional(number) # per-host template override; null = use var.template_map[os]

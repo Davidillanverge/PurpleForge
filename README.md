@@ -342,6 +342,24 @@ defense:
 on_conflict: exclude-control
 ```
 
+**No-AD labs (`role: standalone`).** A machine with `role: standalone` is a
+workgroup Windows host: it takes no `domain`, is never promoted or joined, and
+lands on its own isolated `workgroup` subnet (bastion-only, like any domain's).
+A lab made only of standalone hosts omits `forest:` entirely; it then gets no AD
+population, and `forge` rejects AD-only pieces up front: vulnerabilities, LAPS,
+Protected Users and honey accounts. Hardening, Defender AV, `telemetry:` and
+`bas:` all apply:
+
+```yaml
+machines:
+  - { role: standalone, os: windows-server-2022, count: 1 }   # no forest:, no domain:
+vulnerabilities: []
+defense:
+  profile: realistic
+  hardening: { baseline: baseline-controls, controls: { laps: false } }  # profile turns laps on
+  deception: { honey_accounts: 0 }
+```
+
 ### 2. The generated lab (`generated/<lab>/`) — ready to deploy
 
 `forge generate` produces a self-contained, gitignored directory:

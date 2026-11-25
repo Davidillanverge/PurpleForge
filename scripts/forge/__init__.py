@@ -53,6 +53,7 @@ from .core import (
     HARDENING_DIR,
     REPO_ROOT,
     ROLE_ABBREV,
+    STANDALONE_SEGMENT,
     SCHEMA_PATH,
     TEMPLATES_DIR,
     THEMES_DIR,
@@ -284,6 +285,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         bool(tel_hosts),
         bool(bas_hosts),
         repl_wait,
+        has_population=bool(population_plans),
     )
     # Provider-specific deploy.sh/teardown.sh (Azure: az + remote state + SKU
     # auto-sizing; Proxmox: Proxmox API + local state + bastion VLAN routing).
@@ -666,7 +668,7 @@ def main() -> int:
 __all__ = [
     # core
     "CONTROL_CIS_RULES_PATH", "DEFENSE_PROFILES_DIR", "EDR_DIR", "GENERATED_DIR", "HARDENING_DIR", "REPO_ROOT",
-    "ROLE_ABBREV", "SCHEMA_PATH", "TEMPLATES_DIR", "THEMES_DIR", "VULN_CATALOG_DIR", "VULN_CREDENTIAL_VARS",
+    "ROLE_ABBREV", "STANDALONE_SEGMENT", "SCHEMA_PATH", "TEMPLATES_DIR", "THEMES_DIR", "VULN_CATALOG_DIR", "VULN_CREDENTIAL_VARS",
     "WINDOWS_ADMIN_USERNAME", "WINRM_AUTOMATION_USERNAME", "SpecError", "deep_merge", "generate_password",
     "load_schema", "load_yaml", "stable_octet", "yaml_scalar",
     # catalog

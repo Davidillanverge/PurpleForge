@@ -107,3 +107,36 @@
     - common
     - { role: settings/hostname }
     - commonwkstn
+
+# role: standalone (workgroup, no AD). Deliberately NOT GOAD's `common` role: it
+# opens RDP only on the firewall's "Domain" profile, which a workgroup host never
+# has, and forces domain DNS. A workgroup host only needs its hostname plus RDP
+# reachable from the lab supernet (i.e. only via the WireGuard bastion — the SG
+# still admits nothing from the internet, invariant #1).
+- name: PurpleForge | ad-topology | configure standalone (workgroup) servers
+  hosts: standalone_servers
+  gather_facts: false
+  roles:
+    - { role: settings/hostname }
+  tasks:
+    - name: Enable Remote Desktop (NLA required)
+      ansible.windows.win_regedit:
+        path: "{{ item.path }}"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: dword
+      loop:
+        - { path: 'HKLM:\System\CurrentControlSet\Control\Terminal Server', name: fDenyTSConnections, data: 0 }
+        - { path: 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp', name: UserAuthentication, data: 1 }
+
+    - name: Allow RDP from the lab supernet only (all firewall profiles — a workgroup host has no Domain profile)
+      community.windows.win_firewall_rule:
+        name: "PurpleForge RDP from lab (TCP-In)"
+        localport: 3389
+        protocol: tcp
+        direction: in
+        action: allow
+        remoteip: "{{ pf_supernet }}"
+        profiles: [domain, private, public]
+        state: present
+        enabled: true
