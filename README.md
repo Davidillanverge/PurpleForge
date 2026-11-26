@@ -62,7 +62,8 @@ scope. Azure, AWS, and Proxmox VE are supported.
 | **Attack-chain design** | `independent` mode (each vuln targets its own object) or `ctf` mode (vulns deliberately share a real object, so exploiting one is a prerequisite for the next). |
 | **Cost & lifecycle** | Every lab carries `auto_shutdown` + `budget_alert_usd`; `teardown` verifies cost-zero; `reset` rolls back to a clean-state snapshot between exercises. |
 | **Validation** | `validate --run` drives the injected vulns live over the tunnel (roasting auto-confirmed with `nxc`; the rest emit a ready-to-run command). `ad-inventory` dumps the live domain (LDAP + DCSync hashes) and checks it against the plan. |
-| **Deterministic, no-AI lifecycle** | `generate` → `guardrail` → `deploy` → `validate` → `reset`/`teardown` are pure scripts. AI (skills/agents) only helps *author* a spec; nothing about deployment depends on it. |
+| **Deterministic, no-AI lifecycle** | `generate` → `guardrail` → `deploy` → `validate` → `reset`/`teardown` are pure scripts. AI (skills/agents) only helps *author* a spec and *drive* those scripts; nothing about deployment depends on it. |
+| **Agent service (optional)** | A self-hosted web UI + API (`src/`) that runs the four agents against any LLM (Anthropic, Ollama) with failover, streams every step live, and puts a **human approval gate** in front of every infra-touching action. See [Agent service](#agent-service-web-ui--api). |
 
 ---
 
@@ -157,9 +158,11 @@ prerequisites are in [Deploying a lab](#deploying-a-lab-azure--proxmox-ve).
 ### Working on the harness itself
 
 ```bash
+pip install -e ".[dev,app]" -c constraints.txt   # + the agent service deps (FastAPI, SQLAlchemy, Anthropic SDK…)
 pytest                                   # invariant + unit + guardrail + catalog-schema + determinism tests
+                                         #   + tests/app/: LLM layer, agent engine, DB, API, UI, cluster
 ruff check . && ruff format --check .    # lint + format
-mypy                                     # type-check scripts/
+mypy                                     # type-check scripts/ and src/
 ```
 
 Tests own their inputs — they build specs in code with `make_spec()`
@@ -385,6 +388,125 @@ Ansible lookup at deploy time; read them post-deploy via `ad-inventory`.)
 
 ---
 
+## Agent service (web UI + API)
+
+An optional, self-hosted service that runs the four agents of `.claude/agents/`
+outside Claude Code — against **any LLM** — with a web UI, a JSON API, live
+streaming, and a **human approval gate** in front of anything that touches
+infrastructure. The deterministic core is unchanged: agents call `forge` (in a
+subprocess) exactly as an operator would; the CLI keeps working on its own.
+
+```
+browser (Jinja2 + HTMX, SSE) ─┐
+API clients (Bearer token)  ──┼─► FastAPI ─► AgentRunner ─► AgentEngine ─► LLMPool ─► Anthropic / Ollama
+                              │      │            │              │ tools: forge · bash · read/write/edit · grep/glob · web_fetch
+                              │      │            │              └─► approval gate ─► human (UI / API)
+                              │   Postgres ◄── events, runs, labs (FSM), approvals, provider configs
+                              └── Redis ◄──── live events · approvals/cancels across workers · heartbeats
+```
+
+### The agents
+
+| Agent | Starts from | What it does | Lane (enforced by its tools, not its prompt) |
+|---|---|---|---|
+| `lab-designer` | `draft` … `approved`, `destroyed` | Lab description + notes → `specs/<lab>.yml`, checked with `forge lab-spec --check-only` | Writes exactly one file (its spec). `forge lab-spec --check-only` only. **No shell.** |
+| `deploy-operator` | `approved` | `forge generate --plan` → `forge deploy` (guardrail gate, deploy.sh, clean snapshot) | The only agent with cloud credentials. `forge deploy` **and every non-read-only shell command** need a human OK. |
+| `deploy-operator-teardown` | `deployed`, `validated`, `stopped`, `failed` | `forge teardown --force` → cost-zero verified | `forge teardown` only, needs a human OK. |
+| `purple-validator` | `deployed`, `validated` | Per vuln APPLIED + EXPLOITABLE, writes `lab-report.md` | Writes only `generated/<lab>/`. No infra commands, no cloud credentials. |
+| `catalog-author` | — (no lab) | New/changed catalog entries, validated with forge's own schemas | Writes only `catalog/`, `templates/ansible/vulns/`. Web access only to MITRE ATT&CK / GitHub / Microsoft Learn. **No shell.** |
+
+System prompts are the `.claude/agents/*.md` bodies verbatim, plus a short
+runtime preamble mapping Claude Code tool names to the service's tools.
+
+### Lab lifecycle
+
+```
+draft ─► designing ─► designed ─► compiled ─► ready ─► approved ─► deploying ─► deployed ─► validating ─► validated
+         lab-designer           forge lab-spec  forge      HUMAN      deploy-operator         purple-validator
+                                                guardrail  (#6 check)                 └─► destroying ─► destroyed
+                                                                                        deploy-operator-teardown
+```
+
+- **`ready` only after a deterministic `forge guardrail` PASS**, run by the API itself — an LLM can't talk a lab into it.
+- **`deploying` only from `approved`**, and only a human (`user:<id>`) can approve, after confirming authorized use (invariant #6) with cost, isolation and reconciliation from the manifest on screen. Re-designing or recompiling drops the approval.
+- **The outcome of a run comes from what actually happened, never from the agent's claim:** `deployed` only if `forge deploy` exited 0; an approved action that then failed → `failed`; nothing touched → back to `ready`.
+- **`failed` can only be left through a teardown** that verifies cost-zero — a half-deployed lab can't be forgotten or deleted.
+
+### Run it
+
+**Locally** (the host's toolchain and cloud credentials are what the deploy-operator uses):
+
+```bash
+pip install -e ".[app]" -c constraints.txt
+cp .env.example .env    # set ANTHROPIC_API_KEY (or PF_LLM_PROVIDERS=ollama) and PF_API_TOKENS
+PF_DATABASE_URL=sqlite+aiosqlite:///pf.db PF_AUTO_MIGRATE=true \
+  uvicorn api.app:create_app --factory --app-dir src
+# → http://127.0.0.1:8000  (log in with your token)
+```
+
+**With Docker** (app + Postgres + Redis, 2 workers):
+
+```bash
+cp .env.example .env    # POSTGRES_PASSWORD, PF_SECRET_KEY, PF_API_TOKENS (+ LLM key)
+docker compose up -d --build
+# → http://127.0.0.1:8000
+```
+
+The container is the right place for designing, compiling, cataloguing and
+reviewing. **Deploying and validating need the operator toolchain on the host
+running the service** (`terraform`, `docker` for the Ansible runner, `az`/`aws`,
+`sudo wg-quick`, `nxc`): `deploy.sh` mounts the repo into a Docker Ansible runner
+and brings the WireGuard tunnel up with sudo, which a container could only do
+with root-equivalent host access. The deploy-operator checks this before
+starting and refuses with the exact list of what's missing.
+
+### LLM providers
+
+`PF_LLM_PROVIDERS` sets the failover order (`anthropic,ollama` by default; a
+provider without a key is skipped). Transient errors are retried with backoff,
+then the pool fails over; a failing provider is cooled down so later turns go
+straight to the healthy one. Per-tenant providers can also be configured in the
+UI (*providers*); their API keys are encrypted at rest with `PF_SECRET_KEY` and
+never shown again. Model aliases: `opus`, `sonnet`, `haiku`.
+
+### Security model
+
+- **Approval gate**: `forge deploy`/`teardown` always, and every deploy-operator
+  shell command that isn't a single, provably read-only command. No approver or
+  a timeout ⇒ denied (fail closed). Decisions are final and attributed.
+- **Spec lock**: every agent's `forge` calls are pinned to its own lab's spec
+  (`--out-dir`/`--skip-guardrail` refused), so an approval for lab A can never be
+  spent on lab B.
+- **Credential isolation**: tool subprocesses never get the LLM keys; only the
+  deploy-operator gets cloud credentials; `.env`, `*.pem`, `.git/` are unreadable
+  by agents. These guards keep a well-meaning model in its lane — they are **not
+  a sandbox** against a hostile one; the real boundaries are the per-agent tool
+  sets, credential isolation and the approval gate.
+- **Web**: Bearer tokens (≥ 24 chars) or an `HttpOnly`/`SameSite=Strict` session
+  cookie with CSRF double-submit; strict CSP (`script-src 'self'`, no inline
+  scripts/styles, htmx vendored); agent output is always escaped text. Compose
+  publishes the app on `127.0.0.1` only; Postgres/Redis sit on an internal network.
+
+### Operations
+
+- **Migrations** run on startup (`PF_AUTO_MIGRATE=true`) under a Postgres
+  advisory lock, so N workers/replicas migrate exactly once.
+- **Multiple workers** need `PF_REDIS_URL` (compose sets it): live events,
+  approval decisions and cancellations reach the worker that owns the run.
+  Without Redis the service refuses to start more than one worker.
+- **Crash recovery**: workers heartbeat through Redis; runs of a dead worker are
+  failed, their approvals expired and their labs rolled back (a deploy that died
+  mid-way → `failed`, i.e. teardown required).
+- Every setting is documented in `.env.example`.
+
+**Status:** the service is covered by an automated suite (scripted LLMs, real
+forge, real subprocesses, SQLite and fakeredis) and was exercised end-to-end in
+Docker Compose (Postgres + Redis, 2 workers). The agents have **not yet run
+end-to-end against a live model**, and the deploy-operator has not yet driven a
+real cloud deploy — treat those paths with the same caution as any first run.
+
+---
+
 ## Folder structure
 
 ```
@@ -425,9 +547,21 @@ scripts/
   forge/                      # the deterministic core (a Python package — see below)
   population.py               # the deterministic themed-population generator
 
+src/                          # the agent service (optional — the harness works without it)
+  llm/                        # provider-neutral LLM layer: Anthropic + Ollama, LLMPool (retry/failover/cooldown)
+  agents/                     # agent engine (tool loop, budget, approval gate, events), tools, the 4 agents
+  db/                         # SQLAlchemy 2.0 async models (tenant_id everywhere), lab FSM, Alembic migrations
+  api/                        # FastAPI app, agent runner, SSE, Redis broker, deterministic compile/guardrail
+  ui/                         # server-rendered UI: Jinja2 + HTMX templates, vendored htmx, Tailwind CSS
+
 vendor/                       # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown
-tests/                        # the harness test suite
+tests/                        # the harness test suite (tests/app/: the agent service)
 generated/                    # gitignored — per-lab output
+
+Dockerfile                    # agent service image (multi-stage, non-root, pinned base + Tailwind)
+docker-compose.yml            # app + Postgres + Redis (app bound to 127.0.0.1)
+alembic.ini                   # DB migrations (src/db/migrations)
+.env.example                  # every setting: service, LLM providers, deploy-time credentials
 ```
 
 ---
