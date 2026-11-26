@@ -1,0 +1,20 @@
+<section class="panel {{ 'border-green-600/60' if outcome.ok else 'border-red-600/60' }}">
+  <div class="panel-title">{{ title_ok if outcome.ok else title_fail }}</div>
+  <div class="space-y-3 p-4">
+    {% for step in outcome.steps %}
+    <details {% if not step.ok or not outcome.files %}open{% endif %}>
+      <summary class="cursor-pointer {{ 'text-green-300' if step.ok else 'text-red-300' }}">
+        <span class="prompt">{{ step.command }}</span> <span class="text-term-dim">→ exit {{ step.exit_code }}</span>
+      </summary>
+      <pre class="mt-2 max-h-96 overflow-auto rounded bg-term-bg p-3 text-xs">{{ step.output }}</pre>
+    </details>
+    {% endfor %}
+    {% if outcome.files %}
+    <details open>
+      <summary class="cursor-pointer text-term-fg">ficheros generados ({{ outcome.files|length }})</summary>
+      <pre class="mt-2 max-h-96 overflow-auto rounded bg-term-bg p-3 text-xs text-term-dim">{{ outcome.files|join("\n") }}</pre>
+      <p class="mt-2 text-xs text-amber-200">⚠ {{ outcome.out_dir }} contiene secretos del lab (derivados del seed): está en .gitignore, no lo compartas.</p>
+    </details>
+    {% endif %}
+  </div>
+</section>

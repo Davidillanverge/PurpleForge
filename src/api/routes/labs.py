@@ -10,6 +10,7 @@ from api import services
 from api.deps import PrincipalDep, SessionDep, SettingsDep
 from api.schemas import (
     CompileResult,
+    GenerateResult,
     LabCreate,
     LabDetail,
     LabOut,
@@ -79,6 +80,23 @@ async def compile_lab(lab_id: uuid.UUID, session: SessionDep, principal: Princip
     """``forge lab-spec`` + ``forge guardrail``: DESIGNED → COMPILED → READY (see services.compile_lab)."""
     lab, outcome = await services.compile_lab(session, principal, settings, lab_id)
     return CompileResult(lab=LabOut.model_validate(lab), steps=outcome.steps, ok=outcome.ok)
+
+
+@router.post("/{lab_id}/check", response_model=CompileResult)
+async def check_lab(lab_id: uuid.UUID, session: SessionDep, principal: PrincipalDep, settings: SettingsDep):
+    """``forge lab-spec --check-only``: validate without writing anything or moving the lab."""
+    lab, outcome = await services.check_lab(session, principal, settings, lab_id)
+    return CompileResult(lab=LabOut.model_validate(lab), steps=outcome.steps, ok=outcome.ok)
+
+
+@router.post("/{lab_id}/generate", response_model=GenerateResult)
+async def generate_lab(lab_id: uuid.UUID, session: SessionDep, principal: PrincipalDep, settings: SettingsDep):
+    """``forge generate``: render Terraform + Ansible + lifecycle scripts into generated/<lab>/.
+    Cloud-free and deterministic; the lab's state is unchanged."""
+    lab, outcome = await services.generate_lab(session, principal, settings, lab_id)
+    return GenerateResult(
+        lab=LabOut.model_validate(lab), steps=outcome.steps, ok=outcome.ok, out_dir=outcome.out_dir, files=outcome.files
+    )
 
 
 @router.get("/{lab_id}/transitions", response_model=list[LabTransitionOut])

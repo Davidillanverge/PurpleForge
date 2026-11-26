@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import Principal
-from api.forge_ops import ForgeStep, SpecError, compile_and_guardrail, resolve_spec
+from api.forge_ops import ForgeStep, SpecError, check_spec, compile_and_guardrail, generate, resolve_spec
 from api.settings import AppSettings
 from db import repository as repo
 from db.crypto import SecretCipher
@@ -174,6 +174,52 @@ async def compile_lab(
                 reason="forge guardrail PASS — awaiting human approval",
             )
     return lab, CompileOutcome(steps=steps, ok=all(s.ok for s in steps))
+
+
+#: An agent owns the lab in these states (it may be rewriting the spec or running
+#: deploy.sh/teardown.sh): deterministic forge actions on the lab wait.
+AGENT_OWNED_STATES = frozenset({LabState.DESIGNING, LabState.DEPLOYING, LabState.VALIDATING, LabState.DESTROYING})
+
+
+class GenerateOutcome(BaseModel):
+    steps: list[ForgeStep]
+    ok: bool
+    files: list[str] = []
+    out_dir: str | None = None
+
+
+async def check_lab(
+    session: AsyncSession, principal: Principal, settings: AppSettings, lab_id: uuid.UUID
+) -> tuple[Lab, CompileOutcome]:
+    """``forge lab-spec --check-only`` — read-only: no files written, no state change."""
+    lab = await repo.get_lab(session, principal.tenant, lab_id)
+    if lab.state in AGENT_OWNED_STATES:
+        raise LabNotEditable(f"an agent is working on this lab ({lab.state.value}); check when it finishes")
+    if not lab.spec_path:
+        raise SpecError("lab has no spec_path")
+    spec, _ = resolve_spec(settings.repo_root, lab.spec_path, lab.name)
+    step = await check_spec(settings.repo_root, spec, timeout=settings.forge_timeout_seconds)
+    return lab, CompileOutcome(steps=[step], ok=step.ok)
+
+
+async def generate_lab(
+    session: AsyncSession, principal: Principal, settings: AppSettings, lab_id: uuid.UUID
+) -> tuple[Lab, GenerateOutcome]:
+    """``forge generate`` → generated/<lab>/ (Terraform, Ansible, lifecycle scripts, secrets).
+
+    Deterministic and cloud-free (no --plan). It does NOT move the FSM: generating
+    is not a guardrail PASS nor an approval. The lab row stays locked while forge
+    runs, so a deploy can't start halfway through a regeneration."""
+    lab = await repo.get_lab(session, principal.tenant, lab_id, for_update=True)
+    if lab.state in AGENT_OWNED_STATES:
+        raise LabNotEditable(f"an agent is working on this lab ({lab.state.value}); generate when it finishes")
+    if not lab.spec_path:
+        raise SpecError("lab has no spec_path")
+    spec, _ = resolve_spec(settings.repo_root, lab.spec_path, lab.name)
+    step, files = await generate(settings.repo_root, spec, lab.name, timeout=settings.forge_timeout_seconds)
+    return lab, GenerateOutcome(
+        steps=[step], ok=step.ok, files=files if step.ok else [], out_dir=f"generated/{lab.name}/"
+    )
 
 
 class ProviderTestOutcome(BaseModel):

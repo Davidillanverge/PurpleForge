@@ -46,6 +46,17 @@
     {% endif %}
 
     <div class="flex flex-wrap items-start gap-2 border-t border-term-line pt-4">
+      {% set agent_owned = lab.state.value in ("designing", "deploying", "validating", "destroying") %}
+      {% if lab.spec_path and not agent_owned %}
+      <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/check" hx-target="#compile-output" hx-disabled-elt="this"
+              title="forge lab-spec --check-only: valida el spec sin escribir nada ni cambiar el estado">
+        check <span class="htmx-indicator">…</span>
+      </button>
+      <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/generate" hx-target="#compile-output" hx-disabled-elt="this"
+              title="forge generate: Terraform + Ansible + scripts en generated/{{ lab.name }}/ (sin tocar ningún cloud)">
+        generar scripts <span class="htmx-indicator">…</span>
+      </button>
+      {% endif %}
       {% if lab.state.value in ("designed", "compiled", "ready", "approved") %}
       <button class="btn-primary" hx-post="/ui/labs/{{ lab.id }}/compile" hx-target="#compile-output" hx-disabled-elt="this">
         forge lab-spec + guardrail <span class="htmx-indicator">…</span>

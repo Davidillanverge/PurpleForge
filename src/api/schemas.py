@@ -103,6 +103,11 @@ class CompileResult(BaseModel):
     ok: bool
 
 
+class GenerateResult(CompileResult):
+    out_dir: str | None = None
+    files: list[str] = []
+
+
 # --------------------------------------------------------------------------- runs
 
 

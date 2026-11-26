@@ -224,6 +224,36 @@ async def compile_lab(
     )
 
 
+@router.post("/ui/labs/{lab_id}/check", response_class=HTMLResponse)
+async def check_lab(
+    lab_id: uuid.UUID, request: Request, session: SessionDep, principal: UIPrincipal, settings: SettingsDep
+):
+    _, outcome = await services.check_lab(session, principal, settings, lab_id)
+    return render(
+        request,
+        "partials/forge_result.html",
+        principal,
+        outcome=outcome,
+        title_ok="✓ check OK — el spec es válido (no se ha escrito nada)",
+        title_fail="✗ check: el spec tiene errores",
+    )
+
+
+@router.post("/ui/labs/{lab_id}/generate", response_class=HTMLResponse)
+async def generate_lab(
+    lab_id: uuid.UUID, request: Request, session: SessionDep, principal: UIPrincipal, settings: SettingsDep
+):
+    _, outcome = await services.generate_lab(session, principal, settings, lab_id)
+    return render(
+        request,
+        "partials/forge_result.html",
+        principal,
+        outcome=outcome,
+        title_ok=f"✓ generado en {outcome.out_dir} ({len(outcome.files)} ficheros)",
+        title_fail="✗ forge generate falló",
+    )
+
+
 @router.post("/ui/labs/{lab_id}/approve", response_class=HTMLResponse)
 async def approve_lab(
     lab_id: uuid.UUID,

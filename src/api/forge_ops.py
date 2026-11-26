@@ -63,3 +63,23 @@ async def compile_and_guardrail(repo_root: Path, spec: Path, lab_name: str, *, t
     if steps[0].ok:
         steps.append(await run_forge(repo_root, "guardrail", rel, "--out-dir", out_dir, timeout=timeout))
     return steps
+
+
+async def check_spec(repo_root: Path, spec: Path, *, timeout: float) -> ForgeStep:
+    """``forge lab-spec --check-only``: validate + reconcile, writes nothing."""
+    rel = str(spec.relative_to(repo_root.resolve()))
+    return await run_forge(repo_root, "lab-spec", rel, "--check-only", timeout=timeout)
+
+
+async def generate(repo_root: Path, spec: Path, lab_name: str, *, timeout: float) -> tuple[ForgeStep, list[str]]:
+    """``forge generate`` into <repo_root>/generated/<lab>/ (no --plan: no cloud calls).
+    Returns the step and the generated files (relative to the lab dir)."""
+    out_dir = repo_root / "generated" / lab_name
+    rel = str(spec.relative_to(repo_root.resolve()))
+    step = await run_forge(repo_root, "generate", rel, "--out-dir", str(out_dir), timeout=timeout)
+    files = (
+        sorted(str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file() and ".terraform" not in p.parts)
+        if out_dir.is_dir()
+        else []
+    )
+    return step, files
