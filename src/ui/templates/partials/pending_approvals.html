@@ -1,0 +1,6 @@
+<div hx-get="/ui/partials/approvals?v={{ version }}" hx-trigger="every 3s" hx-target="#pending-approvals" hx-swap="innerHTML"></div>
+<div class="space-y-4">
+{% for a in pending %}{% include "partials/approval_card.html" %}{% else %}
+<div class="panel px-4 py-6 text-center text-term-dim">nada pendiente ✓</div>
+{% endfor %}
+</div>

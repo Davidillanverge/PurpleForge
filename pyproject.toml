@@ -28,6 +28,25 @@ dev = [
     "mypy==2.4.0",
     "types-PyYAML==6.0.12.20260906",
     "types-jsonschema==4.26.0.20260518",
+    "pytest-asyncio==1.5.0",
+    "aiosqlite==0.22.1",  # tests run the DB layer on SQLite (no server needed)
+    "fakeredis==2.41.0",  # tests run two workers against an in-process Redis
+]
+# Agent service (src/): LLM providers, agent engine, API. Not part of the
+# deterministic renderer, so it never affects invariant #5.
+app = [
+    "anthropic==2.14.0",
+    "httpx==0.28.1",
+    "pydantic==2.14.4",
+    "pydantic-settings==2.16.3",
+    "SQLAlchemy[asyncio]==2.1.9",
+    "asyncpg==0.32.0",
+    "alembic==1.20.1",
+    "cryptography==50.0.2",
+    "fastapi==0.165.0",
+    "uvicorn[standard]==0.54.0",
+    "python-multipart==0.0.34",  # HTML form parsing for the UI
+    "redis==8.2.0",  # multi-worker broker (events/approvals/cancels + heartbeats)
 ]
 
 # `forge` on the PATH after `pip install -e .` — no more `python3 scripts/forge.py`.
@@ -39,11 +58,20 @@ forge = "forge:main"
 [tool.setuptools]
 # `forge` is a package (scripts/forge/), `population` a top-level module
 # (scripts/population.py) — matches the package's `from population import ...`.
-packages = ["forge"]
+packages = ["forge", "llm", "agents", "db", "api", "api.routes", "ui"]
 py-modules = ["population"]
+
+[tool.setuptools.package-data]
+ui = ["templates/*.html", "templates/partials/*.html", "static/css/*.css", "static/js/*.js"]
 
 [tool.setuptools.package-dir]
 "" = "scripts"
+# Agent service packages live under src/ (one entry per top-level package).
+"llm" = "src/llm"
+"agents" = "src/agents"
+"db" = "src/db"
+"api" = "src/api"
+"ui" = "src/ui"
 
 [tool.ruff]
 line-length = 120
@@ -58,7 +86,7 @@ ignore = ["B008"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["scripts"]
+files = ["scripts", "src"]
 ignore_missing_imports = true
 # Pragmatic baseline for a large existing module: check what's annotated, don't
 # force annotations on every helper yet (that tightens as forge.py is split up).
@@ -69,4 +97,5 @@ exclude = ["vendor", "generated"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
-pythonpath = ["scripts"]
+pythonpath = ["scripts", "src"]
+asyncio_mode = "auto"

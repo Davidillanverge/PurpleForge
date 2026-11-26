@@ -1,0 +1,26 @@
+{# One approval. Pending ones get the decision form. `a` is an Approval row. #}
+<div id="approval-{{ a.id }}" class="panel {{ 'border-amber-500/70' if a.status.value == 'pending' else '' }}">
+  <div class="flex flex-wrap items-center gap-3 border-b border-term-line px-4 py-2">
+    <span class="badge {{ a.status|approval_class }}">{{ a.status.value }}</span>
+    <span class="text-term-fg">{{ a.tool_name }}</span>
+    <span class="text-xs text-term-dim">run <a href="/runs/{{ a.run_id }}">{{ a.run_id|string|truncate(8, true, "") }}</a>
+      {% if lab_names and a.lab_id and lab_names.get(a.lab_id) %} · lab <a href="/labs/{{ a.lab_id }}">{{ lab_names[a.lab_id] }}</a>{% endif %}
+      · {{ a.requested_at|ago }}</span>
+  </div>
+  <div class="space-y-3 p-4">
+    <div class="text-amber-100">⚠ {{ a.reason }}</div>
+    <pre class="rounded bg-term-bg p-3 text-xs">{{ a.arguments|pretty_json }}</pre>
+    {% if a.status.value == "pending" %}
+    <div class="flex flex-wrap items-center gap-2">
+      <input class="input max-w-md flex-1" id="comment-{{ a.id }}" name="comment" placeholder="comentario (opcional)">
+      <button class="btn-ok" hx-post="/ui/approvals/{{ a.id }}/decision" hx-vals='{"approved": "true"}'
+              hx-include="#comment-{{ a.id }}" hx-target="#approval-{{ a.id }}" hx-swap="outerHTML"
+              hx-confirm="¿Aprobar {{ a.tool_name }}? Puede actuar sobre infraestructura real.">aprobar</button>
+      <button class="btn-danger" hx-post="/ui/approvals/{{ a.id }}/decision" hx-vals='{"approved": "false"}'
+              hx-include="#comment-{{ a.id }}" hx-target="#approval-{{ a.id }}" hx-swap="outerHTML">denegar</button>
+    </div>
+    {% else %}
+    <div class="text-xs text-term-dim">decidido por {{ a.decided_by or "—" }} · {{ a.decided_at|dt }}{% if a.comment %} — {{ a.comment }}{% endif %}</div>
+    {% endif %}
+  </div>
+</div>

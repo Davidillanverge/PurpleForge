@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ code }}{% endblock %}
+{% block content %}
+<div class="mx-auto mt-24 max-w-xl panel">
+  <div class="panel-title text-red-300">✗ error {{ code }}</div>
+  <pre class="p-5">{{ detail }}</pre>
+  <div class="px-5 pb-5"><a href="/">← volver a labs</a></div>
+</div>
+{% endblock %}

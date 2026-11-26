@@ -1,0 +1,16 @@
+<section class="panel {{ 'border-green-600/60' if outcome.ok else 'border-red-600/60' }}">
+  <div class="panel-title">{{ "✓ compilación + guardrail OK → ready" if outcome.ok else "✗ compilación / guardrail con errores" }}</div>
+  <div class="space-y-3 p-4">
+    {% for step in outcome.steps %}
+    <details {% if not step.ok or loop.last %}open{% endif %}>
+      <summary class="cursor-pointer {{ 'text-green-300' if step.ok else 'text-red-300' }}">
+        <span class="prompt">{{ step.command }}</span> <span class="text-term-dim">→ exit {{ step.exit_code }}</span>
+      </summary>
+      <pre class="mt-2 max-h-96 overflow-auto rounded bg-term-bg p-3 text-xs">{{ step.output }}</pre>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+{# out-of-band: header/actions and timeline now reflect the new state #}
+<div id="lab-panel" hx-swap-oob="true">{% include "partials/lab_panel.html" %}</div>
+<ol id="lab-timeline" class="p-4" hx-swap-oob="true">{% include "partials/timeline.html" %}</ol>

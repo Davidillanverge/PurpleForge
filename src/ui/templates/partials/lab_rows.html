@@ -1,0 +1,15 @@
+{% for lab in labs %}
+<tr class="hover:bg-term-line/30">
+  <td>
+    <a href="/labs/{{ lab.id }}" class="text-term-fg hover:text-term-purple">{{ lab.name }}</a>
+    {% if lab.description %}<div class="text-xs text-term-dim">{{ lab.description|truncate(70) }}</div>{% endif %}
+    {% if lab.last_error %}<div class="text-xs text-red-300">✗ {{ lab.last_error|truncate(70) }}</div>{% endif %}
+  </td>
+  <td>{% include "partials/lab_badge.html" %}</td>
+  <td class="text-term-dim">{{ lab.cloud or "—" }}</td>
+  <td class="text-term-dim">{{ lab.spec_path or "—" }}</td>
+  <td class="text-term-dim" title="{{ lab.updated_at|dt }}">{{ lab.updated_at|ago }}</td>
+</tr>
+{% else %}
+<tr><td colspan="5" class="py-8 text-center text-term-dim">sin labs todavía — crea uno a la derecha</td></tr>
+{% endfor %}

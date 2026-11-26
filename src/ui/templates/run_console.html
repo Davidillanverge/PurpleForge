@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}run {{ run.id|string|truncate(8, true, "") }}{% endblock %}
+{% block content %}
+<div class="mb-4 text-xs text-term-dim">
+  <a href="/">labs</a> /
+  {% if lab %}<a href="/labs/{{ lab.id }}">{{ lab.name }}</a> /{% endif %}
+  run {{ run.id }}
+</div>
+
+<div id="run-header">{% include "partials/run_header.html" %}</div>
+
+<div id="run-approvals" class="my-4">
+  {% if active %}{% include "partials/run_approvals.html" %}{% endif %}
+</div>
+
+<section class="panel">
+  <div class="panel-title flex items-center justify-between">
+    <span>agent console — {{ run.agent }}</span>
+    <span class="normal-case tracking-normal">{{ "● live" if active else "○ replay" }}</span>
+  </div>
+  <div id="console-log" class="max-h-[70vh] overflow-y-auto bg-term-bg p-4 text-[13px] leading-relaxed">
+    {% for ev in events %}{% include "partials/event.html" %}{% endfor %}
+    {% if active %}
+    <div hx-ext="sse" sse-connect="/ui/runs/{{ run.id }}/console-stream?after={{ last_seq }}" sse-swap="message" hx-swap="beforeend" sse-close="end"></div>
+    {% endif %}
+  </div>
+  <div id="console-tail" class="border-t border-term-line px-4 py-2 text-xs text-term-dim {{ 'cursor' if active else '' }}">
+    {{ "esperando eventos" if active else "run terminado" }}
+  </div>
+</section>
+{% endblock %}

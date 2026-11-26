@@ -1,0 +1,57 @@
+/* PurpleForge UI — Tailwind v4 source. Build: src/ui/build_css.sh → src/ui/static/css/app.css */
+@import "tailwindcss";
+
+@source "../templates";
+@source "../templating.py";
+
+@theme {
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --font-sans: var(--font-mono);
+
+  --color-term-bg: #07090b;
+  --color-term-panel: #0d1114;
+  --color-term-line: #1c242a;
+  --color-term-dim: #6b7b86;
+  --color-term-fg: #c9d4dc;
+  --color-term-green: #4ade80;
+  --color-term-purple: #a78bfa;
+  --color-term-amber: #fbbf24;
+  --color-term-red: #f87171;
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  body { @apply bg-term-bg font-mono text-sm text-term-fg antialiased; }
+  a { @apply text-term-purple hover:text-violet-300; }
+  ::selection { @apply bg-violet-500/40; }
+  pre { @apply whitespace-pre-wrap break-words; }
+}
+
+/* v4: a class used inside @apply must be a @utility */
+@utility btn {
+  @apply inline-flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-xs uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+@layer components {
+  .panel { @apply rounded border border-term-line bg-term-panel; }
+  .panel-title { @apply border-b border-term-line px-4 py-2 text-xs uppercase tracking-widest text-term-dim; }
+  .btn-primary { @apply btn border-violet-500/60 bg-violet-500/10 text-violet-200 hover:bg-violet-500/25; }
+  .btn-ok { @apply btn border-green-500/60 bg-green-500/10 text-green-200 hover:bg-green-500/25; }
+  .btn-danger { @apply btn border-red-500/60 bg-red-500/10 text-red-200 hover:bg-red-500/25; }
+  .btn-ghost { @apply btn border-term-line text-term-dim hover:border-term-dim hover:text-term-fg; }
+  .input { @apply w-full rounded border border-term-line bg-term-bg px-2 py-1.5 text-term-fg placeholder:text-term-dim/60 focus:border-violet-500 focus:outline-none; }
+  .label { @apply mb-1 block text-xs uppercase tracking-wider text-term-dim; }
+  .badge { @apply inline-flex items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] uppercase tracking-wider; }
+  .kv { @apply grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1; }
+  .kv dt { @apply text-term-dim; }
+  .table { @apply w-full text-left; }
+  .table th { @apply border-b border-term-line px-3 py-2 text-xs font-normal uppercase tracking-wider text-term-dim; }
+  .table td { @apply border-b border-term-line/60 px-3 py-2 align-top; }
+  .prompt::before { content: "$ "; @apply text-term-green; }
+  .cursor::after { content: "█"; @apply ml-1 animate-pulse text-term-green; }
+  .log-line { @apply border-l-2 border-transparent py-1 pl-3; }
+}
+
+/* htmx: indicators without inline styles (CSP style-src 'self') */
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }

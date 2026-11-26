@@ -1,0 +1,89 @@
+{# The lab header + every state-dependent action. Re-rendered after each action
+   (and polled while an agent owns the lab) so buttons always match the FSM. #}
+<section class="panel"
+  {% if lab.state.value in ("designing", "validating", "deploying", "destroying") %}hx-get="/ui/partials/labs/{{ lab.id }}/panel" hx-trigger="every 3s" hx-target="#lab-panel"{% endif %}>
+  <div class="flex flex-wrap items-center gap-3 border-b border-term-line px-4 py-3">
+    <h1 class="text-lg text-term-fg">{{ lab.name }}</h1>
+    {% include "partials/lab_badge.html" %}
+    {% if lab.cloud %}<span class="badge border-term-line text-term-dim">{{ lab.cloud }}</span>{% endif %}
+    {% if lab.state in INFRA_STATES %}<span class="text-xs text-orange-300">● puede haber infraestructura viva (coste)</span>{% endif %}
+  </div>
+
+  <div class="space-y-4 p-4">
+    <dl class="kv">
+      <dt>spec</dt><dd>{{ lab.spec_path or "— (draft: sin spec)" }}</dd>
+      <dt>descripción</dt><dd>{{ lab.description or "—" }}</dd>
+      <dt>último cambio</dt><dd>{{ lab.state_changed_at|dt }} <span class="text-term-dim">({{ lab.state_changed_at|ago }})</span></dd>
+    </dl>
+    {% if lab.last_error %}
+    <pre class="rounded border border-red-600/60 bg-red-500/10 p-3 text-red-200">✗ {{ lab.last_error }}</pre>
+    {% endif %}
+
+    {% if manifest and manifest.incomplete %}
+    <div class="rounded border border-amber-500/50 p-3 text-xs text-amber-200">⚠ {{ manifest.path }} existe pero no es un manifest completo de <span class="text-term-fg">forge lab-spec</span>: recompila el lab para ver coste, aislamiento y reconciliación.</div>
+    {% elif manifest %}
+    <div class="rounded border border-term-line p-3">
+      <div class="mb-2 text-xs uppercase tracking-wider text-term-dim">lab-manifest.json (forge lab-spec)</div>
+      <dl class="kv">
+        <dt>provider / región</dt><dd>{{ manifest.provider }} / {{ manifest.region }}</dd>
+        <dt>aislamiento</dt><dd class="{{ 'text-green-300' if manifest.isolation == 'vpn-only' else 'text-red-300' }}">{{ manifest.isolation }}</dd>
+        <dt>coste estimado</dt><dd>${{ manifest.cost.hourly_usd }}/h · ${{ manifest.cost.estimated_daily_usd }}/día · ${{ manifest.cost.estimated_monthly_usd }}/mes
+          <span class="text-term-dim">(alerta ${{ manifest.cost.budget_alert_usd }})</span>
+          {% if manifest.cost.warning %}<div class="text-amber-300">⚠ {{ manifest.cost.warning }}</div>{% endif %}</dd>
+        <dt>auto-shutdown</dt><dd>{{ manifest.auto_shutdown or "—" }}</dd>
+        <dt>máquinas</dt><dd>{% for m in manifest.machines %}{{ m.count }}× {{ m.role }} <span class="text-term-dim">({{ m.os }})</span>{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+        <dt>vulns ({{ manifest.vulns|length }})</dt><dd class="text-amber-200">{{ manifest.vulns|join(", ") or "—" }}</dd>
+        <dt>reconciliación</dt><dd>on_conflict: {{ manifest.reconciliation.on_conflict }} ·
+          {{ manifest.reconciliation.excluded_controls|length }} controles excluidos ·
+          {{ manifest.reconciliation.warnings|length }} avisos
+          {% for x in manifest.reconciliation.excluded_controls %}<div class="text-amber-200">− {{ x.detail }}</div>{% endfor %}
+          {% for w in manifest.reconciliation.warnings %}<div class="text-amber-300">⚠ {{ w.detail }}</div>{% endfor %}</dd>
+      </dl>
+    </div>
+    {% endif %}
+
+    <div class="flex flex-wrap items-start gap-2 border-t border-term-line pt-4">
+      {% if lab.state.value in ("designed", "compiled", "ready", "approved") %}
+      <button class="btn-primary" hx-post="/ui/labs/{{ lab.id }}/compile" hx-target="#compile-output" hx-disabled-elt="this">
+        forge lab-spec + guardrail <span class="htmx-indicator">…</span>
+      </button>
+      {% endif %}
+
+      {% if lab.state.value in ("compiled", "ready", "approved", "destroyed") %}
+      <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/redesign" hx-target="#lab-panel"
+              hx-confirm="¿Volver a designed? Se invalida la compilación y cualquier aprobación.">volver a designed</button>
+      {% endif %}
+
+      {% for agent in agents if lab.state in agent.allowed_states %}
+      {% set infra_agent = agent.name.startswith("deploy-operator") %}
+      <form class="flex w-full flex-col gap-2 rounded border {{ 'border-orange-500/60 bg-orange-500/5' if infra_agent else 'border-term-line' }} p-3"
+            hx-post="/ui/labs/{{ lab.id }}/runs"
+            {% if agent.name == "deploy-operator" %}hx-confirm="Lanzar el despliegue de {{ lab.name }}: el agente usará credenciales cloud. Cada acción sobre infraestructura te pedirá aprobación explícita."{% endif %}
+            {% if agent.name == "deploy-operator-teardown" %}hx-confirm="Lanzar el teardown de {{ lab.name }}: destruirá TODOS sus recursos cloud (te pedirá aprobación antes de ejecutar)."{% endif %}>
+        <input type="hidden" name="agent" value="{{ agent.name }}">
+        <div class="text-xs text-term-dim"><span class="text-term-fg">{{ agent.name }}</span> — {{ agent.description }}</div>
+        <textarea class="input" name="instructions" rows="{{ 4 if agent.name == 'lab-designer' else 2 }}" placeholder="{{ 'qué lab quieres: dominios, máquinas, vulns, objetivo… (se suma a la descripción del lab)' if agent.name == 'lab-designer' else 'notas para el agente (opcional)' }}"></textarea>
+        {% if infra_agent %}<div class="text-xs text-orange-200">⚠ credenciales cloud · cada acción sobre infraestructura pasa por la puerta de aprobación</div>{% endif %}
+        <div><button class="{{ 'btn-danger' if agent.name == 'deploy-operator-teardown' else 'btn-ok' }}" type="submit">▶ lanzar {{ agent.name }}</button></div>
+      </form>
+      {% endfor %}
+
+      {% if lab.state not in INFRA_STATES %}
+      <button class="btn-danger ml-auto" hx-post="/ui/labs/{{ lab.id }}/delete"
+              hx-confirm="¿Borrar el registro del lab {{ lab.name }}? (no toca specs/ ni generated/)">borrar</button>
+      {% endif %}
+    </div>
+
+    {% if lab.state.value == "ready" %}
+    <form class="space-y-3 rounded border border-amber-500/60 bg-amber-500/5 p-4" hx-post="/ui/labs/{{ lab.id }}/approve" hx-target="#lab-panel"
+          hx-confirm="Vas a aprobar el despliegue de {{ lab.name }}: creará infraestructura cloud real con coste. ¿Confirmas que es un lab aislado para pruebas autorizadas (invariante #6)?">
+      <div class="text-xs uppercase tracking-wider text-amber-300">⚠ puerta humana — aprobar despliegue</div>
+      <p class="text-term-dim">El guardrail ha pasado (#1–#4). El #6 (uso autorizado) es juicio humano: revisa spec, coste y reconciliación arriba. La aprobación no se hereda: recompilar o editar el spec la invalida.</p>
+      <label class="flex items-start gap-2"><input type="checkbox" name="authorized" value="yes" required class="mt-1">
+        <span>Confirmo que es un lab aislado, de uso autorizado, y acepto el coste estimado.</span></label>
+      <input class="input" name="reason" placeholder="motivo / ticket (opcional)">
+      <button class="btn-ok" type="submit">aprobar despliegue</button>
+    </form>
+    {% endif %}
+  </div>
+</section>

@@ -1,0 +1,72 @@
+{# One agent event as a console line. `ev` has seq, type, ts, data. Everything is
+   autoescaped text: agent/tool output is untrusted and never rendered as HTML. #}
+{% set d = ev.data %}
+{% set t = ev.type %}
+<div class="log-line {{ {
+    'tool_result': 'border-red-500/70' if d.is_error else 'border-term-line',
+    'approval_requested': 'border-amber-400 bg-amber-500/5',
+    'approval_resolved': 'border-green-500' if d.approved else 'border-red-500',
+    'provider_failover': 'border-orange-500',
+    'budget_exceeded': 'border-orange-500',
+    'run_completed': 'border-green-500',
+    'run_failed': 'border-red-500',
+    'run_cancelled': 'border-zinc-500',
+  }.get(t, 'border-transparent') }}" data-seq="{{ ev.seq }}">
+  <span class="mr-2 select-none text-[11px] text-term-dim/60">{{ ev.ts|dt|truncate(20, true, "")|replace("Z", "") }} #{{ ev.seq }}</span>
+
+  {% if t == "run_started" %}
+    <span class="text-term-purple">▶ run iniciado</span>
+    <span class="text-term-dim">· {{ d.provider }}/{{ d.model }} · tools: {{ (d.tools or [])|join(", ") }}</span>
+    <details class="mt-1"><summary class="cursor-pointer text-xs text-term-dim">tarea</summary><pre class="mt-1 text-term-dim">{{ d.task }}</pre></details>
+
+  {% elif t == "assistant_message" %}
+    <span class="text-term-purple">assistant ›</span>
+    <span class="text-[11px] text-term-dim">{{ d.provider }} · in {{ d.usage.input_tokens }} / out {{ d.usage.output_tokens }}{% if d.stop_reason not in ("end_turn", "tool_use") %} · {{ d.stop_reason }}{% endif %}</span>
+    {% if d.content %}<pre class="mt-1 text-term-fg">{{ d.content }}</pre>{% endif %}
+
+  {% elif t == "tool_call" %}
+    {% set a = d.arguments or {} %}
+    {% if d.name == "bash" %}<span class="prompt text-term-green">{{ a.command }}</span>
+    {% elif d.name == "forge" %}<span class="prompt text-term-green">forge {{ a.subcommand }} {{ (a.args or [])|join(" ") }}</span>
+    {% elif d.name == "read_file" %}<span class="text-cyan-300">read</span> {{ a.path }}
+    {% elif d.name == "write_file" %}<span class="text-amber-300">write</span> {{ a.path }} <span class="text-term-dim">({{ (a.content or "")|length }} chars)</span>
+    {% else %}<span class="text-cyan-300">{{ d.name }}</span><pre class="mt-1 text-xs text-term-dim">{{ a|pretty_json }}</pre>{% endif %}
+
+  {% elif t == "tool_result" %}
+    <span class="{{ 'text-red-300' if d.is_error else 'text-term-dim' }}">{{ "✗" if d.is_error else "↳" }} {{ d.name }}</span>
+    <span class="text-[11px] text-term-dim">{% if d.data and d.data.exit_code is not none %}exit {{ d.data.exit_code }} · {% endif %}{{ d.duration_ms }}ms</span>
+    {% set lines = (d.content or "").count("\n") %}
+    <details {% if lines < 12 or d.is_error %}open{% endif %} class="mt-1">
+      <summary class="cursor-pointer text-xs text-term-dim">{{ lines + 1 }} líneas</summary>
+      <pre class="mt-1 max-h-80 overflow-auto rounded bg-term-panel p-2 text-xs {{ 'text-red-200' if d.is_error else 'text-term-fg/90' }}">{{ d.content }}</pre>
+    </details>
+
+  {% elif t == "approval_requested" %}
+    <span class="text-amber-300">⚠ APROBACIÓN REQUERIDA</span> <span class="text-amber-100">{{ d.reason }}</span>
+    <pre class="mt-1 text-xs text-term-dim">{{ d.name }} {{ (d.arguments or {})|pretty_json }}</pre>
+    <div class="text-xs text-amber-200">→ decide en el panel de aprobación de arriba o en <a href="/approvals">/approvals</a></div>
+
+  {% elif t == "approval_resolved" %}
+    <span class="{{ 'text-green-300' if d.approved else 'text-red-300' }}">{{ "✔ aprobado" if d.approved else "✗ denegado" }}</span>
+    <span class="text-term-dim">por {{ d.by or "—" }}{% if d.comment %} — {{ d.comment }}{% endif %}</span>
+
+  {% elif t == "provider_failover" %}
+    <span class="text-orange-300">⇄ failover</span> {{ d.from_provider }} → {{ d.to_provider or "(ninguno)" }} <span class="text-term-dim">{{ d.error }}</span>
+
+  {% elif t == "budget_exceeded" %}
+    <span class="text-orange-300">■ presupuesto agotado</span> {{ d.reason }}
+
+  {% elif t == "run_completed" %}
+    <span class="text-green-300">✔ run completado</span>
+    {# the final answer is already the last assistant message right above #}
+
+  {% elif t == "run_failed" %}
+    <span class="text-red-300">✗ run fallido</span> {{ d.error }}
+
+  {% elif t == "run_cancelled" %}
+    <span class="text-zinc-300">■ run cancelado</span>
+
+  {% else %}
+    <span class="text-term-dim">{{ t }}</span> <pre class="text-xs text-term-dim">{{ d|pretty_json }}</pre>
+  {% endif %}
+</div>

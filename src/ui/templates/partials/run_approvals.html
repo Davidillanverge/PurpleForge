@@ -1,0 +1,8 @@
+{# Re-fetched only when the pending set changes (the poller gets 204 otherwise),
+   so a half-typed comment is never wiped by a refresh. #}
+<div hx-get="/ui/partials/runs/{{ run.id }}/approvals?v={{ version }}" hx-trigger="every 2s" hx-target="#run-approvals" hx-swap="innerHTML"></div>
+<div class="space-y-3">
+{% for a in approvals if a.status.value == "pending" %}
+  {% include "partials/approval_card.html" %}
+{% endfor %}
+</div>

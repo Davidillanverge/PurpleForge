@@ -1,0 +1,4 @@
+<div class="mx-3 my-2 rounded border px-3 py-2 text-xs {{ 'border-green-600/60 text-green-200' if result.ok else 'border-red-600/60 text-red-200' }}">
+  {% if result.ok %}✓ {{ result.provider }} responde · {{ result.model }} · {{ result.latency_ms }}ms
+  {% else %}✗ {{ result.provider }}: {{ result.error }}{% endif %}
+</div>

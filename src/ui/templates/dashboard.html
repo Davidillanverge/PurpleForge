@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}labs{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-baseline justify-between">
+  <h1 class="prompt text-lg text-term-fg">forge labs</h1>
+  <span class="text-xs text-term-dim">{{ labs|length }} labs</span>
+</div>
+
+<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+  {% set infra = labs|selectattr("state", "in", INFRA_STATES)|list %}
+  {% for label, value, cls, href in [
+      ("labs", labs|length, "text-term-fg", None),
+      ("infra viva", infra|length, "text-orange-300" if infra else "text-term-fg", None),
+      ("aprobaciones", pending_count, "text-amber-300" if pending_count else "text-term-fg", "/approvals"),
+      ("runs activos", active_runs, "text-cyan-300" if active_runs else "text-term-fg", None)] %}
+  <div class="panel px-4 py-3">
+    <div class="text-xs uppercase tracking-wider text-term-dim">{{ label }}</div>
+    <div class="mt-1 text-2xl {{ cls }}">{% if href %}<a href="{{ href }}" class="{{ cls }}">{{ value }}</a>{% else %}{{ value }}{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid gap-6 lg:grid-cols-[1fr_22rem]">
+  <section class="panel overflow-x-auto">
+    <div class="panel-title">labs</div>
+    <table class="table">
+      <thead><tr><th>lab</th><th>estado</th><th>cloud</th><th>spec</th><th>actualizado</th></tr></thead>
+      <tbody id="lab-rows" hx-get="/ui/partials/labs" hx-trigger="every 5s" hx-swap="innerHTML">
+        {% include "partials/lab_rows.html" %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel h-fit">
+    <div class="panel-title">nuevo lab</div>
+    <form class="space-y-3 p-4" hx-post="/ui/labs">
+      <div>
+        <label class="label" for="name">nombre</label>
+        <input class="input" id="name" name="name" required pattern="[a-z][a-z0-9\-]{1,62}" placeholder="acme-lab">
+      </div>
+      <div>
+        <label class="label" for="spec_path">spec (opcional)</label>
+        <input class="input" id="spec_path" name="spec_path" list="specs" placeholder="specs/<nombre>.yml">
+        <datalist id="specs">{% for s in specs %}<option value="{{ s }}">{% endfor %}</datalist>
+        <p class="mt-1 text-[11px] text-term-dim">vacío ⇒ usa specs/&lt;nombre&gt;.yml si existe; si no, queda en draft</p>
+      </div>
+      <div>
+        <label class="label" for="description">descripción</label>
+        <textarea class="input" id="description" name="description" rows="2"></textarea>
+      </div>
+      <button class="btn-primary" type="submit">crear lab <span class="htmx-indicator">…</span></button>
+    </form>
+  </section>
+  {% for agent in lab_free_agents %}
+  <section class="panel h-fit lg:col-start-2">
+    <div class="panel-title">{{ agent.name }}</div>
+    <form class="space-y-3 p-4" hx-post="/ui/runs">
+      <input type="hidden" name="agent" value="{{ agent.name }}">
+      <p class="text-xs text-term-dim">{{ agent.description }}</p>
+      <textarea class="input" name="instructions" rows="3" required placeholder="p.ej. añade una vuln de RBCD con su mitigate y neutralized_by"></textarea>
+      <button class="btn-primary" type="submit">▶ lanzar</button>
+    </form>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

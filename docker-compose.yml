@@ -1,0 +1,82 @@
+# PurpleForge agent service: app + Postgres + Redis.
+#
+#   cp .env.example .env        # fill POSTGRES_PASSWORD, PF_SECRET_KEY, PF_API_TOKENS
+#   docker compose up -d --build
+#   open http://127.0.0.1:8000  # bound to localhost only — put a TLS proxy in front to expose it
+#
+# Only the app port is published (and only on 127.0.0.1). Postgres and Redis live on an
+# internal network with no route to the host. Migrations run on app startup.
+
+name: purpleforge
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *hardening
+    build:
+      context: .
+      args:
+        PF_UID: ${PF_UID:-10001}
+        PF_GID: ${PF_GID:-10001}
+    image: purpleforge:local
+    env_file:
+      - path: .env
+        required: false   # missing required values still fail fast (the :? interpolations)
+    environment:
+      PF_DATABASE_URL: postgresql+asyncpg://purpleforge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/purpleforge
+      PF_REDIS_URL: redis://redis:6379/0
+      PF_AUTO_MIGRATE: "true"
+      UVICORN_WORKERS: ${PF_WORKERS:-2}
+      # Ollama running on the host (dev): reach it from the container.
+      PF_LLM_OLLAMA_BASE_URL: ${PF_LLM_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:${PF_PORT:-8000}:8000"]
+    volumes:
+      # specs/ is the hand-edited source of truth; generated/ is harness output (CLAUDE.md).
+      - ./specs:/app/specs
+      - ./generated:/app/generated
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [frontend, backend]
+
+  db:
+    <<: *hardening
+    image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    environment:
+      POSTGRES_DB: purpleforge
+      POSTGRES_USER: purpleforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U purpleforge -d purpleforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  redis:
+    <<: *hardening
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    # Pure pub/sub + heartbeats: nothing durable lives here (the DB is the log).
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+networks:
+  frontend: {}
+  backend:
+    internal: true   # db + redis: no route out, not reachable from the host
+
+volumes:
+  pgdata: {}

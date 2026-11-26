@@ -1,0 +1,7 @@
+<div class="panel mb-2 {{ 'border-red-600/70' if level == 'error' else 'border-green-600/70' }} px-4 py-3 shadow-lg shadow-black/50"
+     role="alert">
+  <div class="text-xs uppercase tracking-wider {{ 'text-red-300' if level == 'error' else 'text-green-300' }}">
+    {{ "✗ error" if level == "error" else "✓ ok" }}{% if code %} · {{ code }}{% endif %}
+  </div>
+  <pre class="mt-1 text-term-fg">{{ message }}</pre>
+</div>

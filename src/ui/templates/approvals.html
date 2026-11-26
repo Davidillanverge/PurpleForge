@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}aprobaciones{% endblock %}
+{% block content %}
+<h1 class="prompt mb-2 text-lg">approvals --pending</h1>
+<p class="mb-6 max-w-3xl text-term-dim">Llamadas de agentes que actúan sobre infraestructura viva y esperan una decisión humana. Sin decisión, caducan (= denegadas) a los {{ timeout_minutes }} min. Una decisión es definitiva.</p>
+
+<section id="pending-approvals" class="mb-8">
+  {% include "partials/pending_approvals.html" %}
+</section>
+
+<h2 class="mb-3 text-xs uppercase tracking-widest text-term-dim">recientes</h2>
+<div class="space-y-3">
+  {% for a in recent %}{% include "partials/approval_card.html" %}{% else %}<p class="text-term-dim">—</p>{% endfor %}
+</div>
+{% endblock %}

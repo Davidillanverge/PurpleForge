@@ -1,0 +1,18 @@
+<section class="panel">
+  <div class="flex flex-wrap items-center gap-3 border-b border-term-line px-4 py-3">
+    <h1 class="text-lg text-term-fg">{{ run.agent }}</h1>
+    <span class="badge {{ run.status|state_class }}">{{ run.status.value }}</span>
+    {% if active %}
+    <button class="btn-danger ml-auto" hx-post="/ui/runs/{{ run.id }}/cancel" hx-target="#run-header"
+            hx-confirm="¿Cancelar el run? El agente se detiene en el acto.">cancelar</button>
+    {% endif %}
+  </div>
+  <dl class="kv p-4">
+    <dt>tarea</dt><dd>{{ run.task }}</dd>
+    <dt>proveedor</dt><dd>{{ run.provider or "—" }} <span class="text-term-dim">{{ run.model or "" }}</span></dd>
+    <dt>turnos / tokens</dt><dd>{{ run.turns }} · in {{ "{:,}".format(run.input_tokens) }} · out {{ "{:,}".format(run.output_tokens) }}</dd>
+    <dt>lanzado por</dt><dd>{{ run.created_by or "—" }} · {{ run.created_at|dt }}</dd>
+    <dt>duración</dt><dd>{{ run.started_at|duration(run.finished_at) }}</dd>
+    {% if run.error %}<dt>error</dt><dd class="text-red-300">{{ run.error }}</dd>{% endif %}
+  </dl>
+</section>

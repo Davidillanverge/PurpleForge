@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}proveedores{% endblock %}
+{% block content %}
+<h1 class="prompt mb-2 text-lg">providers --list</h1>
+<p class="mb-6 max-w-3xl text-term-dim">Proveedores LLM del tenant, probados en orden de prioridad (menor primero) con failover automático.
+  {% if not providers %}Sin configuración propia: se usan los valores por defecto del entorno (<span class="text-term-fg">PF_LLM_PROVIDERS={{ env_providers|join(",") }}</span>).{% endif %}</p>
+
+{% if not cipher_ready %}
+<div class="mb-6 rounded border border-amber-500/60 bg-amber-500/5 px-4 py-3 text-amber-200">
+  ⚠ PF_SECRET_KEY no está configurada en el servidor: no se pueden guardar API keys (se cifran en reposo con ella).
+</div>
+{% endif %}
+
+<div class="grid gap-6 lg:grid-cols-[1fr_24rem]">
+  <section class="panel overflow-x-auto">
+    <div class="panel-title">configurados</div>
+    <table class="table">
+      <thead><tr><th>prio</th><th>nombre</th><th>tipo</th><th>modelo</th><th>endpoint</th><th>key</th><th></th></tr></thead>
+      <tbody id="provider-rows">
+        {% for p in providers %}
+        <tr class="{{ '' if p.enabled else 'opacity-50' }}">
+          <td>{{ p.priority }}</td>
+          <td class="text-term-fg">{{ p.name }}{% if not p.enabled %} <span class="text-xs text-term-dim">(off)</span>{% endif %}</td>
+          <td>{{ p.kind.value }}</td>
+          <td>{{ p.model }}</td>
+          <td class="text-term-dim">{{ p.base_url or "default" }}</td>
+          <td>{{ "✓ cifrada" if p.has_api_key else "—" }}</td>
+          <td class="whitespace-nowrap text-right">
+            <button class="btn-ghost" hx-post="/ui/providers/{{ p.name }}/test" hx-target="#test-{{ p.name }}">test <span class="htmx-indicator">…</span></button>
+            <button class="btn-danger" hx-post="/ui/providers/{{ p.name }}/delete" hx-confirm="¿Borrar el proveedor {{ p.name }}?">borrar</button>
+          </td>
+        </tr>
+        <tr><td colspan="7" id="test-{{ p.name }}" class="border-0 p-0"></td></tr>
+        {% else %}
+        <tr><td colspan="7" class="py-6 text-center text-term-dim">ninguno — usando PF_LLM_* del entorno</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel h-fit">
+    <div class="panel-title">añadir / actualizar</div>
+    <form class="space-y-3 p-4" hx-post="/ui/providers">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label" for="pname">nombre</label><input class="input" id="pname" name="name" required pattern="[a-z][a-z0-9_\-]{0,63}" placeholder="claude"></div>
+        <div><label class="label" for="kind">tipo</label>
+          <select class="input" id="kind" name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
+      </div>
+      <div><label class="label" for="model">modelo</label><input class="input" id="model" name="model" required placeholder="sonnet · claude-sonnet-5-5 · qwen3:8b"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label" for="priority">prioridad</label><input class="input" id="priority" name="priority" type="number" value="100"></div>
+        <div><label class="label" for="timeout">timeout (s)</label><input class="input" id="timeout" name="timeout_seconds" type="number" step="any" min="1" placeholder="default"></div>
+      </div>
+      <div><label class="label" for="base_url">base url</label><input class="input" id="base_url" name="base_url" placeholder="http://localhost:11434 (ollama)"></div>
+      <div><label class="label" for="api_key">api key</label>
+        <input class="input" id="api_key" name="api_key" type="password" autocomplete="off" placeholder="vacío = conservar la guardada" {% if not cipher_ready %}disabled{% endif %}>
+        <label class="mt-1 flex items-center gap-2 text-xs text-term-dim"><input type="checkbox" name="clear_api_key" value="yes"> borrar la key guardada</label></div>
+      <label class="flex items-center gap-2 text-xs"><input type="checkbox" name="enabled" value="yes" checked> habilitado</label>
+      <button class="btn-primary" type="submit">guardar</button>
+      <p class="text-[11px] text-term-dim">La key nunca se vuelve a mostrar: se guarda cifrada y solo la usa el servidor.</p>
+    </form>
+  </section>
+</div>
+{% endblock %}

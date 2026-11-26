@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}login{% endblock %}
+{% block content %}
+<div class="mx-auto mt-24 max-w-md">
+  <div class="panel">
+    <div class="panel-title">purpleforge // authenticate</div>
+    <form method="post" action="/login" class="space-y-4 p-5">
+      <pre class="text-term-dim">PurpleForge agent service
+authorized lab operators only.</pre>
+      {% if error %}<p class="rounded border border-red-600/60 bg-red-500/10 px-3 py-2 text-red-200">{{ error }}</p>{% endif %}
+      <div>
+        <label class="label" for="token">api token</label>
+        <input class="input" id="token" name="token" type="password" autocomplete="current-password" required autofocus>
+      </div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button class="btn-primary w-full justify-center" type="submit">login</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

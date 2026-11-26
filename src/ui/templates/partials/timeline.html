@@ -1,0 +1,12 @@
+{% for t in transitions|reverse %}
+<li class="relative border-l border-term-line pb-4 pl-4 last:pb-0">
+  <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full border {{ t.to_state|state_class }} bg-term-bg"></span>
+  <div class="flex flex-wrap items-center gap-2">
+    {% if t.from_state %}<span class="text-term-dim">{{ t.from_state.value }} →</span>{% endif %}
+    <span class="badge {{ t.to_state|state_class }}">{{ t.to_state.value }}</span>
+  </div>
+  <div class="mt-1 text-xs text-term-dim">{{ t.at|dt }} · <span class="{{ 'text-violet-300' if t.actor.startswith('user:') else 'text-cyan-300' if t.actor.startswith('agent:') else '' }}">{{ t.actor }}</span></div>
+  {% if t.reason %}<div class="text-xs">{{ t.reason }}</div>{% endif %}
+  {% if t.run_id %}<div class="text-xs"><a href="/runs/{{ t.run_id }}">run {{ t.run_id|string|truncate(8, true, "") }}</a></div>{% endif %}
+</li>
+{% endfor %}
