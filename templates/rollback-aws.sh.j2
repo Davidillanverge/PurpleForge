@@ -31,8 +31,10 @@ die()  { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 command -v aws >/dev/null 2>&1 || die "missing prerequisite: aws"
 aws sts get-caller-identity >/dev/null 2>&1 || die "AWS credentials not usable (configure env / AWS_PROFILE / 'aws sso login')"
 
-# All instances in the lab, with id | Name | AZ | root device | current root volume id.
+# All live instances in the lab (terminated ones from a previous deploy still match
+# tag:lab for ~1h), with id | Name | AZ | root device | current root volume id.
 rows="$(aws ec2 describe-instances --filters "Name=tag:lab,Values=$LAB" \
+        "Name=instance-state-name,Values=pending,running,stopping,stopped" \
         --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`]|[0].Value,Placement.AvailabilityZone,RootDeviceName,BlockDeviceMappings[?DeviceName==RootDeviceName]|[0].Ebs.VolumeId]' \
         --output text 2>/dev/null || true)"
 [ -n "$rows" ] || die "no instances tagged lab=$LAB — is the lab deployed?"

@@ -343,7 +343,10 @@ snapshot_clean() {
   [ "${PF_SNAPSHOT:-1}" = "1" ] || { log "7. Clean-state snapshot (skipped: PF_SNAPSHOT=0)"; return 0; }
   log "7. Clean-state snapshot (post-hardening+vulns, pre-attack)"
   local rows
+  # Live instances only: a terminated host from a previous deploy of the same lab
+  # still answers tag:lab for ~1h and would race a duplicate "<lab>-<vm>-clean" name.
   rows="$(aws ec2 describe-instances --filters "Name=tag:lab,Values=$LAB" \
+          "Name=instance-state-name,Values=pending,running,stopping,stopped" \
           --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`]|[0].Value]' --output text 2>/dev/null || true)"
   [ -z "$rows" ] && { warn "no instances found — skipping snapshot"; return 0; }
   # one create-image per instance, all in flight at once, then a single wait

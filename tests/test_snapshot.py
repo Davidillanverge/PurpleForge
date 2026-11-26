@@ -66,3 +66,15 @@ def test_reset_missing_reset_sh_returns_2(tmp_path):
     empty_out.mkdir()
     rc = forge.cmd_reset(SimpleNamespace(spec=str(spec_file), out_dir=str(empty_out)))
     assert rc == 2
+
+
+def test_aws_snapshot_and_rollback_skip_terminated_instances(tmp_path):
+    """A terminated host from a previous deploy of the same lab still matches
+    tag:lab for ~1h: snapshot_clean raced it into InvalidAMIName.Duplicate
+    (test2-lab, 2026-11-26) and rollback would try to stop it."""
+    _, out = _generate(tmp_path, provider="aws", vulns=["kerberoasting"])
+    live = '"Name=instance-state-name,Values=pending,running,stopping,stopped"'
+    deploy = (out / "deploy.sh").read_text(encoding="utf-8")
+    snapshot = deploy[deploy.index("snapshot_clean() {") :]
+    assert live in snapshot[: snapshot.index("create-image")]
+    assert live in (out / "rollback.sh").read_text(encoding="utf-8")
