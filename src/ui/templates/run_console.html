@@ -13,6 +13,8 @@
   {% if active %}{% include "partials/run_approvals.html" %}{% endif %}
 </div>
 
+{% include "partials/run_steps.html" %}
+
 <section class="panel">
   <div class="panel-title flex items-center justify-between">
     <span>agent console — {{ run.agent }}</span>

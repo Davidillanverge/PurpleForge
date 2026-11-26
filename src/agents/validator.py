@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from agents.background import make_forge_wait_tool
 from agents.base import BaseAgent
 from agents.budget import BudgetLimits
 from agents.engine import AgentResult
@@ -66,6 +67,7 @@ class ValidatorAgent(BaseAgent):
             FileWriteTool(self.repo_root, roots=[lab_dir]),
             GrepTool(self.repo_root),
             GlobTool(self.repo_root),
+            make_forge_wait_tool(),
         ]
 
     def task(self, spec: str | Path, instructions: str = "") -> str:
@@ -76,7 +78,8 @@ class ValidatorAgent(BaseAgent):
             f"Validate the deployed lab `{lab}` (spec `{rel_spec}`, artifacts in `{rel_dir}/`).\n"
             f"Follow your Part 1 (validate every injected vuln: APPLIED + EXPLOITABLE, starting with "
             f"`forge validate {rel_spec} --run`) and Part 2 (write `{rel_dir}/lab-report.md`).\n"
-            "The deploy has finished and the clean snapshot was taken, so attacks are allowed now."
+            "The deploy has finished and the clean snapshot was taken, so attacks are allowed now.\n"
+            "Long forge operations run as a background job: the `forge` call returns at once with a job id; follow it with `forge_wait` (call it again while it reports 'still running') until it finishes, then use its exit code and output. Never re-run the command while its job is running."
         )
         if instructions:
             task += f"\n\nOperator notes: {instructions}"

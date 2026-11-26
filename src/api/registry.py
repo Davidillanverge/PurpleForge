@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +19,7 @@ from agents.budget import BudgetLimits
 from agents.catalog_author import CatalogAuthorAgent
 from agents.definitions import AgentDefinition
 from agents.deploy_operator import DeployOperatorAgent, DeployPreconditionError, Mode
-from agents.engine import AgentResult, Approver
+from agents.engine import AgentResult, Approver, RunStatus
 from agents.events import EventCallback
 from agents.lab_designer import LabDesignerAgent
 from agents.validator import ValidatorAgent, ValidatorPreconditionError
@@ -27,6 +28,7 @@ from core.outcomes import (  # shared with the MCP mode
     Outcome,
     deploy_outcome,
     teardown_outcome,
+    validate_outcome,
 )
 from db.models import AgentEvent, Lab
 from db.states import LabState
@@ -121,6 +123,17 @@ def _prepare_validator(ctx: AgentContext) -> PreparedRun:
     )
 
 
+async def _validate_outcome(ctx: OutcomeContext) -> Outcome:
+    """VALIDATED only if the validation report written during this run confirms every vuln
+    (whatever the agent claims); see core.outcomes.validate_outcome."""
+    if ctx.result is None or ctx.result.status is not RunStatus.COMPLETED:
+        why = ctx.result.error if ctx.result and ctx.result.error else "the validation run did not complete"
+        return Outcome(LabState.DEPLOYED, f"validation did not complete — {why}", error=why)
+    starts = [e.ts for e in ctx.events if e.type == "run_started" and getattr(e, "ts", None)]
+    since = starts[0].replace(tzinfo=starts[0].tzinfo or timezone.utc).timestamp() if starts else None
+    return validate_outcome(ctx.events, ctx.repo_root / "generated" / ctx.lab.name, since)
+
+
 VALIDATOR = AgentSpec(
     name="purple-validator",
     description="Validate every injected vuln (applied + exploitable) and write lab-report.md",
@@ -130,6 +143,7 @@ VALIDATOR = AgentSpec(
     success_state=LabState.VALIDATED,
     # a failed validation run says nothing bad about the lab itself
     failure_state=LabState.DEPLOYED,
+    outcome=_validate_outcome,
 )
 
 

@@ -22,6 +22,7 @@ import os
 import re
 import signal
 import sys
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -74,7 +75,8 @@ class ForgeAction:
     orphan_state: LabState
     #: the forge calls, in order; the run stops at the first one that fails
     commands: Callable[[str], list[tuple[str, list[str]]]]
-    outcome: Callable[[Sequence[EventLike], LabState | None], Outcome]
+    #: (events, state before the run, generated/<lab>/, run start as epoch seconds) → next lab state
+    outcome: Callable[[Sequence[EventLike], LabState | None, Path, float], Outcome]
     #: touches live infrastructure: record the human click as the approval
     infra: bool = True
     #: generated scripts the action needs (generated/<lab>/...)
@@ -93,7 +95,7 @@ ACTIONS: dict[str, ForgeAction] = {
             running_state=A.VALIDATING,
             orphan_state=A.DEPLOYED,
             commands=lambda spec: [("validate", [spec, "--run"])],
-            outcome=lambda ev, _prev: validate_outcome(ev),
+            outcome=lambda ev, _prev, lab_dir, since: validate_outcome(ev, lab_dir, since),
             infra=False,  # read-only probes over the WireGuard tunnel (isolated lab)
             needs=("lab-manifest.json",),
             timeout=3600.0,
@@ -106,7 +108,7 @@ ACTIONS: dict[str, ForgeAction] = {
             orphan_state=A.FAILED,  # infra state unknown → treat as possibly billable
             # fresh artifacts first (no infra exists yet in APPROVED), then deploy.sh behind the guardrail
             commands=lambda spec: [("generate", [spec]), ("deploy", [spec])],
-            outcome=lambda ev, _prev: deploy_outcome(ev),
+            outcome=lambda ev, _prev, _dir, _since: deploy_outcome(ev),
         ),
         ForgeAction(
             name="stop",
@@ -115,7 +117,7 @@ ACTIONS: dict[str, ForgeAction] = {
             running_state=A.STOPPING,
             orphan_state=A.DEPLOYED,
             commands=lambda spec: [("stop", [spec])],
-            outcome=lambda ev, _prev: stop_outcome(ev),
+            outcome=lambda ev, _prev, _dir, _since: stop_outcome(ev),
             needs=("stop.sh",),
             timeout=3600.0,
         ),
@@ -126,7 +128,7 @@ ACTIONS: dict[str, ForgeAction] = {
             running_state=A.STARTING,
             orphan_state=A.STOPPED,
             commands=lambda spec: [("start", [spec])],
-            outcome=lambda ev, _prev: start_outcome(ev),
+            outcome=lambda ev, _prev, _dir, _since: start_outcome(ev),
             needs=("start.sh",),
             timeout=3600.0,
         ),
@@ -138,7 +140,7 @@ ACTIONS: dict[str, ForgeAction] = {
             orphan_state=A.FAILED,
             # --force: teardown.sh's type-the-name prompt needs a TTY; the UI asks for the name instead
             commands=lambda spec: [("teardown", [spec, "--force"])],
-            outcome=lambda ev, prev: teardown_outcome(ev, prev),
+            outcome=lambda ev, prev, _dir, _since: teardown_outcome(ev, prev),
         ),
     )
 }
@@ -224,7 +226,7 @@ class ForgeJobs:
             limits={},
         )
         task = asyncio.create_task(
-            self._execute(principal, rec, lab.id, action, spec_path, previous), name=f"pf-forge-{run.id}"
+            self._execute(principal, rec, lab.id, action, spec_path, previous, lab_dir), name=f"pf-forge-{run.id}"
         )
         run_id: uuid.UUID = run.id
         self._tasks[run_id] = task
@@ -252,8 +254,10 @@ class ForgeJobs:
         action: ForgeAction,
         spec_path: str,
         previous: LabState,
+        lab_dir: Path,
     ) -> Outcome:
         error: str | None = None
+        since = time.time()
         try:
             for sub, args in action.commands(spec_path):
                 call_id = f"forge-{uuid.uuid4().hex[:12]}"
@@ -273,14 +277,14 @@ class ForgeJobs:
                 if code != 0:
                     error = f"forge {sub} exited {code}"
                     break
-            outcome = action.outcome(await rec.events(), previous)
+            outcome = action.outcome(await rec.events(), previous, lab_dir, since)
         except asyncio.CancelledError:
             # API shutting down: the process group was killed; the next start's orphan recovery decides the lab
             raise
         except Exception as exc:  # noqa: BLE001 - never leave the lab stuck in its running state
             log.exception("forge %s run %s crashed", action.name, rec.run_id)
             error = f"{type(exc).__name__}: {exc}"
-            outcome = action.outcome(await rec.events(), previous)
+            outcome = action.outcome(await rec.events(), previous, lab_dir, since)
             if outcome.error is None:
                 outcome = Outcome(outcome.target, outcome.reason, error=error)
         return await self._finish(principal, rec, lab_id, action, outcome, error)
@@ -389,11 +393,14 @@ class ForgeJobs:
                     run_id=rec.run_id,
                     error=outcome.error,
                 )
-        failed = error is not None or outcome.error is not None
+        # the run failed if forge did; forge succeeding with an unwelcome result (e.g. a
+        # validation that couldn't confirm every vuln) is a completed run — the lab state
+        # and its last_error carry that result
+        failed = error is not None
         await rec.emit(
             EventType.RUN_FAILED if failed else EventType.RUN_COMPLETED,
             output=outcome.reason,
-            error=error or outcome.error,
+            error=error,
         )
         return outcome
 

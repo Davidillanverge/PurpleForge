@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from agents import background
 from api.broker import Broker, EventBroker, RedisEventBroker
 from api.forge_jobs import ForgeActionError, ForgeJobs
 from api.registry import AgentPreconditionError, AgentSpec, default_registry
@@ -126,6 +127,8 @@ def create_app(
         if settings.auto_migrate:
             await upgrade_head(engine)  # advisory-locked on Postgres: safe with N workers
         sessionmaker = create_sessionmaker(engine)
+        # long forge operations of agent runs become detached jobs writing to this DB
+        background.configure(engine.url.render_as_string(hide_password=False))
         secret = db_settings.secret_key.get_secret_value() if db_settings.secret_key else None
         cipher = SecretCipher(secret) if secret else None
         broker = await build_broker(settings)

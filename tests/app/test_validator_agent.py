@@ -41,7 +41,7 @@ def test_system_prompt_is_md_body_plus_runtime_preamble():
     eng = agent.build_engine(agent.build_tools(lab_dir))
     assert eng.system_prompt.endswith(agent.definition.body + "\n")
     assert "Bash → `bash`" in eng.system_prompt and "Not available here: Artifact." in eng.system_prompt
-    assert sorted(eng.tools) == ["bash", "forge", "glob", "grep", "read_file", "write_file"]
+    assert sorted(eng.tools) == ["bash", "forge", "forge_wait", "glob", "grep", "read_file", "write_file"]
     assert eng.tools["forge"].allowed == {"validate", "ad-inventory", "guardrail"}
 
 

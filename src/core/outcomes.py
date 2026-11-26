@@ -8,8 +8,10 @@ claims. Both modes persist the same event shapes (``tool_call``,
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from db.states import LabState
@@ -72,12 +74,90 @@ def teardown_outcome(events: Sequence[EventLike], previous_state: LabState | Non
     return Outcome(LabState.FAILED, "teardown never ran — the lab still needs one", error="teardown not executed")
 
 
-def validate_outcome(events: Sequence[EventLike]) -> Outcome:
-    """`forge validate --run` exit 0 → VALIDATED. A failed validation says nothing bad
-    about the lab itself → back to DEPLOYED (never FAILED: that means 'maybe billable leftovers')."""
-    if forge_call_succeeded(events, "validate"):
-        return Outcome(LabState.VALIDATED, "forge validate --run exited 0")
-    return Outcome(LabState.DEPLOYED, "validation did not complete — the lab is unchanged")
+@dataclass
+class ValidationSummary:
+    """What generated/<lab>/validation-report.json (forge validate --run / --results) says."""
+
+    total: int
+    applied: int
+    exploitable: int
+    #: vulns not confirmed, by verdict: {"NO": [...], "PARTIAL": [...], "REQUIRES-HUMAN": [...], ...}
+    pending: dict[str, list[str]]
+    written_at: float
+
+    @property
+    def all_ok(self) -> bool:
+        return self.total > 0 and self.applied == self.total and self.exploitable == self.total
+
+    def describe(self) -> str:
+        parts = [f"aplicadas {self.applied}/{self.total}", f"explotables {self.exploitable}/{self.total}"]
+        for verdict, ids in self.pending.items():
+            parts.append(f"{verdict}: {', '.join(ids)}")
+        return " · ".join(parts)
+
+
+def load_validation_summary(lab_dir: Path) -> ValidationSummary | None:
+    path = lab_dir / "validation-report.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mtime = path.stat().st_mtime
+    except (OSError, ValueError):
+        return None
+    vulns = [v for v in data.get("vulns") or [] if isinstance(v, dict)]
+    pending: dict[str, list[str]] = {}
+    for v in vulns:
+        verdicts = {str(v.get("applied")), str(v.get("exploitable"))} - {"YES"}
+        # the worst verdict names the bucket: NO > PARTIAL > REQUIRES-HUMAN/PENDING
+        for verdict in ("NO", "PARTIAL", "REQUIRES-HUMAN", "PENDING"):
+            if verdict in verdicts:
+                pending.setdefault(verdict, []).append(str(v.get("id")))
+                break
+        else:
+            if verdicts:
+                pending.setdefault(sorted(verdicts)[0], []).append(str(v.get("id")))
+    return ValidationSummary(
+        total=len(vulns),
+        applied=sum(1 for v in vulns if v.get("applied") == "YES"),
+        exploitable=sum(1 for v in vulns if v.get("exploitable") == "YES"),
+        pending=pending,
+        written_at=mtime,
+    )
+
+
+def planned_vuln_count(lab_dir: Path) -> int | None:
+    try:
+        manifest = json.loads((lab_dir / "lab-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return len(manifest.get("vulnerabilities_planned") or [])
+
+
+def validate_outcome(events: Sequence[EventLike], lab_dir: Path | None = None, since: float | None = None) -> Outcome:
+    """VALIDATED means every injected vuln was CONFIRMED applied + exploitable — not merely
+    that a validation ran. Decided from the validation-report.json written during this run
+    (by `forge validate --run`, or `--results` after manual checks). Anything short of that
+    leaves the lab DEPLOYED (never FAILED: that means 'maybe billable leftovers'), with the
+    summary of what's missing. Without ``lab_dir`` only the exit code is known (legacy)."""
+    ran = forge_call_succeeded(events, "validate")
+    if lab_dir is None:
+        if ran:
+            return Outcome(LabState.VALIDATED, "forge validate --run exited 0")
+        return Outcome(LabState.DEPLOYED, "validation did not complete — the lab is unchanged")
+    if planned_vuln_count(lab_dir) == 0:
+        return Outcome(LabState.VALIDATED, "no injected vulnerabilities — nothing to validate")
+    summary = load_validation_summary(lab_dir)
+    fresh = summary is not None and (since is None or summary.written_at >= since - 1)
+    if not fresh:
+        why = "forge validate did not complete" if not ran else "no validation report was written"
+        return Outcome(LabState.DEPLOYED, f"{why} — the lab is unchanged", error=why)
+    assert summary is not None
+    if summary.all_ok:
+        return Outcome(LabState.VALIDATED, f"every vuln confirmed: {summary.describe()}")
+    return Outcome(
+        LabState.DEPLOYED,
+        f"validation incomplete — {summary.describe()}",
+        error=f"validación incompleta: {summary.describe()}",
+    )
 
 
 def stop_outcome(events: Sequence[EventLike]) -> Outcome:

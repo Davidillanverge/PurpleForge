@@ -179,7 +179,7 @@ async def test_agent_tools_server_gates_infra_actions_on_a_human(tmp_path, repo_
     import asyncio
 
     async with Client(server) as c:
-        assert {t.name for t in await c.list_tools()} == {"forge", "bash", "read_file", "grep", "glob"}
+        assert {t.name for t in await c.list_tools()} == {"forge", "forge_wait", "bash", "read_file", "grep", "glob"}
         call = asyncio.create_task(c.call_tool("bash", {"command": "echo approved-run"}, raise_on_error=False))
         for _ in range(200):  # not read-only → waits for a human
             async with sessionmaker() as s:

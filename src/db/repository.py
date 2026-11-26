@@ -8,6 +8,7 @@ DbEventSink, which is a standalone engine callback with its own sessions.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agents.engine import AgentResult, ApprovalRequest
@@ -182,6 +184,14 @@ async def create_run(
     return run
 
 
+async def get_run_any_tenant(session: AsyncSession, run_id: uuid.UUID | str) -> AgentRun:
+    """SYSTEM use only (a background job / tool that knows its run id but not its tenant)."""
+    run = (await session.execute(select(AgentRun).where(AgentRun.id == _uuid(run_id)))).scalar_one_or_none()
+    if run is None:
+        raise NotFound(f"run {run_id} not found")
+    return run
+
+
 async def get_run(session: AsyncSession, tenant_id: str, run_id: uuid.UUID | str) -> AgentRun:
     stmt = select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == _uuid(run_id))
     run = (await session.execute(stmt)).scalar_one_or_none()
@@ -288,8 +298,20 @@ class DbEventSink:
         self.tenant_id = tenant_id
 
     async def __call__(self, event: EngineEvent) -> None:
-        async with self.sessionmaker() as session, session.begin():
-            await record_event(session, self.tenant_id, event)
+        """The engine numbers its own events, but another writer may append to the same
+        run meanwhile (a background forge job streaming its output, agents.background):
+        on a seq collision, take the next free seq — the event keeps its place in time."""
+        for attempt in range(20):
+            try:
+                async with self.sessionmaker() as session, session.begin():
+                    if attempt:
+                        event.seq = max(event.seq, await max_event_seq(session, self.tenant_id, event.run_id) + 1)
+                    await record_event(session, self.tenant_id, event)
+                return
+            except IntegrityError:
+                if attempt == 19:
+                    raise
+                await asyncio.sleep(0.01 * (attempt + 1))
 
 
 # --------------------------------------------------------------------------- approvals

@@ -26,6 +26,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, ValidationError
 
+from agents.background import CURRENT_CALL
 from agents.budget import Budget, BudgetLimits
 from agents.events import EventCallback, EventEmitter, EventType
 from agents.tools import Tool, ToolResult, truncate
@@ -258,12 +259,15 @@ class AgentEngine:
                     data={"approved": False},
                 )
 
+        token = CURRENT_CALL.set((run_id, call.id))  # lets a tool start a background job for this call
         try:
             return await tool.run(args)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - surfaced to the model, not fatal
             return ToolResult(content=f"{call.name} failed: {type(exc).__name__}: {exc}", is_error=True)
+        finally:
+            CURRENT_CALL.reset(token)
 
     async def _request_approval(
         self, call: ToolCall, reason: str, emitter: EventEmitter, run_id: str

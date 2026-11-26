@@ -1,0 +1,63 @@
+{# Steps of the run's forge operations (deploy.sh phases, Ansible play/task), from its streamed output.
+   Polled while the run is active; dropped (empty 200) once it's over and nothing changed. #}
+<div id="run-steps" {% if active %}hx-get="/ui/partials/runs/{{ run.id }}/steps" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+{% for st in steps %}
+<section class="panel mb-4 {{ 'border-green-600/60' if st.ok else ('border-red-600/60' if st.finished else 'border-term-line') }}">
+  <div class="panel-title flex flex-wrap items-center gap-2">
+    <span>pasos — <span class="normal-case tracking-normal text-term-fg">{{ st.command }}</span></span>
+    <span class="ml-auto normal-case tracking-normal">
+      {% if not st.finished %}<span class="text-cyan-300 animate-pulse">● en curso</span>
+      {% elif st.ok %}<span class="text-green-300">✔ exit 0</span>
+      {% else %}<span class="text-red-300">✗ exit {{ st.exit_code if st.exit_code is not none else "—" }}</span>{% endif %}
+    </span>
+  </div>
+  <div class="space-y-3 p-4 text-xs">
+    {% if st.phases %}
+    <ol>
+      {% for p in st.phases %}
+      <li class="mt-1 flex items-baseline gap-2">
+        {% if p.status == "done" %}<span class="text-green-300">✔</span>
+        {% elif p.status == "failed" %}<span class="text-red-300">✗</span>
+        {% else %}<span class="text-cyan-300 animate-pulse">●</span>{% endif %}
+        <span class="{{ 'text-term-fg' if p.status != 'done' else 'text-term-dim' }}">{{ p.title }}</span>
+        {% if p.tasks %}<span class="text-term-dim">· {{ p.plays }} plays · {{ p.tasks }} tareas</span>{% endif %}
+      </li>
+      {% if loop.last and p.status == "running" and (st.current_play or st.current_task) %}
+      <li class="pl-4 text-term-dim">
+        {% if st.current_play %}<div>PLAY <span class="text-term-fg">{{ st.current_play }}</span></div>{% endif %}
+        {% if st.current_task %}<div>TASK <span class="text-amber-200">{{ st.current_task }}</span></div>{% endif %}
+      </li>
+      {% endif %}
+      {% endfor %}
+    </ol>
+    {% elif not st.finished %}
+    <div class="text-term-dim">esperando la primera fase…</div>
+    {% endif %}
+
+    {% if st.recap %}
+    <table class="table">
+      <thead><tr><th>host</th><th>ok</th><th>changed</th><th>unreachable</th><th>failed</th></tr></thead>
+      <tbody>{% for r in st.recap %}
+        <tr><td class="text-term-fg">{{ r.host }}</td><td>{{ r.ok }}</td><td>{{ r.changed }}</td>
+          <td class="{{ 'text-red-300' if r.unreachable else '' }}">{{ r.unreachable }}</td>
+          <td class="{{ 'text-red-300' if r.failed else '' }}">{{ r.failed }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% endif %}
+
+    {% if st.failures %}
+    <div class="rounded border border-red-600/60 bg-red-500/10 p-3 text-red-200">
+      {% for f in st.failures[-10:] %}<div>✗ {{ f }}</div>{% endfor %}
+    </div>
+    {% endif %}
+    {% if st.warnings %}
+    <details><summary class="cursor-pointer text-amber-300">⚠ {{ st.warnings|length }} aviso{{ "" if st.warnings|length == 1 else "s" }}</summary>
+      {% for w in st.warnings[-20:] %}<div class="text-amber-200">{{ w }}</div>{% endfor %}</details>
+    {% endif %}
+    {% if not st.finished and st.last_lines %}
+    <pre class="rounded bg-term-bg p-2 text-[11px] text-term-dim">{{ st.last_lines|join("\n") }}</pre>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+</div>

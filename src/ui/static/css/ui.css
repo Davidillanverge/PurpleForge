@@ -1,0 +1,79 @@
+/* PurpleForge UI — lab flow components (stepper, next-step card, button hierarchy, sections).
+   Plain CSS on purpose: the prebuilt Tailwind app.css can't gain new utilities without the
+   Tailwind CLI, and these components are few and stable. Colours = the term-* theme. */
+
+/* ---- buttons: primary / secondary / danger; disabled looks disabled, nothing else does ---- */
+.pf-btn-primary, .pf-btn-secondary, .pf-btn-danger {
+  display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;
+  border-radius: 4px; border: 1px solid; padding: 0.45rem 0.9rem;
+  font-size: 0.75rem; letter-spacing: 0.04em; text-decoration: none; transition: background .15s, border-color .15s;
+}
+.pf-btn-primary { background: #7c3aed; border-color: #8b5cf6; color: #fff; font-weight: 700; }
+.pf-btn-primary:hover { background: #6d28d9; color: #fff; }
+.pf-btn-secondary { background: transparent; border-color: #3b4852; color: #c9d4dc; }
+.pf-btn-secondary:hover { border-color: #a78bfa; color: #fff; }
+.pf-btn-danger { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.6); color: #fecaca; }
+.pf-btn-danger:hover { background: rgba(239, 68, 68, 0.25); }
+.pf-btn-primary:disabled, .pf-btn-secondary:disabled, .pf-btn-danger:disabled,
+.pf-btn-primary.htmx-request, .pf-btn-secondary.htmx-request, .pf-btn-danger.htmx-request {
+  opacity: 0.45; cursor: not-allowed;
+}
+.pf-btn-sub { font-weight: 400; opacity: 0.75; font-size: 0.68rem; }
+/* the legacy ghost style read as "disabled": make it a readable secondary everywhere */
+.btn-ghost { color: #c9d4dc !important; border-color: #3b4852 !important; }
+.btn-ghost:hover { border-color: #a78bfa !important; color: #fff !important; }
+
+/* ---- stepper ---- */
+.pf-steps { display: flex; flex-wrap: wrap; gap: 0.25rem 0; padding: 0.75rem 1rem; border-bottom: 1px solid #1c242a; list-style: none; margin: 0; }
+.pf-step { display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: #4b5963; }
+.pf-step + .pf-step::before { content: ""; width: 1.25rem; height: 1px; background: #26313a; margin: 0 0.4rem; }
+.pf-step-dot {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.35rem; height: 1.35rem;
+  border-radius: 999px; border: 1px solid #26313a; font-size: 0.65rem;
+}
+.pf-step-done { color: #6b7b86; }
+.pf-step-done .pf-step-dot { border-color: rgba(74, 222, 128, 0.6); color: #4ade80; }
+.pf-step-todo, .pf-step-current { color: #e5edf3; font-weight: 700; }
+.pf-step-todo .pf-step-dot, .pf-step-current .pf-step-dot { border-color: #a78bfa; background: rgba(167, 139, 250, 0.18); color: #e9d5ff; }
+.pf-step-running { color: #a5f3fc; font-weight: 700; }
+.pf-step-running .pf-step-dot { border-color: #22d3ee; color: #22d3ee; animation: pf-pulse 1.4s ease-in-out infinite; }
+.pf-step-failed { color: #fca5a5; font-weight: 700; }
+.pf-step-failed .pf-step-dot { border-color: #f87171; background: rgba(248, 113, 113, 0.15); color: #f87171; }
+@keyframes pf-pulse { 50% { opacity: 0.35; } }
+
+/* ---- next-step card ---- */
+.pf-next { border: 1px solid rgba(139, 92, 246, 0.55); background: rgba(139, 92, 246, 0.06); border-radius: 6px; padding: 1rem; }
+.pf-next-busy { border-color: rgba(34, 211, 238, 0.5); background: rgba(34, 211, 238, 0.04); }
+.pf-next-danger { border-color: rgba(248, 113, 113, 0.6); background: rgba(248, 113, 113, 0.06); }
+.pf-next-kicker { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: #a78bfa; }
+.pf-next-busy .pf-next-kicker { color: #22d3ee; }
+.pf-next-danger .pf-next-kicker { color: #f87171; }
+.pf-next-title { margin-top: 0.2rem; font-size: 1rem; font-weight: 700; color: #f1f5f9; }
+.pf-next-text { margin: 0.35rem 0 0; font-size: 0.78rem; color: #8b9aa5; max-width: 60rem; }
+.pf-next-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.85rem; }
+.pf-next-actions #run-steps { width: 100%; }
+
+/* ---- collapsible sections + danger zone ---- */
+.pf-section { border: 1px solid #1c242a; border-radius: 6px; padding: 0.6rem 0.9rem; }
+.pf-section > summary { cursor: pointer; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: #8b9aa5; }
+.pf-section > summary:hover { color: #e5edf3; }
+.pf-section-hint { text-transform: none; letter-spacing: 0; color: #56656f; }
+.pf-tool { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.pf-danger { border: 1px solid rgba(248, 113, 113, 0.35); border-radius: 6px; padding: 0.75rem 0.9rem; display: grid; gap: 0.6rem; }
+.pf-danger-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: #f87171; }
+
+/* ---- dashboard ---- */
+.pf-next-chip { font-size: 0.72rem; color: #c4b5fd; white-space: nowrap; }
+.pf-next-chip-busy { color: #67e8f9; }
+.pf-next-chip-danger { color: #fca5a5; }
+
+/* ---- last validation summary (in the next-step card) ---- */
+.pf-validation { margin-top: 0.75rem; border-radius: 4px; padding: 0.6rem 0.75rem; font-size: 0.75rem; border: 1px solid; }
+.pf-validation-ok { border-color: rgba(74, 222, 128, 0.45); background: rgba(74, 222, 128, 0.06); color: #bbf7d0; }
+.pf-validation-ko { border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.06); color: #fde68a; }
+.pf-validation-head { font-weight: 700; }
+.pf-validation-when { font-weight: 400; color: #8b9aa5; margin-left: 0.4rem; }
+.pf-validation-counts { display: flex; gap: 1.25rem; margin-top: 0.3rem; color: #e5edf3; }
+.pf-validation-row { margin-top: 0.25rem; }
+.pf-validation-verdict { color: #fbbf24; }
+.pf-validation-ok .pf-validation-verdict { color: #86efac; }

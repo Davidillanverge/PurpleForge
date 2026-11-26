@@ -11,6 +11,7 @@ asynchronous human approval for infra-touching operations.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import timedelta
 from typing import Any
@@ -345,8 +346,10 @@ async def validate(ctx: McpContext, name: str) -> AgentRun:
     tool = ForgeTool(ctx.app.repo_root, allowed_subcommands={"validate"}, spec_lock=spec_path)
 
     async def tail() -> Outcome:
+        since = time.time()
         await _forge(rec, tool, "validate", [spec_path, "--run"])
-        return await _finish(ctx, rec, lab.id, VALIDATOR, validate_outcome(await rec.events()))
+        lab_dir = ctx.app.repo_root / "generated" / lab.name
+        return await _finish(ctx, rec, lab.id, VALIDATOR, validate_outcome(await rec.events(), lab_dir, since))
 
     ctx.spawn(run.id, tail())
     return run

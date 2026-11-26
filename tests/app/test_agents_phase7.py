@@ -96,7 +96,10 @@ async def test_deploy_succeeds_only_when_forge_deploy_exits_0(app_client, llms, 
     detail = await _lab(app_client, lab.id)
     assert detail["state"] == "deployed", detail["transitions"][-1]
     assert detail["transitions"][-1]["reason"].startswith("forge deploy exited 0")
-    out = next(e for e in (await app_client.get(f"/api/runs/{run_id}/events")).json() if e["type"] == "tool_result")
+    results = [e for e in (await app_client.get(f"/api/runs/{run_id}/events")).json() if e["type"] == "tool_result"]
+    assert results[0]["data"]["data"]["background"]  # the call returned at once; forge ran as a job
+    out = results[-1]  # the job's own final result
+    assert out["data"]["data"]["final"] and out["data"]["data"]["exit_code"] == 0
     assert (
         "guardrail" in out["data"]["content"] and "stub deploy.sh" in out["data"]["content"]
     )  # real forge ran the gate

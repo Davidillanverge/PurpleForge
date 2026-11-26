@@ -33,12 +33,22 @@ def fake_forge(tmp_path, monkeypatch):
         f'echo "$*" >> "{log}"\n'
         'printf "\\033[1;35m== %s\\033[0m\\n" "$1"\n'  # ANSI colour like the real scripts
         'echo "progress line for $1"\n'
+        # like the real `forge validate --run`: write the confirmed report the outcome reads
+        '[ "$1" = validate ] && [ -n "$PF_FAKE_VALIDATION" ] && '
+        'printf "%s" "$PF_FAKE_VALIDATION" > generated/winrm-validate-lab/validation-report.json\n'
         'for kv in $PF_FAKE_FORGE_EXIT; do [ "${kv%%=*}" = "$1" ] && exit "${kv#*=}"; done\n'
         "exit 0\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.delenv("PF_FAKE_FORGE_EXIT", raising=False)
+    monkeypatch.delenv("PF_FAKE_VALIDATION", raising=False)
     return script, log
+
+
+def _report(*verdicts):
+    """A validation-report.json body: one vuln per (applied, exploitable) pair."""
+    vulns = [{"id": f"v{i}", "applied": a, "exploitable": e} for i, (a, e) in enumerate(verdicts)]
+    return json.dumps({"lab": LAB, "vulns": vulns})
 
 
 @pytest.fixture
@@ -75,8 +85,12 @@ async def _events(client, run_id):
     return (await client.get(f"/api/runs/{run_id}/events")).json()
 
 
-async def test_validate_moves_deployed_to_validated_and_streams_output(client, jobs, repo_root, fake_forge):
-    _generated(repo_root, "lab-manifest.json")
+async def test_validate_moves_deployed_to_validated_and_streams_output(
+    client, jobs, repo_root, fake_forge, monkeypatch
+):
+    lab_dir = _generated(repo_root)
+    (lab_dir / "lab-manifest.json").write_text(json.dumps({"vulnerabilities_planned": [{"id": "v0"}] * 2}))
+    monkeypatch.setenv("PF_FAKE_VALIDATION", _report(("YES", "YES"), ("YES", "YES")))
     lab = await seed_lab(client.app, LAB, LabState.DEPLOYED)
     r = await client.post(f"/api/labs/{lab.id}/forge/validate")
     assert r.status_code == 202, r.text
@@ -264,3 +278,45 @@ async def test_a_destroyed_lab_can_be_redeployed_through_the_gate_again(client, 
     dep = (await client.post(f"/api/labs/{lab.id}/forge/deploy")).json()
     run, lab_out = await _finish(client, jobs, dep["id"])
     assert run["status"] == "completed" and lab_out["state"] == "deployed"
+
+
+async def test_validated_needs_every_vuln_confirmed(client, jobs, repo_root, monkeypatch):
+    """forge validate exiting 0 isn't enough: one unconfirmed vuln keeps the lab deployed,
+    with the summary on the lab card."""
+    lab_dir = _generated(repo_root)
+    (lab_dir / "lab-manifest.json").write_text(json.dumps({"vulnerabilities_planned": [{"id": "v0"}] * 3}))
+    monkeypatch.setenv("PF_FAKE_VALIDATION", _report(("YES", "YES"), ("YES", "REQUIRES-HUMAN"), ("NO", "NO")))
+    lab = await seed_lab(client.app, LAB, LabState.DEPLOYED)
+    body = (await client.post(f"/api/labs/{lab.id}/forge/validate")).json()
+    run, lab_out = await _finish(client, jobs, body["id"])
+    assert run["status"] == "completed"  # forge ran fine — the result just isn't a pass
+    assert lab_out["state"] == "deployed"
+    reason = lab_out["transitions"][-1]["reason"]
+    assert "aplicadas 2/3" in reason and "explotables 1/3" in reason
+    ui = await login(client.app)
+    page = (await ui.get(f"/labs/{lab.id}")).text
+    await ui.aclose()
+    assert "no confirmó todas las vulns" in page and "última validación" in page
+    assert "requieren comprobación manual" in page and "v1" in page and "no confirmadas (NO)" in page
+
+
+async def test_stale_report_doesnt_validate(client, jobs, repo_root):
+    lab_dir = _generated(repo_root)
+    (lab_dir / "lab-manifest.json").write_text(json.dumps({"vulnerabilities_planned": [{"id": "v0"}]}))
+    (lab_dir / "validation-report.json").write_text(_report(("YES", "YES")))
+    import os
+
+    os.utime(lab_dir / "validation-report.json", (1, 1))  # written long before this run
+    lab = await seed_lab(client.app, LAB, LabState.DEPLOYED)
+    body = (await client.post(f"/api/labs/{lab.id}/forge/validate")).json()
+    _, lab_out = await _finish(client, jobs, body["id"])
+    assert lab_out["state"] == "deployed" and "no validation report" in lab_out["transitions"][-1]["reason"]
+
+
+async def test_a_lab_without_vulns_validates(client, jobs, repo_root):
+    lab_dir = _generated(repo_root)
+    (lab_dir / "lab-manifest.json").write_text(json.dumps({"vulnerabilities_planned": []}))
+    lab = await seed_lab(client.app, LAB, LabState.DEPLOYED)
+    body = (await client.post(f"/api/labs/{lab.id}/forge/validate")).json()
+    _, lab_out = await _finish(client, jobs, body["id"])
+    assert lab_out["state"] == "validated"

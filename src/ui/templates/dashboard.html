@@ -25,7 +25,7 @@
   <section class="panel overflow-x-auto">
     <div class="panel-title">labs</div>
     <table class="table">
-      <thead><tr><th>lab</th><th>estado</th><th>cloud</th><th>spec</th><th>tokens</th><th>actualizado</th></tr></thead>
+      <thead><tr><th>lab</th><th>estado</th><th>siguiente paso</th><th>cloud</th><th>spec</th><th>tokens</th><th>actualizado</th></tr></thead>
       <tbody id="lab-rows" hx-get="/ui/partials/labs" hx-trigger="every 5s" hx-swap="innerHTML">
         {% include "partials/lab_rows.html" %}
       </tbody>

@@ -15,6 +15,7 @@ from typing import Any
 from fastapi.templating import Jinja2Templates
 
 from db.states import INFRA_STATES, ApprovalStatus, LabState, RunState
+from ui import lab_flow
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -129,6 +130,9 @@ def duration(start: datetime | None, end: datetime | None) -> str:
 def build_templates() -> Jinja2Templates:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     env = templates.env
+    # Templates and the Python that feeds them change together, at restart: hot-reloading
+    # only the templates lets a half-updated checkout 500 every page of a running service.
+    env.auto_reload = False
     env.filters.update(
         state_class=state_class,
         approval_class=approval_class,
@@ -137,6 +141,9 @@ def build_templates() -> Jinja2Templates:
         ago=ago,
         pretty_json=pretty_json,
         duration=duration,
+        state_label=lambda st: lab_flow.STATE_LABELS.get(st, getattr(st, "value", str(st))),
+        short_next=lab_flow.short_next,
+        epoch_dt=lambda ts: fmt_dt(datetime.fromtimestamp(ts, tz=timezone.utc)) if ts else "—",
     )
     env.globals.update(INFRA_STATES=INFRA_STATES, LabState=LabState, RunState=RunState)
     env.trim_blocks = True

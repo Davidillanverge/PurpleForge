@@ -24,6 +24,7 @@ from enum import Enum
 
 import yaml
 
+from agents.background import make_forge_wait_tool
 from agents.base import BaseAgent
 from agents.budget import BudgetLimits
 from agents.engine import AgentResult
@@ -85,7 +86,8 @@ class DeployPreconditionError(RuntimeError):
 class DeployOperatorAgent(BaseAgent):
     definition_name = "deploy-operator"
     # deploys are long (terraform + ansible): generous wall clock, modest turns
-    default_limits = BudgetLimits(max_turns=40, max_total_tokens=1_500_000, max_wall_seconds=4 * 3600)
+    # turns: a long deploy is followed with forge_wait calls (each one a turn)
+    default_limits = BudgetLimits(max_turns=80, max_total_tokens=2_500_000, max_wall_seconds=5 * 3600)
 
     def lab_context(
         self, spec: str, mode: Mode, *, which: Callable[[str], str | None] | None = None
@@ -131,6 +133,7 @@ class DeployOperatorAgent(BaseAgent):
             FileReadTool(self.repo_root),
             GrepTool(self.repo_root),
             GlobTool(self.repo_root),
+            make_forge_wait_tool(),
         ]
 
     def task(self, spec_rel: str, lab_name: str, mode: Mode, instructions: str = "") -> str:
@@ -141,14 +144,16 @@ class DeployOperatorAgent(BaseAgent):
                 f"1. `forge generate {spec_rel} --plan` — structural check; if it fails, STOP and report.\n"
                 f"2. `forge deploy {spec_rel}` — the deterministic path: guardrail gate, then deploy.sh "
                 "(remote state, auto-sizing, terraform apply, WireGuard, site.yml in the mandated order, "
-                "clean snapshot). Do not reimplement its steps by hand.\n"
+                "clean snapshot). Do not reimplement its steps by hand. It runs as a background job: follow it "
+                "with `forge_wait` until it finishes (20-90 minutes is normal), don't poll with bash.\n"
                 "3. If it fails, diagnose with read-only commands and report the exact failing step and output. "
                 "Do NOT tear down (that is a separate, separately approved run) and never bypass the guardrail."
             )
         else:
             text = (
                 f"Tear down the lab `{lab_name}` to cost-zero: `forge teardown {spec_rel} --force` "
-                "(destroy + verification). Report whether cost-zero was verified; if anything is left "
+                "(destroy + verification) — a background job: follow it with `forge_wait` until it finishes. "
+                "Report whether cost-zero was verified; if anything is left "
                 "behind, report exactly what, with the command output."
             )
         return text + (f"\n\nOperator notes: {instructions}" if instructions else "")

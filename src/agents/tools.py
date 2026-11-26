@@ -23,6 +23,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from agents import background
 from core.schemas import ToolResult, ToolSpec
 from core.security import (  # re-exported: agents.tools stays the public import path
     DEFAULT_MAX_OUTPUT_CHARS,
@@ -247,8 +248,31 @@ class ForgeTool(Tool):
         reason = self.refusal(args)
         if reason:
             return ToolResult(content=f"refused: {reason}", is_error=True)
+        command = [self.python, "-m", "forge", args.subcommand, *args.args, *self._pinned_out_dir()]
+        current = background.CURRENT_CALL.get()
+        if current is not None and background.db_url() and background.is_long(args.subcommand, args.args):
+            # long infra operation inside an agent run: a detached job that outlives any brain
+            # timeout and streams its output into the run (see agents.background)
+            run_id, call_id = current
+            pid = background.spawn(
+                run_id=run_id,
+                call_id=call_id,
+                command=command,
+                cwd=self.repo_root,
+                env=self.env,
+                timeout=max(args.timeout_seconds, 4 * 3600 if args.subcommand in ("deploy", "teardown") else 0),
+            )
+            return ToolResult(
+                content=(
+                    f"`forge {args.subcommand}` started as background job `{call_id}` (pid {pid}). It keeps "
+                    "running on its own and its output streams live to the run console. Call `forge_wait` "
+                    f'with job="{call_id}" (repeatedly, until it reports finished) to follow it and get the '
+                    "exit code — do NOT start the same command again."
+                ),
+                data={"background": True, "job": call_id, "pid": pid, "exit_code": None},
+            )
         return await run_subprocess(
-            [self.python, "-m", "forge", args.subcommand, *args.args, *self._pinned_out_dir()],
+            command,
             cwd=self.repo_root,
             env=self.env,
             timeout=args.timeout_seconds,

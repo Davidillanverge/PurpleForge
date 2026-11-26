@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agents import background
 from agents.engine import AgentResult, ApprovalDecision, ApprovalRequest, RunStatus, relay_failover
 from agents.events import AgentEvent
 from api import claude_brain, copilot_brain
@@ -234,10 +235,19 @@ class AgentRunner:
             result = await prepared.execute(str(run_id))
         except asyncio.CancelledError:
             status, error = RunState.CANCELLED, "cancelled by operator"
+            with contextlib.suppress(Exception):  # cancel = stop its background forge jobs too
+                async with self.sessionmaker() as s:
+                    background.kill_jobs(await repo.list_events(s, tenant, run_id, limit=100_000))
         except Exception as exc:  # noqa: BLE001 - recorded on the run
             log.exception("agent run %s crashed", run_id)
             error = f"{type(exc).__name__}: {exc}"
         finally:
+            try:
+                # the brain may stop (or give up) while a background forge job still runs: the
+                # run's outcome must come from that job's real exit code, so wait for it
+                await background.wait_for_jobs(self.sessionmaker, tenant, run_id)
+            except Exception:  # noqa: BLE001
+                log.exception("waiting for background jobs of run %s failed", run_id)
             try:
                 await self._finalize(tenant, spec, run_id, lab_id, result, status, error)
             except Exception:  # noqa: BLE001

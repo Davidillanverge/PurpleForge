@@ -6,6 +6,7 @@
     {% if lab.last_error %}<div class="text-xs text-red-300">✗ {{ lab.last_error|truncate(70) }}</div>{% endif %}
   </td>
   <td>{% include "partials/lab_badge.html" %}</td>
+  <td><a href="/labs/{{ lab.id }}" class="pf-next-chip {{ 'pf-next-chip-danger' if lab.state.value == 'failed' else ('pf-next-chip-busy' if lab.state.value.endswith('ing') else '') }}">→ {{ lab.state|short_next }}</a></td>
   <td class="text-term-dim">{{ lab.cloud or "—" }}</td>
   <td class="text-term-dim">{{ lab.spec_path or "—" }}</td>
   {% set u = usage_by_lab.get(lab.id) %}
@@ -13,5 +14,5 @@
   <td class="text-term-dim" title="{{ lab.updated_at|dt }}">{{ lab.updated_at|ago }}</td>
 </tr>
 {% else %}
-<tr><td colspan="6" class="py-8 text-center text-term-dim">sin labs todavía — crea uno a la derecha</td></tr>
+<tr><td colspan="7" class="py-8 text-center text-term-dim">sin labs todavía — crea uno a la derecha</td></tr>
 {% endfor %}

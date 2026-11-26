@@ -22,7 +22,7 @@ from api.settings import AppSettings
 from db import repository as repo
 from db.crypto import SecretCipher
 from db.models import Lab
-from db.states import LabState
+from db.states import INFRA_STATES, LabState
 from llm.provider import LLMProvider, Message, ProviderError
 from llm.settings import LLMSettings, build_provider
 
@@ -227,6 +227,13 @@ async def generate_lab(
     lab = await repo.get_lab(session, principal.tenant, lab_id, for_update=True)
     if lab.state in AGENT_OWNED_STATES:
         raise LabNotEditable(f"an agent is working on this lab ({lab.state.value}); generate when it finishes")
+    if lab.state in INFRA_STATES:
+        # regenerating over a live lab rewrites the deploy-resolved backend.hcl (the teardown then
+        # silently skips destroy / orphans the Terraform state) — only without live infrastructure
+        raise LabNotEditable(
+            f"the lab is {lab.state.value} (live infrastructure): regenerating now could orphan its "
+            "Terraform state — tear it down first"
+        )
     if not lab.spec_path:
         raise SpecError("lab has no spec_path")
     spec, _ = resolve_spec(settings.repo_root, lab.spec_path, lab.name)

@@ -23,9 +23,12 @@ from api.deps import ForgeJobsDep, RunnerDep, SessionDep, SettingsDep
 from api.forge_jobs import ACTIONS as FORGE_ACTIONS
 from api.forge_jobs import available_actions
 from api.lab_report import load_lab_report
+from api.run_steps import forge_steps
 from api.sse import StreamEnd, format_sse, iter_run_events
+from core.outcomes import load_validation_summary
 from db import repository as repo
 from db.states import LabState, ProviderKind
+from ui import lab_flow
 from ui.templating import build_templates
 
 router = APIRouter(include_in_schema=False)
@@ -105,10 +108,22 @@ def _safe_next(value: str | None) -> str:
 async def _lab_ctx(request: Request, session: Any, principal: Principal, lab_id: uuid.UUID) -> dict[str, Any]:
     lab = await repo.get_lab(session, principal.tenant, lab_id)
     settings = request.app.state.settings
+    transitions = await repo.list_transitions(session, principal.tenant, lab_id)
+    runs = await repo.list_runs(session, principal.tenant, lab_id=lab_id)
+    has_report = (settings.repo_root / "generated" / lab.name / "lab-report.md").is_file()
+    validation = (
+        load_validation_summary(settings.repo_root / "generated" / lab.name)
+        if lab.state in (LabState.DEPLOYED, LabState.VALIDATING, LabState.VALIDATED)
+        else None
+    )
+    busy_run = next((r for r in runs if not r.status.is_terminal), None) if lab.state in lab_flow.BUSY_STATES else None
+    busy_steps = (
+        forge_steps(await repo.list_events(session, principal.tenant, busy_run.id, limit=100_000)) if busy_run else []
+    )
     return {
         "lab": lab,
-        "transitions": await repo.list_transitions(session, principal.tenant, lab_id),
-        "runs": await repo.list_runs(session, principal.tenant, lab_id=lab_id),
+        "transitions": transitions,
+        "runs": runs,
         "agents": list(request.app.state.runner.registry.values()),
         "manifest": services.load_manifest_summary(settings.repo_root, lab.name) if lab.spec_path else None,
         "brains": await services.brains(session, principal, settings),
@@ -116,7 +131,19 @@ async def _lab_ctx(request: Request, session: Any, principal: Principal, lab_id:
         "lab_usage": await repo.usage_total(session, principal.tenant, lab_id=lab_id),
         "lab_usage_by_agent": await repo.usage_by_agent(session, principal.tenant, lab_id=lab_id),
         "forge_actions": {a.name: a for a in available_actions(lab.state)},
-        "has_report": (settings.repo_root / "generated" / lab.name / "lab-report.md").is_file(),
+        "has_report": has_report,
+        "stages": lab_flow.stages(lab.state, transitions),
+        "next": lab_flow.next_step(
+            lab.state,
+            has_spec=bool(lab.spec_path),
+            has_report=has_report,
+            validation_ok=validation.all_ok if validation else None,
+        ),
+        "validation": validation,
+        "busy": lab.state in lab_flow.BUSY_STATES,
+        "busy_run": busy_run,
+        "busy_steps": busy_steps,
+        "can_generate": lab_flow.can_generate(lab.state),
     }
 
 
@@ -382,11 +409,27 @@ async def run_console(
         run=run,
         lab=await repo.get_lab(session, principal.tenant, run.lab_id) if run.lab_id else None,
         events=events,
+        steps=forge_steps(events),
         last_seq=events[-1].seq if events else 0,
         active=not run.status.is_terminal,
         approvals=approvals,
         version=_version(pending),
         lab_names={},
+    )
+
+
+@router.get("/ui/partials/runs/{run_id}/steps", response_class=HTMLResponse)
+async def run_steps(run_id: uuid.UUID, request: Request, session: SessionDep, principal: UIPrincipal):
+    """Phases / current Ansible task of the run's forge operations, polled while it runs."""
+    run = await repo.get_run(session, principal.tenant, run_id)
+    events = await repo.list_events(session, principal.tenant, run_id, limit=100_000)
+    return render(
+        request,
+        "partials/run_steps.html",
+        principal,
+        run=run,
+        steps=forge_steps(events),
+        active=not run.status.is_terminal,
     )
 
 

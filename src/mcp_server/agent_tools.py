@@ -25,6 +25,7 @@ from fastmcp.tools import Tool as McpTool
 from fastmcp.tools import ToolResult as McpToolResult
 from pydantic import PrivateAttr
 
+from agents import background
 from agents.engine import AgentEngine
 from agents.toolsets import build_toolset
 from api.approvals import db_polling_approver
@@ -69,7 +70,13 @@ def build_server(
     app = app or AppSettings()
     db = db or DatabaseSettings()
     sessionmaker = create_sessionmaker(create_engine(settings=db))
+    # long forge calls become detached jobs: they outlive this server and the brain's MCP timeout
+    background.configure(db.database_url)
     tools = build_toolset(toolset, app.repo_root, lab_name=lab, spec_path=spec)
+    for tool in tools:
+        if tool.name == "forge_wait":
+            # each wait must end well inside the external brain's MCP tool timeout (Copilot CLI ~3 min)
+            tool.max_wait = 120  # type: ignore[attr-defined]
     recorder = Recorder(sessionmaker, tenant, run_id, toolset)
     executor = AgentEngine(
         None,  # type: ignore[arg-type]  # no LLM here: the brain is the MCP client
