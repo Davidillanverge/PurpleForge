@@ -35,7 +35,11 @@ USER_TRANSITIONS = frozenset({LabState.DESIGNED, LabState.APPROVED})
 EDITABLE_STATES = frozenset(
     {LabState.DRAFT, LabState.DESIGNED, LabState.COMPILED, LabState.READY, LabState.APPROVED, LabState.DESTROYED}
 )
-COMPILABLE_STATES = frozenset({LabState.DESIGNED, LabState.COMPILED, LabState.READY, LabState.APPROVED})
+#: DESTROYED too: recompiling a torn-down lab is how it gets redeployed (→ designed →
+#: compiled → ready → a fresh human approval: approvals are never inherited).
+COMPILABLE_STATES = frozenset(
+    {LabState.DESIGNED, LabState.COMPILED, LabState.READY, LabState.APPROVED, LabState.DESTROYED}
+)
 
 
 class LabExists(RuntimeError):
@@ -143,8 +147,9 @@ async def compile_lab(
 ) -> tuple[Lab, CompileOutcome]:
     """``forge lab-spec`` + ``forge guardrail``: DESIGNED → COMPILED → READY.
 
-    Re-compiling a COMPILED/READY/APPROVED lab first drops it back to DESIGNED,
-    so an approval never survives a recompile. A failing step leaves the lab at
+    Re-compiling a COMPILED/READY/APPROVED/DESTROYED lab first drops it back to
+    DESIGNED, so an approval never survives a recompile (and a destroyed lab is
+    redeployed through the same guardrail + human gate as a new one). A failing step leaves the lab at
     the last state it legitimately reached; forge's output is returned.
     The lab row stays locked while forge runs, serialising concurrent compiles.
     """
@@ -176,9 +181,18 @@ async def compile_lab(
     return lab, CompileOutcome(steps=steps, ok=all(s.ok for s in steps))
 
 
-#: An agent owns the lab in these states (it may be rewriting the spec or running
-#: deploy.sh/teardown.sh): deterministic forge actions on the lab wait.
-AGENT_OWNED_STATES = frozenset({LabState.DESIGNING, LabState.DEPLOYING, LabState.VALIDATING, LabState.DESTROYING})
+#: An agent or a no-AI forge run owns the lab in these states (it may be rewriting
+#: the spec or running deploy.sh/stop.sh/start.sh/teardown.sh): deterministic forge actions on the lab wait.
+AGENT_OWNED_STATES = frozenset(
+    {
+        LabState.DESIGNING,
+        LabState.DEPLOYING,
+        LabState.VALIDATING,
+        LabState.STOPPING,
+        LabState.STARTING,
+        LabState.DESTROYING,
+    }
+)
 
 
 class GenerateOutcome(BaseModel):

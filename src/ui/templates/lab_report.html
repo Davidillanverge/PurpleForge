@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}reporte · {{ lab.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', path='css/report.css') }}">{% endblock %}
+{% block content %}
+<div class="mb-4 text-xs text-term-dim"><a href="/">labs</a> / <a href="/labs/{{ lab.id }}">{{ lab.name }}</a> / reporte</div>
+
+<div class="report-grid">
+  <nav class="panel h-fit report-nav">
+    <div class="panel-title">índice</div>
+    <ol class="report-toc p-3 text-xs">
+      {% if rep.live %}<li class="lvl-2"><a href="#acceso">Acceso en vivo</a></li>{% endif %}
+      {% for h in rep.toc %}<li class="lvl-{{ h.level }}"><a href="#{{ h.anchor }}">{{ h.text }}</a></li>{% endfor %}
+    </ol>
+  </nav>
+
+  <div class="report-main space-y-6">
+    <section class="panel">
+      <div class="flex flex-wrap items-center gap-3 border-b border-term-line px-4 py-3">
+        <h1 class="text-lg text-term-fg">reporte de operación — {{ lab.name }}</h1>
+        {% include "partials/lab_badge.html" %}
+        {% if lab.cloud %}<span class="badge border-term-line text-term-dim">{{ lab.cloud }}</span>{% endif %}
+        <a class="ml-auto text-xs" href="/labs/{{ lab.id }}">← volver al lab</a>
+      </div>
+      <div class="space-y-3 p-4 text-xs">
+        <div class="rounded border border-amber-500/60 bg-amber-500/5 p-3 text-amber-200">
+          ⚠ Contiene secretos del lab (administradores, cuenta WinRM, contraseñas de la población y de las cuentas de vulns).
+          Solo para operadores autorizados del lab; no lo compartas ni lo pegues fuera. La página no se cachea.
+        </div>
+        <div class="text-term-dim">Fuente: <span class="text-term-fg">{{ rep.lab_dir }}/</span> — generado por forge, determinista desde <span class="text-term-fg">{{ lab.spec_path or "—" }}</span>
+          {% if rep.report and rep.report.modified %} · lab-report.md del {{ rep.report.modified|dt }}{% endif %}</div>
+      </div>
+    </section>
+
+    {% if rep.live %}
+    {% set live = rep.live %}
+    <section class="panel" id="acceso">
+      <div class="panel-title">acceso en vivo (terraform-outputs.json · connectivity.json)</div>
+      <div class="space-y-4 p-4">
+        <dl class="kv">
+          <dt>bastión</dt><dd>{{ live.bastion_ip or "—" }}{% if live.region %} <span class="text-term-dim">· {{ live.region }}</span>{% endif %}</dd>
+          {% if live.wireguard_conf %}<dt>WireGuard</dt><dd><code>sudo wg-quick up {{ live.wireguard_conf }}</code>
+            {% if live.wireguard_handshake is not none %}<span class="{{ 'text-green-300' if live.wireguard_handshake else 'text-red-300' }}">· handshake {{ "OK" if live.wireguard_handshake else "KO" }}</span>{% endif %}</dd>{% endif %}
+          {% if live.bastion_ssh_key and live.bastion_ip %}<dt>SSH bastión</dt><dd><code>ssh -i {{ live.bastion_ssh_key }} {{ live.bastion_ssh_user }}@{{ live.bastion_ip }}</code>
+            {% if live.bastion_ssh_login is not none %}<span class="{{ 'text-green-300' if live.bastion_ssh_login else 'text-red-300' }}">· login {{ "OK" if live.bastion_ssh_login else "KO" }}</span>{% endif %}</dd>{% endif %}
+          <dt>último chequeo</dt><dd>{% if live.connectivity_checked_at %}{{ live.connectivity_checked_at|dt }} <span class="text-term-dim">({{ live.connectivity_checked_at|ago }})</span>{% else %}—{% endif %}
+            <span class="text-term-dim">· se refresca con desplegar / encender</span></dd>
+        </dl>
+        {% if live.endpoints %}
+        <table class="table">
+          <thead><tr><th>host</th><th>rol</th><th>IP</th><th>servicios</th></tr></thead>
+          <tbody>
+            {% for e in live.endpoints %}
+            <tr>
+              <td class="text-term-fg">{{ e.name }}</td>
+              <td class="text-term-dim">{{ e.role }}</td>
+              <td><code>{{ e.ip }}</code></td>
+              <td>{% for p in e.probes %}<span class="badge {{ 'border-green-600/80 text-green-300' if p.reachable else ('border-red-600 text-red-300' if p.required else 'border-term-line text-term-dim') if p.reachable is defined else 'border-term-line text-term-dim' }}" title="{{ 'obligatorio' if p.required else 'opcional' }}">{{ p.proto }}/{{ p.port }}{% if p.reachable is defined %} {{ "✓" if p.reachable else "✗" }}{% endif %}</span> {% endfor %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="text-xs text-term-dim">Los hosts del lab no tienen IP pública: se alcanzan solo con el túnel WireGuard levantado (invariante #1).</div>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if rep.report %}
+    <section class="panel">
+      <div class="panel-title">lab-report.md</div>
+      <article class="md p-4">{{ rep.report.html|safe }}</article>
+    </section>
+    {% else %}
+    <section class="panel p-4 text-term-dim">
+      No hay <span class="text-term-fg">{{ rep.lab_dir }}/lab-report.md</span> todavía: pulsa <span class="text-term-fg">generar scripts</span> en la página del lab (forge generate).
+    </section>
+    {% endif %}
+
+    {% if rep.validation %}
+    <section class="panel">
+      <div class="panel-title">validation-report.md (forge validate --run){% if rep.validation.modified %} · {{ rep.validation.modified|dt }}{% endif %}</div>
+      <article class="md p-4">{{ rep.validation.html|safe }}</article>
+    </section>
+    {% endif %}
+
+    {% if rep.inventory %}
+    <section class="panel">
+      <div class="panel-title">ad-inventory.md (forge ad-inventory, dominio en vivo){% if rep.inventory.modified %} · {{ rep.inventory.modified|dt }}{% endif %}</div>
+      <article class="md p-4">{{ rep.inventory.html|safe }}</article>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

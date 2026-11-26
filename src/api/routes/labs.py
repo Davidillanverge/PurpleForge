@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Response, status
 
 from api import services
-from api.deps import PrincipalDep, SessionDep, SettingsDep
+from api.deps import ForgeJobsDep, PrincipalDep, SessionDep, SettingsDep
 from api.schemas import (
     CompileResult,
     GenerateResult,
@@ -97,6 +97,18 @@ async def generate_lab(lab_id: uuid.UUID, session: SessionDep, principal: Princi
     return GenerateResult(
         lab=LabOut.model_validate(lab), steps=outcome.steps, ok=outcome.ok, out_dir=outcome.out_dir, files=outcome.files
     )
+
+
+@router.post("/{lab_id}/forge/{action}", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
+async def forge_action(lab_id: uuid.UUID, action: str, principal: PrincipalDep, jobs: ForgeJobsDep):
+    """No-AI lab operation: ``validate`` | ``deploy`` | ``stop`` | ``start`` | ``teardown``.
+    Runs one deterministic ``forge`` subcommand in the background (the caller's request is
+    the human decision); follow it as a run (``/api/runs/{id}``). 409 if the lab's state
+    doesn't allow it."""
+    run = await jobs.start(principal, lab_id, action)
+    out = RunOut.model_validate(run)
+    out.active = True
+    return out
 
 
 @router.get("/{lab_id}/transitions", response_model=list[LabTransitionOut])

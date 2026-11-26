@@ -11,6 +11,8 @@ Key rules encoded here:
 - Approval is not inherited: editing the spec (back to ``designed``) or a failure
   sends the lab back through compile → guardrail → approval.
 - ``destroyed`` is only reached through ``destroying`` (forge teardown).
+- ``stopping`` / ``starting`` are the no-AI ``forge stop`` / ``forge start`` runs
+  (deployed|validated ⇄ stopped); while they run nothing else may start on the lab.
 - ``failed`` (a deploy/teardown went wrong; resources may exist) can only be left
   through ``destroying``: nobody can "forget" a half-deployed lab.
 """
@@ -33,7 +35,9 @@ class LabState(str, Enum):
     DEPLOYED = "deployed"
     VALIDATING = "validating"
     VALIDATED = "validated"
+    STOPPING = "stopping"
     STOPPED = "stopped"
+    STARTING = "starting"
     DESTROYING = "destroying"
     DESTROYED = "destroyed"
     FAILED = "failed"
@@ -50,10 +54,15 @@ LAB_TRANSITIONS: dict[LabState, frozenset[LabState]] = {
     S.APPROVED: frozenset({S.DESIGNING, S.DESIGNED, S.DEPLOYING}),
     # READY: the deploy never touched infra (no approved action ran) — re-approval required
     S.DEPLOYING: frozenset({S.DEPLOYED, S.FAILED, S.READY}),
-    S.DEPLOYED: frozenset({S.VALIDATING, S.STOPPED, S.DESTROYING}),
+    S.DEPLOYED: frozenset({S.VALIDATING, S.STOPPING, S.STOPPED, S.DESTROYING}),
     S.VALIDATING: frozenset({S.VALIDATED, S.DEPLOYED, S.FAILED}),
-    S.VALIDATED: frozenset({S.VALIDATING, S.DEPLOYED, S.STOPPED, S.DESTROYING}),
-    S.STOPPED: frozenset({S.DEPLOYED, S.DESTROYING}),
+    S.VALIDATED: frozenset({S.VALIDATING, S.DEPLOYED, S.STOPPING, S.STOPPED, S.DESTROYING}),
+    # forge stop (stop.sh): powered off on success; a failed stop leaves the VMs as they
+    # were (still running → deployed; validation isn't assumed to survive a failed stop)
+    S.STOPPING: frozenset({S.STOPPED, S.DEPLOYED}),
+    S.STOPPED: frozenset({S.STARTING, S.DEPLOYED, S.DESTROYING}),
+    # forge start (start.sh): powered on + tunnel + connectivity check → deployed
+    S.STARTING: frozenset({S.DEPLOYED, S.STOPPED}),
     # back to where it was when the teardown never touched infra (no approved action ran)
     S.DESTROYING: frozenset({S.DESTROYED, S.FAILED, S.DEPLOYED, S.VALIDATED, S.STOPPED}),
     S.DESTROYED: frozenset({S.DESIGNING, S.DESIGNED}),
@@ -71,7 +80,9 @@ INFRA_STATES = frozenset(
         LabState.DEPLOYED,
         LabState.VALIDATING,
         LabState.VALIDATED,
+        LabState.STOPPING,
         LabState.STOPPED,
+        LabState.STARTING,
         LabState.DESTROYING,
         LabState.FAILED,
     }

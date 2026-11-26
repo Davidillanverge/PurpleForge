@@ -3,12 +3,16 @@
     <h1 class="text-lg text-term-fg">{{ run.agent }}</h1>
     <span class="badge {{ run.status|state_class }}">{{ run.status.value }}</span>
     {% include "partials/source_badge.html" %}
-    {% if run.source == "mcp" %}
+    {% if run.source == "forge" %}
+    <span class="text-xs text-term-dim">sin IA: 0 tokens</span>
+    {% elif run.source == "mcp" %}
     <span class="text-xs text-term-dim">tokens: los consume tu cliente MCP (no visibles desde aquí)</span>
     {% else %}
     <span class="text-lg text-cyan-300 {{ 'animate-pulse' if active else '' }}" title="{{ "{:,}".format(run.input_tokens + run.output_tokens) }} tokens">Σ {{ (run.input_tokens + run.output_tokens)|tok }} tok</span>
     {% endif %}
-    {% if active and run.source == "mcp" %}
+    {% if active and run.source == "forge" %}
+    <span class="ml-auto text-xs text-term-dim">operación forge en curso · no se cancela a medias (el lab quedaría en un estado desconocido)</span>
+    {% elif active and run.source == "mcp" %}
     <span class="ml-auto text-xs text-term-dim">controlado desde Claude Code · para detenerlo, deniega la aprobación pendiente</span>
     {% elif active %}
     <button class="btn-danger ml-auto" hx-post="/ui/runs/{{ run.id }}/cancel" hx-target="#run-header"

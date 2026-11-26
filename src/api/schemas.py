@@ -136,7 +136,8 @@ class RunOut(_ORM):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
-    #: "engine" (AgentEngine + LLM pool) or "mcp" (Claude Code via the MCP server)
+    #: "engine" (AgentEngine + LLM pool), "mcp" (Claude Code via the MCP server) or
+    #: "forge" (no-AI lab operation run by the API: validate/deploy/stop/start/teardown)
     source: str = "engine"
     active: bool = False
 

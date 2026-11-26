@@ -9,6 +9,7 @@
   <script src="{{ url_for('static', path='js/htmx-2.0.11.min.js') }}" defer></script>
   <script src="{{ url_for('static', path='js/htmx-ext-sse-2.2.4.min.js') }}" defer></script>
   <script src="{{ url_for('static', path='js/app.js') }}" defer></script>
+  {% block head %}{% endblock %}
 </head>
 <body class="min-h-screen" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
   {% if principal %}

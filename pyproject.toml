@@ -46,6 +46,7 @@ app = [
     "fastapi==0.165.0",
     "uvicorn[standard]==0.54.0",
     "python-multipart==0.0.34",  # HTML form parsing for the UI
+    "markdown-it-py==3.0.0",  # renders forge's lab-report.md in the UI (raw HTML disabled)
     "redis==8.2.0",  # multi-worker broker (events/approvals/cancels + heartbeats)
 ]
 # MCP mode: Claude Code / Cursor / Desktop is the LLM (no LLM API key needed).

@@ -1,0 +1,41 @@
+/* Lab report page: rendered Markdown (lab-report.md, validation-report.md, ad-inventory.md).
+   Plain CSS (not Tailwind) because the markup comes from markdown-it, not from templates. */
+
+.md { color: #c9d4dc; line-height: 1.6; overflow-wrap: anywhere; }
+.md h1, .md h2, .md h3, .md h4 { color: #e5edf3; scroll-margin-top: 4.5rem; font-weight: 700; }
+.md h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+.md h2 { font-size: 1.05rem; margin: 2rem 0 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid #1c242a; color: #a78bfa; }
+.md h3 { font-size: 0.95rem; margin: 1.5rem 0 0.5rem; color: #c4b5fd; }
+.md h4 { font-size: 0.875rem; margin: 1.25rem 0 0.5rem; }
+.md p, .md ul, .md ol, .md blockquote, .md table, .md pre { margin: 0 0 0.85rem; }
+.md ul { list-style: disc; padding-left: 1.4rem; }
+.md ol { list-style: decimal; padding-left: 1.4rem; }
+.md li { margin: 0.15rem 0; }
+.md a { color: #a78bfa; }
+.md strong { color: #e5edf3; }
+.md code { background: #07090b; border: 1px solid #1c242a; border-radius: 3px; padding: 0 0.3rem; color: #fbbf24; font-size: 0.85em; }
+.md pre { background: #07090b; border: 1px solid #1c242a; border-radius: 4px; padding: 0.75rem; overflow-x: auto; white-space: pre; }
+.md pre code { background: none; border: 0; padding: 0; color: #c9d4dc; }
+.md blockquote { border-left: 3px solid #fbbf24; background: rgba(251, 191, 36, 0.05); padding: 0.5rem 0.85rem; color: #fde68a; }
+.md blockquote p:last-child { margin-bottom: 0; }
+.md table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 0.8rem; }
+.md th { text-align: left; color: #6b7b86; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1c242a; padding: 0.4rem 0.75rem; white-space: nowrap; }
+.md td { border-bottom: 1px solid rgba(28, 36, 42, 0.6); padding: 0.4rem 0.75rem; vertical-align: top; }
+.md tr:hover td { background: rgba(28, 36, 42, 0.35); }
+.md hr { border: 0; border-top: 1px solid #1c242a; margin: 1.5rem 0; }
+
+.report-toc li { margin: 0.15rem 0; }
+.report-toc li a { color: #6b7b86; }
+.report-toc li a:hover { color: #c9d4dc; }
+.report-toc .lvl-1 { font-weight: 700; }
+.report-toc .lvl-1 a, .report-toc .lvl-2 a { color: #c9d4dc; }
+.report-toc .lvl-2 { margin-top: 0.4rem; }
+.report-toc .lvl-3 { padding-left: 0.75rem; }
+
+/* layout (Tailwind's arbitrary/responsive variants aren't in the prebuilt app.css) */
+.report-grid { display: grid; gap: 1.5rem; }
+.report-main { min-width: 0; }
+@media (min-width: 1024px) {
+  .report-grid { grid-template-columns: 16rem minmax(0, 1fr); }
+  .report-nav { position: sticky; top: 4rem; max-height: calc(100vh - 5rem); overflow-y: auto; }
+}

@@ -1,7 +1,7 @@
 {# The lab header + every state-dependent action. Re-rendered after each action
    (and polled while an agent owns the lab) so buttons always match the FSM. #}
 <section class="panel"
-  {% if lab.state.value in ("designing", "validating", "deploying", "destroying") %}hx-get="/ui/partials/labs/{{ lab.id }}/panel" hx-trigger="every 3s" hx-target="#lab-panel"{% endif %}>
+  {% if lab.state.value in ("designing", "validating", "deploying", "stopping", "starting", "destroying") %}hx-get="/ui/partials/labs/{{ lab.id }}/panel" hx-trigger="every 3s" hx-target="#lab-panel"{% endif %}>
   <div class="flex flex-wrap items-center gap-3 border-b border-term-line px-4 py-3">
     <h1 class="text-lg text-term-fg">{{ lab.name }}</h1>
     {% include "partials/lab_badge.html" %}
@@ -13,6 +13,7 @@
     <dl class="kv">
       <dt>spec</dt><dd>{{ lab.spec_path or "— (draft: sin spec)" }}</dd>
       <dt>descripción</dt><dd>{{ lab.description or "—" }}</dd>
+      {% if has_report %}<dt>reporte</dt><dd><a href="/labs/{{ lab.id }}/report">📋 reporte de operación del lab</a> <span class="text-term-dim">(hosts, accesos, credenciales, usuarios, grupos, defensa, vulns)</span></dd>{% endif %}
       <dt>último cambio</dt><dd>{{ lab.state_changed_at|dt }} <span class="text-term-dim">({{ lab.state_changed_at|ago }})</span></dd>
       <dt>tokens del lab</dt><dd>{% if lab_usage.runs %}{% with u = lab_usage %}{% include "partials/usage.html" %}{% endwith %}
         {% for agent, u in lab_usage_by_agent.items() %}<div class="text-xs text-term-dim">↳ {{ agent }}: {{ u.total_tokens|tok }} <span class="text-term-dim/70">(in {{ u.input_tokens|tok }} · out {{ u.output_tokens|tok }} · {{ u.runs }} run{{ "" if u.runs == 1 else "s" }})</span></div>{% endfor %}
@@ -46,7 +47,7 @@
     {% endif %}
 
     <div class="flex flex-wrap items-start gap-2 border-t border-term-line pt-4">
-      {% set agent_owned = lab.state.value in ("designing", "deploying", "validating", "destroying") %}
+      {% set agent_owned = lab.state.value in ("designing", "deploying", "validating", "stopping", "starting", "destroying") %}
       {% if lab.spec_path and not agent_owned %}
       <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/check" hx-target="#compile-output" hx-disabled-elt="this"
               title="forge lab-spec --check-only: valida el spec sin escribir nada ni cambiar el estado">
@@ -61,11 +62,52 @@
       <button class="btn-primary" hx-post="/ui/labs/{{ lab.id }}/compile" hx-target="#compile-output" hx-disabled-elt="this">
         forge lab-spec + guardrail <span class="htmx-indicator">…</span>
       </button>
+      {% elif lab.state.value == "destroyed" and lab.spec_path %}
+      <button class="btn-primary" hx-post="/ui/labs/{{ lab.id }}/compile" hx-target="#compile-output" hx-disabled-elt="this"
+              title="forge lab-spec + guardrail sobre {{ lab.spec_path }}: destroyed → designed → compiled → ready; luego apruebas y despliegas">
+        ↻ preparar redespliegue <span class="htmx-indicator">…</span>
+      </button>
+      <span class="w-full text-xs text-term-dim">Lab destruido (coste cero). Para volver a desplegarlo: <span class="text-term-fg">↻ preparar redespliegue</span> (recompila + guardrail) → aprobar → <span class="text-term-fg">▶ desplegar</span>. Mismo spec y mismo seed ⇒ el mismo lab, contraseñas incluidas.</span>
       {% endif %}
 
       {% if lab.state.value in ("compiled", "ready", "approved", "destroyed") %}
       <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/redesign" hx-target="#lab-panel"
               hx-confirm="¿Volver a designed? Se invalida la compilación y cualquier aprobación.">volver a designed</button>
+      {% endif %}
+
+      {% if forge_actions %}
+      <div class="flex w-full flex-col gap-3 rounded border border-term-line p-3">
+        <div class="text-xs uppercase tracking-wider text-term-dim">operación del lab — sin IA <span class="normal-case tracking-normal">(un único comando forge determinista; el clic confirmado es la aprobación)</span></div>
+        <div class="flex flex-wrap items-center gap-2">
+          {% if "validate" in forge_actions %}
+          <button class="btn-primary" hx-post="/ui/labs/{{ lab.id }}/forge/validate" hx-disabled-elt="this"
+                  hx-confirm="¿Validar {{ lab.name }}? forge validate --run comprueba, por el túnel WireGuard, que cada vuln está aplicada y es explotable."
+                  title="forge validate {{ lab.spec_path }} --run">✓ validar</button>
+          {% endif %}
+          {% if "deploy" in forge_actions %}
+          <button class="btn-ok" hx-post="/ui/labs/{{ lab.id }}/forge/deploy" hx-disabled-elt="this"
+                  hx-confirm="Desplegar {{ lab.name }} SIN IA: forge generate + forge deploy crearán infraestructura cloud real con coste. ¿Continuar?"
+                  title="forge generate + forge deploy {{ lab.spec_path }}">▶ desplegar</button>
+          {% endif %}
+          {% if "start" in forge_actions %}
+          <button class="btn-ok" hx-post="/ui/labs/{{ lab.id }}/forge/start" hx-disabled-elt="this"
+                  hx-confirm="¿Encender {{ lab.name }}? Arranca las VMs, levanta el túnel WireGuard y comprueba conectividad (sin terraform apply). Vuelve a facturar cómputo."
+                  title="forge start {{ lab.spec_path }}">▶ encender</button>
+          {% endif %}
+          {% if "stop" in forge_actions %}
+          <button class="btn-ghost" hx-post="/ui/labs/{{ lab.id }}/forge/stop" hx-disabled-elt="this"
+                  hx-confirm="¿Parar {{ lab.name }}? Apagado ordenado de todas las VMs; discos, estado Terraform y snapshot limpio se conservan."
+                  title="forge stop {{ lab.spec_path }}">■ parar</button>
+          {% endif %}
+        </div>
+        {% if "teardown" in forge_actions %}
+        <form class="flex flex-wrap items-center gap-2 border-t border-term-line pt-4" hx-post="/ui/labs/{{ lab.id }}/forge/teardown"
+              hx-confirm="Destruir {{ lab.name }}: forge teardown borrará TODOS sus recursos cloud y verificará coste cero. No se puede deshacer.">
+          <input class="input max-w-md" name="confirm_name" placeholder="escribe {{ lab.name }} para confirmar" autocomplete="off" required>
+          <button class="btn-danger" type="submit" title="forge teardown {{ lab.spec_path }} --force">✗ destruir lab</button>
+        </form>
+        {% endif %}
+      </div>
       {% endif %}
 
       {% for agent in agents if lab.state in agent.allowed_states %}

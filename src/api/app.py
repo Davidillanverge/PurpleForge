@@ -25,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.broker import Broker, EventBroker, RedisEventBroker
+from api.forge_jobs import ForgeActionError, ForgeJobs
 from api.registry import AgentPreconditionError, AgentSpec, default_registry
 from api.routes import approvals, health, labs, providers, runs, usage
 from api.runner import AgentRunner, LabBusy, LLMFactory, UnknownAgent
@@ -137,16 +138,21 @@ def create_app(
         app.state.cipher = cipher
         app.state.broker = broker
         app.state.runner = runner
+        forge_jobs = ForgeJobs(sessionmaker, settings.repo_root, worker_id=runner.worker_id)
+        app.state.forge_jobs = forge_jobs
         if not settings.auth_disabled and not settings.api_tokens:
             log.warning("no PF_API_TOKENS configured: every API request will be rejected (401)")
         if settings.auth_disabled:
             log.warning("PF_AUTH_DISABLED=true: every request is user 'dev' — local development only")
         await runner.recover_orphans()
+        alive = await broker.alive_workers()  # clustered: leave other workers' forge runs alone
+        await forge_jobs.recover_orphans(alive_workers=None if alive is None else {*alive, runner.worker_id})
         await runner.start_background()
         log.info("PurpleForge worker %s ready (broker: %s)", runner.worker_id, type(broker).__name__)
         try:
             yield
         finally:
+            await forge_jobs.shutdown()
             await runner.shutdown()
             await broker.aclose()
             await engine.dispose()
@@ -219,6 +225,7 @@ def _install_error_handlers(app: FastAPI) -> None:
         (UnknownAgent, status.HTTP_404_NOT_FOUND),
         (InvalidTransition, status.HTTP_409_CONFLICT),
         (LabBusy, status.HTTP_409_CONFLICT),
+        (ForgeActionError, status.HTTP_409_CONFLICT),
         (repo.ApprovalAlreadyDecided, status.HTTP_409_CONFLICT),
         (repo.LabHasInfrastructure, status.HTTP_409_CONFLICT),
         (services.LabExists, status.HTTP_409_CONFLICT),

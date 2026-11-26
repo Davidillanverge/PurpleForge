@@ -19,7 +19,10 @@ from pydantic import ValidationError
 
 from api import services
 from api.auth import CSRF_COOKIE, Principal, authenticate, end_session, start_session, user_for_token
-from api.deps import RunnerDep, SessionDep, SettingsDep
+from api.deps import ForgeJobsDep, RunnerDep, SessionDep, SettingsDep
+from api.forge_jobs import ACTIONS as FORGE_ACTIONS
+from api.forge_jobs import available_actions
+from api.lab_report import load_lab_report
 from api.sse import StreamEnd, format_sse, iter_run_events
 from db import repository as repo
 from db.states import LabState, ProviderKind
@@ -112,6 +115,8 @@ async def _lab_ctx(request: Request, session: Any, principal: Principal, lab_id:
         "default_brain": settings.agent_brain,
         "lab_usage": await repo.usage_total(session, principal.tenant, lab_id=lab_id),
         "lab_usage_by_agent": await repo.usage_by_agent(session, principal.tenant, lab_id=lab_id),
+        "forge_actions": {a.name: a for a in available_actions(lab.state)},
+        "has_report": (settings.repo_root / "generated" / lab.name / "lab-report.md").is_file(),
     }
 
 
@@ -320,6 +325,44 @@ async def start_lab_free_run(
     return hx_redirect(f"/runs/{run.id}")
 
 
+@router.post("/ui/labs/{lab_id}/forge/{action}")
+async def forge_action(
+    lab_id: uuid.UUID,
+    action: str,
+    session: SessionDep,
+    principal: UIPrincipal,
+    jobs: ForgeJobsDep,
+    confirm_name: Annotated[str, Form()] = "",
+) -> Response:
+    """No-AI lab operation (validate/deploy/stop/start/teardown) → its live run console."""
+    if action not in FORGE_ACTIONS:
+        return flash_response(f"acción desconocida: {action}")
+    if action == "teardown":
+        lab = await repo.get_lab(session, principal.tenant, lab_id)
+        if confirm_name.strip() != lab.name:
+            return flash_response(f"escribe el nombre del lab ({lab.name}) para confirmar la destrucción")
+    run = await jobs.start(principal, lab_id, action)
+    return hx_redirect(f"/runs/{run.id}")
+
+
+@router.get("/labs/{lab_id}/report", response_class=HTMLResponse)
+async def lab_report(
+    lab_id: uuid.UUID, request: Request, session: SessionDep, principal: UIPrincipal, settings: SettingsDep
+):
+    """Everything needed to operate the lab (hosts, access, credentials, population,
+    defense stack, vulns), from forge's own reports. Holds lab secrets: never cached."""
+    lab = await repo.get_lab(session, principal.tenant, lab_id)
+    return render(
+        request,
+        "lab_report.html",
+        principal,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        nav_active="labs",
+        lab=lab,
+        rep=load_lab_report(settings.repo_root, lab.name, lab.cloud),
+    )
+
+
 # --------------------------------------------------------------------------- runs / console
 
 
@@ -369,6 +412,10 @@ async def cancel_run(run_id: uuid.UUID, request: Request, principal: UIPrincipal
     if current.source == "mcp":
         return flash_response(
             "MCP runs are driven by Claude Code: deny the pending approval to stop one before it touches infrastructure"
+        )
+    if current.source == "forge":
+        return flash_response(
+            "las operaciones forge sin IA no se cancelan a medias (dejarían infraestructura en un estado desconocido)"
         )
     if not await runner.cancel(run_id, tenant=principal.tenant):
         return flash_response("el run ya no está activo")

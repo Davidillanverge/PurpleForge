@@ -1,4 +1,4 @@
-"""FastAPI dependencies: settings, DB session, principal, runner."""
+"""FastAPI dependencies: settings, DB session, principal, runner, no-AI forge jobs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import Principal, authenticate
 from api.broker import EventBroker
+from api.forge_jobs import ForgeJobs
 from api.runner import AgentRunner
 from api.settings import AppSettings
 
@@ -20,6 +21,10 @@ def get_settings(request: Request) -> AppSettings:
 
 def get_runner(request: Request) -> AgentRunner:
     return request.app.state.runner
+
+
+def get_forge_jobs(request: Request) -> ForgeJobs:
+    return request.app.state.forge_jobs
 
 
 def get_broker(request: Request) -> EventBroker:
@@ -40,4 +45,5 @@ SettingsDep = Annotated[AppSettings, Depends(get_settings)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 RunnerDep = Annotated[AgentRunner, Depends(get_runner)]
+ForgeJobsDep = Annotated[ForgeJobs, Depends(get_forge_jobs)]
 BrokerDep = Annotated[EventBroker, Depends(get_broker)]

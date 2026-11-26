@@ -41,6 +41,9 @@
       <pre class="mt-1 max-h-80 overflow-auto rounded bg-term-panel p-2 text-xs {{ 'text-red-200' if d.is_error else 'text-term-fg/90' }}">{{ d.content }}</pre>
     </details>
 
+  {% elif t == "tool_output" %}
+    <pre class="text-xs text-term-fg/90">{{ d.content }}</pre>
+
   {% elif t == "approval_requested" %}
     <span class="text-amber-300">⚠ APROBACIÓN REQUERIDA</span> <span class="text-amber-100">{{ d.reason }}</span>
     <pre class="mt-1 text-xs text-term-dim">{{ d.name }} {{ (d.arguments or {})|pretty_json }}</pre>

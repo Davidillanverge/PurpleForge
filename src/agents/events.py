@@ -23,6 +23,8 @@ class EventType(str, Enum):
     ASSISTANT_MESSAGE = "assistant_message"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    #: a chunk of a long-running tool's live output (no-AI forge runs stream deploy.sh etc.)
+    TOOL_OUTPUT = "tool_output"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_RESOLVED = "approval_resolved"
     PROVIDER_FAILOVER = "provider_failover"

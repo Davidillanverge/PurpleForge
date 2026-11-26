@@ -78,3 +78,19 @@ def validate_outcome(events: Sequence[EventLike]) -> Outcome:
     if forge_call_succeeded(events, "validate"):
         return Outcome(LabState.VALIDATED, "forge validate --run exited 0")
     return Outcome(LabState.DEPLOYED, "validation did not complete — the lab is unchanged")
+
+
+def stop_outcome(events: Sequence[EventLike]) -> Outcome:
+    """`forge stop` exit 0 → STOPPED. Otherwise the VMs are assumed still running:
+    back to DEPLOYED (a validation isn't assumed to survive a half-done stop)."""
+    if forge_call_succeeded(events, "stop"):
+        return Outcome(LabState.STOPPED, "forge stop exited 0 (VMs powered off, Terraform state untouched)")
+    return Outcome(LabState.DEPLOYED, "forge stop did not succeed — VMs may still be running", error="stop failed")
+
+
+def start_outcome(events: Sequence[EventLike]) -> Outcome:
+    """`forge start` exit 0 → DEPLOYED (powered on, tunnel up, connectivity checked).
+    A failed start stays STOPPED: some VMs may be up, a retry or stop fixes it."""
+    if forge_call_succeeded(events, "start"):
+        return Outcome(LabState.DEPLOYED, "forge start exited 0 (VMs on, WireGuard tunnel up, connectivity OK)")
+    return Outcome(LabState.STOPPED, "forge start did not succeed — some VMs may be running", error="start failed")

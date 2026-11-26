@@ -565,8 +565,28 @@ starting and refuses with the exact list of what's missing.
    - **forge lab-spec + guardrail** — the deterministic gate: `designed → compiled → ready`.
 3. In `ready`, a human reviews cost/isolation/reconciliation and **approves** (authorized-use confirmation, invariant #6).
 4. **deploy-operator** → **purple-validator** → **deploy-operator-teardown**, each infra action approved in **approvals**.
+5. Or operate the lab **without AI** (*operación del lab — sin IA*): each button runs one deterministic
+   `forge` command in the background, its live output in the run console (`forge · sin IA` runs, 0 tokens);
+   the confirmed click is the approval. API: `POST /api/labs/{id}/forge/{action}`.
 
-These buttons are hidden (and the API answers 409) while an agent owns the lab.
+   | button | command | from → to |
+   |---|---|---|
+   | **desplegar** | `forge generate` + `forge deploy` | `approved → deploying → deployed` |
+   | **validar** | `forge validate --run` | `deployed\|validated → validating → validated` |
+   | **parar** | `forge stop` | `deployed\|validated → stopping → stopped` |
+   | **encender** | `forge start` | `stopped → starting → deployed` |
+   | **destruir lab** (type the lab name) | `forge teardown --force` | `→ destroying → destroyed` |
+
+   A failed stop leaves the lab `deployed`, a failed start `stopped`, a failed validation `deployed`;
+   deploy/teardown failures follow the agent rules (`failed` only if infrastructure was touched).
+   These runs can't be cancelled midway (the lab would be left in an unknown state).
+6. **📋 reporte de operación del lab** (`/labs/{id}/report`, once `generated/<lab>/` exists): forge's
+   `lab-report.md` (hosts and IPs, credentials, AD users/groups/computers, hardening, EDR, telemetry/BAS
+   agents, vulns, attack path) plus live access (bastion IP, `wg-quick up` command, bastion SSH,
+   per-host reachability from `connectivity.json`) and, when present, `validation-report.md` and
+   `ad-inventory.md`. It holds lab secrets: authenticated only, served `Cache-Control: no-store`.
+
+These buttons are hidden (and the API answers 409) while an agent or a no-AI forge run owns the lab.
 
 **Tokens.** Every engine run records input/output tokens (thinking tokens count as
 output), updated live on each LLM turn: a `Σ … tok` counter in the run console,
