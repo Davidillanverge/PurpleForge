@@ -23,7 +23,6 @@ from api.deps import RunnerDep, SessionDep, SettingsDep
 from api.sse import StreamEnd, format_sse, iter_run_events
 from db import repository as repo
 from db.states import LabState, ProviderKind
-from llm.settings import LLMSettings
 from ui.templating import build_templates
 
 router = APIRouter(include_in_schema=False)
@@ -109,6 +108,8 @@ async def _lab_ctx(request: Request, session: Any, principal: Principal, lab_id:
         "runs": await repo.list_runs(session, principal.tenant, lab_id=lab_id),
         "agents": list(request.app.state.runner.registry.values()),
         "manifest": services.load_manifest_summary(settings.repo_root, lab.name) if lab.spec_path else None,
+        "lab_usage": await repo.usage_total(session, principal.tenant, lab_id=lab_id),
+        "lab_usage_by_agent": await repo.usage_by_agent(session, principal.tenant, lab_id=lab_id),
     }
 
 
@@ -157,12 +158,20 @@ async def dashboard(request: Request, session: SessionDep, principal: UIPrincipa
         active_runs=await repo.count_active_runs(session, principal.tenant),
         specs=specs,
         lab_free_agents=[a for a in request.app.state.runner.registry.values() if not a.requires_lab],
+        usage_total=await repo.usage_total(session, principal.tenant),
+        usage_by_lab=await repo.usage_by_lab(session, principal.tenant),
     )
 
 
 @router.get("/ui/partials/labs", response_class=HTMLResponse)
 async def lab_rows(request: Request, session: SessionDep, principal: UIPrincipal):
-    return render(request, "partials/lab_rows.html", principal, labs=await repo.list_labs(session, principal.tenant))
+    return render(
+        request,
+        "partials/lab_rows.html",
+        principal,
+        labs=await repo.list_labs(session, principal.tenant),
+        usage_by_lab=await repo.usage_by_lab(session, principal.tenant),
+    )
 
 
 @router.post("/ui/labs")
@@ -410,6 +419,11 @@ async def pending_approvals(request: Request, session: SessionDep, principal: UI
     return render(request, "partials/pending_approvals.html", principal, lab_names=names, **ctx)
 
 
+@router.get("/ui/partials/nav-tokens", response_class=HTMLResponse)
+async def nav_tokens(request: Request, session: SessionDep, principal: UIPrincipal):
+    return render(request, "partials/nav_tokens.html", principal, u=await repo.usage_total(session, principal.tenant))
+
+
 @router.get("/ui/partials/nav-approvals", response_class=HTMLResponse)
 async def nav_approvals(request: Request, session: SessionDep, principal: UIPrincipal):
     count = len(await repo.list_pending_approvals(session, principal.tenant))
@@ -436,10 +450,7 @@ async def decide(
 
 @router.get("/settings/providers", response_class=HTMLResponse)
 async def providers_page(request: Request, session: SessionDep, principal: UIPrincipal):
-    try:
-        env_providers = LLMSettings().providers
-    except ValueError:
-        env_providers = []
+    env_rows, env_error = services.env_providers()
     return render(
         request,
         "providers.html",
@@ -448,7 +459,8 @@ async def providers_page(request: Request, session: SessionDep, principal: UIPri
         providers=await repo.list_provider_configs(session, principal.tenant),
         kinds=[k.value for k in ProviderKind],
         cipher_ready=request.app.state.cipher is not None,
-        env_providers=env_providers,
+        env_rows=env_rows,
+        env_error=env_error,
     )
 
 
@@ -497,6 +509,12 @@ async def save_provider(
         **kwargs,
     )
     return hx_redirect("/settings/providers")
+
+
+@router.post("/ui/providers/env/{name}/test", response_class=HTMLResponse)
+async def test_env_provider(name: str, request: Request, principal: UIPrincipal):
+    result = await services.test_env_provider(name)
+    return render(request, "partials/provider_test.html", principal, result=result)
 
 
 @router.post("/ui/providers/{name}/delete")

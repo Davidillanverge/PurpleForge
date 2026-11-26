@@ -166,3 +166,25 @@ def test_tool_subprocesses_never_get_gemini_keys():
     env = {"GEMINI_API_KEY": "a", "GOOGLE_API_KEY": "b", "PATH": "/bin"}
     assert scrub_env(env) == {"PATH": "/bin"}
     assert scrub_env(env, allow_cloud=True) == {"PATH": "/bin"}  # not even the deploy-operator
+
+
+async def test_429_carries_retry_delay_from_retryinfo():
+    def handler(request):
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": 429,
+                    "status": "RESOURCE_EXHAUSTED",
+                    "message": "Quota exceeded for metric: generate_content_free_tier_requests, limit: 15",
+                    "details": [
+                        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": []},
+                        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "34s"},
+                    ],
+                }
+            },
+        )
+
+    with pytest.raises(TransientProviderError) as info:
+        await _provider(handler).complete([Message.user("hi")])
+    assert info.value.retry_after == 34.0

@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.broker import Broker, EventBroker, RedisEventBroker
 from api.registry import AgentPreconditionError, AgentSpec, default_registry
-from api.routes import approvals, health, labs, providers, runs
+from api.routes import approvals, health, labs, providers, runs, usage
 from api.runner import AgentRunner, LabBusy, LLMFactory, UnknownAgent
 from api.settings import AppSettings
 from db import repository as repo
@@ -139,7 +139,7 @@ def create_app(
             await engine.dispose()
 
     app = FastAPI(title="PurpleForge", version="0.1.0", lifespan=lifespan)
-    for module in (health, labs, runs, approvals, providers):
+    for module in (health, labs, runs, approvals, providers, usage):
         app.include_router(module.router)
     from ui.routes import router as ui_router
     from ui.templating import STATIC_DIR

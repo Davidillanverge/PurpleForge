@@ -56,6 +56,19 @@ class LabTransitionOut(_ORM):
     at: datetime
 
 
+class UsageOut(BaseModel):
+    """Tokens consumed by agent runs (thinking tokens count as output)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    runs: int = 0
+
+    @classmethod
+    def of(cls, u: Any) -> UsageOut:
+        return cls(input_tokens=u.input_tokens, output_tokens=u.output_tokens, total_tokens=u.total_tokens, runs=u.runs)
+
+
 class LabOut(_ORM):
     id: uuid.UUID
     name: str
@@ -67,11 +80,21 @@ class LabOut(_ORM):
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+    #: tokens of every agent run on this lab
+    usage: UsageOut = UsageOut()
 
 
 class LabDetail(LabOut):
     transitions: list[LabTransitionOut] = []
     runs: list[RunOut] = []
+    usage_by_agent: dict[str, UsageOut] = {}
+
+
+class UsageReport(BaseModel):
+    total: UsageOut
+    by_agent: dict[str, UsageOut]
+    by_lab: dict[str, UsageOut]  # lab name → usage
+    without_lab: UsageOut  # e.g. catalog-author runs
 
 
 class CompileResult(BaseModel):

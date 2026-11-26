@@ -23,7 +23,8 @@ from db import repository as repo
 from db.crypto import SecretCipher
 from db.models import Lab
 from db.states import LabState
-from llm.provider import Message, ProviderError
+from llm.provider import LLMProvider, Message, ProviderError
+from llm.settings import LLMSettings, build_provider
 
 __all__ = ["SpecError"]
 
@@ -183,25 +184,75 @@ class ProviderTestOutcome(BaseModel):
     error: str | None = None
 
 
+async def ping_provider(provider: LLMProvider, label: str) -> ProviderTestOutcome:
+    """One tiny completion against a single provider (no pool, no failover); closes it.
+    max_tokens leaves room for thinking models, whose reasoning counts as output."""
+    started = time.monotonic()
+    try:
+        resp = await provider.complete([Message.user("Reply with the single word: pong")], max_tokens=256)
+        return ProviderTestOutcome(
+            ok=True, provider=label, model=resp.model, latency_ms=int((time.monotonic() - started) * 1000)
+        )
+    except ProviderError as exc:
+        return ProviderTestOutcome(ok=False, provider=label, error=str(exc))
+    finally:
+        await provider.aclose()
+
+
 async def test_provider(
     session: AsyncSession, principal: Principal, name: str, cipher: SecretCipher | None
 ) -> ProviderTestOutcome:
-    """One tiny completion against this provider alone (no pool, no failover)."""
+    """Test a tenant provider configured in the DB (the UI's providers table)."""
     cfg = await repo.get_provider_config(session, principal.tenant, name)
     try:
         provider = repo.provider_from_config(cfg, cipher)
     except ValueError as exc:
         return ProviderTestOutcome(ok=False, provider=name, error=str(exc))
-    started = time.monotonic()
+    return await ping_provider(provider, name)
+
+
+class EnvProvider(BaseModel):
+    name: str
+    model: str
+    endpoint: str | None = None
+    key_set: bool | None = None  # None: this kind needs no key (ollama)
+
+
+def env_providers() -> tuple[list[EnvProvider], str | None]:
+    """The PF_LLM_* / .env providers, as the fallback pool would build them.
+    Returns (rows, error) — a bad env value is shown instead of crashing the page."""
     try:
-        resp = await provider.complete([Message.user("Reply with the single word: pong")], max_tokens=16)
-        return ProviderTestOutcome(
-            ok=True, provider=name, model=resp.model, latency_ms=int((time.monotonic() - started) * 1000)
-        )
-    except ProviderError as exc:
-        return ProviderTestOutcome(ok=False, provider=name, error=str(exc))
-    finally:
-        await provider.aclose()
+        st = LLMSettings()
+    except ValueError as exc:
+        return [], str(exc).splitlines()[0]
+    rows = []
+    for name in st.providers:
+        if name == "anthropic":
+            rows.append(
+                EnvProvider(
+                    name=name,
+                    model=st.anthropic_model,
+                    endpoint=st.anthropic_base_url,
+                    key_set=bool(st.anthropic_api_key),
+                )
+            )
+        elif name == "gemini":
+            rows.append(
+                EnvProvider(
+                    name=name, model=st.gemini_model, endpoint=st.gemini_base_url, key_set=bool(st.gemini_api_key)
+                )
+            )
+        elif name == "ollama":
+            rows.append(EnvProvider(name=name, model=st.ollama_model, endpoint=st.ollama_base_url))
+    return rows, None
+
+
+async def test_env_provider(name: str) -> ProviderTestOutcome:
+    """Test one of the .env providers exactly as the fallback pool would build it."""
+    st = LLMSettings()
+    if name not in st.providers:
+        return ProviderTestOutcome(ok=False, provider=name, error=f"{name!r} is not in PF_LLM_PROVIDERS")
+    return await ping_provider(build_provider(name, st), f"{name} (.env)")
 
 
 def load_manifest_summary(repo_root: Path, lab_name: str) -> dict[str, Any] | None:

@@ -28,6 +28,7 @@ from llm.provider import (
     ToolSpec,
     TransientProviderError,
     Usage,
+    parse_retry_after,
 )
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -79,6 +80,17 @@ def _error_detail(resp: httpx.Response) -> str:
         return f"{err.get('status', '')}: {err.get('message', '')}".strip(": ")[:500]
     except ValueError:
         return resp.text[:500]
+
+
+def _retry_delay(resp: httpx.Response) -> float | None:
+    """Gemini puts the wait in error.details[RetryInfo].retryDelay ("34s")."""
+    try:
+        for detail in resp.json().get("error", {}).get("details", []) or []:
+            if str(detail.get("@type", "")).endswith("google.rpc.RetryInfo"):
+                return parse_retry_after(detail.get("retryDelay"))
+    except (ValueError, AttributeError):
+        pass
+    return parse_retry_after(resp.headers.get("retry-after"))
 
 
 class GeminiProvider:
@@ -195,7 +207,7 @@ class GeminiProvider:
         code = resp.status_code
         msg = f"HTTP {code}: {_error_detail(resp)}"
         if code in (408, 429) or code >= 500:
-            return TransientProviderError(msg, provider=self.name, status_code=code)
+            return TransientProviderError(msg, provider=self.name, status_code=code, retry_after=_retry_delay(resp))
         if code in (401, 403, 404):  # bad/expired key, API not enabled, unknown model
             return ProviderConfigError(msg, provider=self.name, status_code=code)
         if code == 400 and ("API_KEY" in msg or "API key" in msg):

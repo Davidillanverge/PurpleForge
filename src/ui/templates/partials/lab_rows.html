@@ -8,8 +8,10 @@
   <td>{% include "partials/lab_badge.html" %}</td>
   <td class="text-term-dim">{{ lab.cloud or "—" }}</td>
   <td class="text-term-dim">{{ lab.spec_path or "—" }}</td>
+  {% set u = usage_by_lab.get(lab.id) %}
+  <td class="whitespace-nowrap">{% if u %}<span class="text-cyan-300" title="{{ "{:,}".format(u.total_tokens) }} tokens · in {{ "{:,}".format(u.input_tokens) }} · out {{ "{:,}".format(u.output_tokens) }} · {{ u.runs }} runs">{{ u.total_tokens|tok }}</span>{% else %}<span class="text-term-dim">—</span>{% endif %}</td>
   <td class="text-term-dim" title="{{ lab.updated_at|dt }}">{{ lab.updated_at|ago }}</td>
 </tr>
 {% else %}
-<tr><td colspan="5" class="py-8 text-center text-term-dim">sin labs todavía — crea uno a la derecha</td></tr>
+<tr><td colspan="6" class="py-8 text-center text-term-dim">sin labs todavía — crea uno a la derecha</td></tr>
 {% endfor %}

@@ -26,6 +26,7 @@
         {% endfor %}
       </div>
       <div class="ml-auto flex items-center gap-3 text-xs text-term-dim">
+        <span id="nav-tokens" class="text-cyan-300" hx-get="/ui/partials/nav-tokens" hx-trigger="load, every 5s" hx-swap="innerHTML"></span>
         <span>{{ principal.actor }}<span class="text-term-line"> @ </span>{{ principal.tenant }}</span>
         <button class="btn-ghost" hx-post="/logout">logout</button>
       </div>

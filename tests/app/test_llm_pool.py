@@ -192,3 +192,21 @@ async def test_unexpected_provider_exception_still_fails_over():
     resp = await h.pool([a, b]).complete(MSGS)
     assert resp.provider == "b" and a.calls == 1 and h.sleeps == []
     assert isinstance(h.events[0].error, ProviderConfigError) and "TypeError" in str(h.events[0].error)
+
+
+async def test_pool_honours_provider_retry_after():
+    """Regression (live, Gemini free tier 15 RPM): 1-2 s backoff isn't enough for a
+    per-minute quota — wait what the provider asked for, then retry the same provider."""
+    h = Harness()
+    a = FakeProvider("a", [TransientProviderError("429 quota", retry_after=34.0), "after the wait"])
+    b = FakeProvider("b", ["never"])
+    resp = await h.pool([a, b], backoff_base=1.0).complete(MSGS)
+    assert resp.content == "after the wait" and h.sleeps == [34.0] and b.calls == 0
+
+
+async def test_pool_fails_over_when_asked_to_wait_too_long():
+    h = Harness()
+    a = FakeProvider("a", [TransientProviderError("429 daily quota", retry_after=3600.0)])
+    b = FakeProvider("b", ["from b"])
+    resp = await h.pool([a, b], max_retry_after=120.0).complete(MSGS)
+    assert resp.provider == "b" and h.sleeps == []

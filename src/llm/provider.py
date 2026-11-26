@@ -110,10 +110,14 @@ class ProviderError(Exception):
     #: worth trying the NEXT provider in the pool
     failover: bool = True
 
-    def __init__(self, message: str, *, provider: str = "", status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, provider: str = "", status_code: int | None = None, retry_after: float | None = None
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.status_code = status_code
+        #: seconds the provider asked us to wait (Retry-After / Gemini RetryInfo); None = unknown
+        self.retry_after = retry_after
 
     def __str__(self) -> str:
         prefix = f"[{self.provider}] " if self.provider else ""
@@ -136,6 +140,18 @@ class InvalidRequestError(ProviderError):
     provider won't fix our bug, so the pool raises it immediately."""
 
     failover = False
+
+
+def parse_retry_after(value: object) -> float | None:
+    """'34s', '1.5s', '30' (Retry-After seconds) → seconds; anything else → None."""
+    if value is None:
+        return None
+    text = str(value).strip().removesuffix("s")
+    try:
+        seconds = float(text)
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
 
 
 class AllProvidersFailed(ProviderError):

@@ -51,6 +51,7 @@ class LLMSettings(BaseSettings):
     backoff_base: float = 1.0
     backoff_max: float = 20.0
     cooldown_seconds: float = 60.0
+    max_retry_after: float = 120.0
 
     @field_validator("providers", mode="before")
     @classmethod
@@ -109,5 +110,6 @@ def build_pool(settings: LLMSettings | None = None, *, on_failover: FailoverCall
         backoff_base=settings.backoff_base,
         backoff_max=settings.backoff_max,
         cooldown_seconds=settings.cooldown_seconds,
+        max_retry_after=settings.max_retry_after,
         on_failover=on_failover,
     )

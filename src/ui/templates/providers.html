@@ -2,8 +2,35 @@
 {% block title %}proveedores{% endblock %}
 {% block content %}
 <h1 class="prompt mb-2 text-lg">providers --list</h1>
-<p class="mb-6 max-w-3xl text-term-dim">Proveedores LLM del tenant, probados en orden de prioridad (menor primero) con failover automático.
-  {% if not providers %}Sin configuración propia: se usan los valores por defecto del entorno (<span class="text-term-fg">PF_LLM_PROVIDERS={{ env_providers|join(",") }}</span>).{% endif %}</p>
+<p class="mb-6 max-w-3xl text-term-dim">Los agentes usan los proveedores en orden, con failover automático.
+  Si el tenant tiene proveedores propios (tabla de abajo) se usan esos; si no, los del entorno (<span class="text-term-fg">.env</span>).</p>
+
+<section class="panel mb-6 overflow-x-auto">
+  <div class="panel-title flex items-center justify-between">
+    <span>desde el entorno (.env / PF_LLM_*)</span>
+    {% if providers %}<span class="normal-case tracking-normal text-term-dim">○ inactivos: hay proveedores propios del tenant</span>
+    {% else %}<span class="normal-case tracking-normal text-green-300">● en uso</span>{% endif %}
+  </div>
+  {% if env_error %}<div class="px-4 py-3 text-red-200">✗ configuración inválida: {{ env_error }}</div>{% endif %}
+  <table class="table">
+    <thead><tr><th>orden</th><th>proveedor</th><th>modelo</th><th>endpoint</th><th>key</th><th></th></tr></thead>
+    <tbody>
+      {% for p in env_rows %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td class="text-term-fg">{{ p.name }}</td>
+        <td>{{ p.model }}</td>
+        <td class="text-term-dim">{{ p.endpoint or "default" }}</td>
+        <td>{% if p.key_set is none %}<span class="text-term-dim">n/a</span>{% elif p.key_set %}<span class="text-green-300">✓ en .env</span>{% else %}<span class="text-red-300">✗ falta (se omite)</span>{% endif %}</td>
+        <td class="text-right"><button class="btn-ghost" hx-post="/ui/providers/env/{{ p.name }}/test" hx-target="#test-env-{{ p.name }}" hx-disabled-elt="this">test <span class="htmx-indicator">…</span></button></td>
+      </tr>
+      <tr><td colspan="6" id="test-env-{{ p.name }}" class="border-0 p-0"></td></tr>
+      {% else %}
+      <tr><td colspan="6" class="py-6 text-center text-term-dim">ninguno en PF_LLM_PROVIDERS</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 
 {% if not cipher_ready %}
 <div class="mb-6 rounded border border-amber-500/60 bg-amber-500/5 px-4 py-3 text-amber-200">
@@ -13,7 +40,7 @@
 
 <div class="grid gap-6 lg:grid-cols-[1fr_24rem]">
   <section class="panel overflow-x-auto">
-    <div class="panel-title">configurados</div>
+    <div class="panel-title">propios del tenant (base de datos)</div>
     <table class="table">
       <thead><tr><th>prio</th><th>nombre</th><th>tipo</th><th>modelo</th><th>endpoint</th><th>key</th><th></th></tr></thead>
       <tbody id="provider-rows">
@@ -32,7 +59,7 @@
         </tr>
         <tr><td colspan="7" id="test-{{ p.name }}" class="border-0 p-0"></td></tr>
         {% else %}
-        <tr><td colspan="7" class="py-6 text-center text-term-dim">ninguno — usando PF_LLM_* del entorno</td></tr>
+        <tr><td colspan="7" class="py-6 text-center text-term-dim">ninguno — se usan los del entorno (arriba)</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -17,6 +17,7 @@ from api.schemas import (
     LabTransitionRequest,
     LabUpdate,
     RunOut,
+    UsageOut,
 )
 from db import repository as repo
 from db.states import LabState
@@ -26,7 +27,15 @@ router = APIRouter(prefix="/api/labs", tags=["labs"])
 
 @router.get("", response_model=list[LabOut])
 async def list_labs(session: SessionDep, principal: PrincipalDep, state: list[LabState] | None = None):
-    return await repo.list_labs(session, principal.tenant, states=state)
+    labs = await repo.list_labs(session, principal.tenant, states=state)
+    usage = await repo.usage_by_lab(session, principal.tenant)
+    out = []
+    for lab in labs:
+        item = LabOut.model_validate(lab)
+        if lab.id in usage:
+            item.usage = UsageOut.of(usage[lab.id])
+        out.append(item)
+    return out
 
 
 @router.post("", response_model=LabDetail, status_code=status.HTTP_201_CREATED)
@@ -85,4 +94,8 @@ async def _detail(session, tenant: str, lab_id: uuid.UUID) -> LabDetail:
     out = LabDetail.model_validate({**LabOut.model_validate(lab).model_dump(), "transitions": [], "runs": []})
     out.transitions = [LabTransitionOut.model_validate(t) for t in transitions]
     out.runs = [RunOut.model_validate(r) for r in runs]
+    out.usage = UsageOut.of(await repo.usage_total(session, tenant, lab_id=lab_id))
+    out.usage_by_agent = {
+        a: UsageOut.of(u) for a, u in (await repo.usage_by_agent(session, tenant, lab_id=lab_id)).items()
+    }
     return out

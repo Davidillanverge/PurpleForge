@@ -100,6 +100,18 @@ def ago(value: datetime | None) -> str:
     return f"{max(secs, 0)}s ago"
 
 
+def tok(value: int | None) -> str:
+    """1234 → '1.2k', 2_345_678 → '2.35M' (exact count goes in a title attribute)."""
+    n = int(value or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    if n >= 10_000:
+        return f"{n / 1000:.0f}k"
+    if n >= 1_000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
+
+
 def pretty_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, default=str, sort_keys=True)
 
@@ -118,6 +130,7 @@ def build_templates() -> Jinja2Templates:
     env.filters.update(
         state_class=state_class,
         approval_class=approval_class,
+        tok=tok,
         dt=fmt_dt,
         ago=ago,
         pretty_json=pretty_json,

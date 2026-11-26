@@ -1,0 +1,3 @@
+{# `u` is a repository.Usage / UsageOut-like object #}
+<span class="text-term-fg" title="{{ "{:,}".format(u.total_tokens) }} tokens">Σ {{ u.total_tokens|tok }}</span>
+<span class="text-term-dim">· in {{ u.input_tokens|tok }} · out {{ u.output_tokens|tok }}{% if u.runs is defined %} · {{ u.runs }} run{{ "" if u.runs == 1 else "s" }}{% endif %}</span>

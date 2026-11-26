@@ -21,6 +21,7 @@ from llm.provider import (
     ToolSpec,
     TransientProviderError,
     Usage,
+    parse_retry_after,
 )
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -202,7 +203,8 @@ class OllamaProvider:
         code = resp.status_code
         msg = f"HTTP {code}: {_error_detail(resp)}"
         if code in (408, 429) or code >= 500:
-            return TransientProviderError(msg, provider=self.name, status_code=code)
+            wait = parse_retry_after(resp.headers.get("retry-after"))
+            return TransientProviderError(msg, provider=self.name, status_code=code, retry_after=wait)
         if code in (401, 403, 404):  # 404 = model not pulled
             return ProviderConfigError(msg, provider=self.name, status_code=code)
         return InvalidRequestError(msg, provider=self.name, status_code=code)

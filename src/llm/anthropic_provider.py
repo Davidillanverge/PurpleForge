@@ -18,6 +18,7 @@ from llm.provider import (
     ToolSpec,
     TransientProviderError,
     Usage,
+    parse_retry_after,
 )
 
 # The agent .md frontmatter says `model: sonnet`; resolve those short names.
@@ -94,7 +95,8 @@ def map_error(exc: Exception, provider: str = "anthropic") -> ProviderError:
         code = exc.status_code
         msg = f"HTTP {code}: {exc.message}"
         if code in (408, 409, 429) or code >= 500:
-            return TransientProviderError(msg, provider=provider, status_code=code)
+            wait = parse_retry_after(exc.response.headers.get("retry-after")) if exc.response is not None else None
+            return TransientProviderError(msg, provider=provider, status_code=code, retry_after=wait)
         if code in (401, 402, 403, 404):
             return ProviderConfigError(msg, provider=provider, status_code=code)
         return InvalidRequestError(msg, provider=provider, status_code=code)

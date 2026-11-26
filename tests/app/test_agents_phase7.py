@@ -304,3 +304,14 @@ async def test_registry_exposes_all_agents(app_client):
         "deploy-operator-teardown",
         "catalog-author",
     ]
+
+
+def test_designer_task_points_at_schema_and_known_good_examples(repo_root):
+    from agents.lab_designer import LabDesignerAgent
+
+    (repo_root / "specs" / "aaa-broken.yml").write_text("lab: {name: aaa-broken}\n")  # a half-written user spec
+    agent = LabDesignerAgent(None, repo_root=repo_root)  # type: ignore[arg-type]
+    task = agent.task("new-lab", "small AD", existing=False)
+    assert "specs/schema/lab-spec.schema.json" in task
+    assert "`specs/winrm-validate-lab.yml`" in task and "aaa-broken" not in task
+    assert "winrm-validate-lab.yml" not in agent.task("winrm-validate-lab", "x", existing=True).split("shape")[1][:120]

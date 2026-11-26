@@ -3,7 +3,8 @@
 Policy (driven by the error class, see ``llm.provider``):
 
 - ``TransientProviderError`` → retry the same provider with exponential backoff
-  up to ``max_retries`` times, then fail over to the next one.
+  (or the provider's own Retry-After, if longer and <= ``max_retry_after``) up
+  to ``max_retries`` times, then fail over to the next one.
 - ``ProviderConfigError`` → fail over immediately (retrying won't fix a bad key).
 - ``InvalidRequestError`` → raise immediately (the request is our bug).
 
@@ -55,6 +56,7 @@ class LLMPool:
         backoff_base: float = 1.0,
         backoff_max: float = 20.0,
         cooldown_seconds: float = 60.0,
+        max_retry_after: float = 120.0,
         on_failover: FailoverCallback | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -69,6 +71,8 @@ class LLMPool:
         self.backoff_base = backoff_base
         self.backoff_max = backoff_max
         self.cooldown_seconds = cooldown_seconds
+        #: a provider asking us to wait longer than this is failed over instead
+        self.max_retry_after = max_retry_after
         self.on_failover = on_failover
         self._sleep = sleep
         self._clock = clock
@@ -132,8 +136,10 @@ class LLMPool:
                         exc.provider = provider.name
                     if not exc.failover:
                         raise  # only real ProviderErrors can be non-failover, so exc is raw
-                    if exc.retryable and attempt < self.max_retries:
-                        await self._sleep(self._backoff(attempt))
+                    wait = max(self._backoff(attempt), exc.retry_after or 0.0)
+                    if exc.retryable and attempt < self.max_retries and wait <= self.max_retry_after:
+                        # honour the provider's own Retry-After / RetryInfo (rate limits are per minute)
+                        await self._sleep(wait)
                         attempt += 1
                         continue
                     errors.append(exc)

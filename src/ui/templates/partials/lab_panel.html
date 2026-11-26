@@ -14,6 +14,9 @@
       <dt>spec</dt><dd>{{ lab.spec_path or "— (draft: sin spec)" }}</dd>
       <dt>descripción</dt><dd>{{ lab.description or "—" }}</dd>
       <dt>último cambio</dt><dd>{{ lab.state_changed_at|dt }} <span class="text-term-dim">({{ lab.state_changed_at|ago }})</span></dd>
+      <dt>tokens del lab</dt><dd>{% if lab_usage.runs %}{% with u = lab_usage %}{% include "partials/usage.html" %}{% endwith %}
+        {% for agent, u in lab_usage_by_agent.items() %}<div class="text-xs text-term-dim">↳ {{ agent }}: {{ u.total_tokens|tok }} <span class="text-term-dim/70">(in {{ u.input_tokens|tok }} · out {{ u.output_tokens|tok }} · {{ u.runs }} run{{ "" if u.runs == 1 else "s" }})</span></div>{% endfor %}
+        {% else %}<span class="text-term-dim">— (ningún agente ha trabajado en este lab)</span>{% endif %}</dd>
     </dl>
     {% if lab.last_error %}
     <pre class="rounded border border-red-600/60 bg-red-500/10 p-3 text-red-200">✗ {{ lab.last_error }}</pre>

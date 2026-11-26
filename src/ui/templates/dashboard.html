@@ -6,13 +6,14 @@
   <span class="text-xs text-term-dim">{{ labs|length }} labs</span>
 </div>
 
-<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
   {% set infra = labs|selectattr("state", "in", INFRA_STATES)|list %}
   {% for label, value, cls, href in [
       ("labs", labs|length, "text-term-fg", None),
       ("infra viva", infra|length, "text-orange-300" if infra else "text-term-fg", None),
       ("aprobaciones", pending_count, "text-amber-300" if pending_count else "text-term-fg", "/approvals"),
-      ("runs activos", active_runs, "text-cyan-300" if active_runs else "text-term-fg", None)] %}
+      ("runs activos", active_runs, "text-cyan-300" if active_runs else "text-term-fg", None),
+      ("tokens totales", usage_total.total_tokens|tok, "text-cyan-300", None)] %}
   <div class="panel px-4 py-3">
     <div class="text-xs uppercase tracking-wider text-term-dim">{{ label }}</div>
     <div class="mt-1 text-2xl {{ cls }}">{% if href %}<a href="{{ href }}" class="{{ cls }}">{{ value }}</a>{% else %}{{ value }}{% endif %}</div>
@@ -24,7 +25,7 @@
   <section class="panel overflow-x-auto">
     <div class="panel-title">labs</div>
     <table class="table">
-      <thead><tr><th>lab</th><th>estado</th><th>cloud</th><th>spec</th><th>actualizado</th></tr></thead>
+      <thead><tr><th>lab</th><th>estado</th><th>cloud</th><th>spec</th><th>tokens</th><th>actualizado</th></tr></thead>
       <tbody id="lab-rows" hx-get="/ui/partials/labs" hx-trigger="every 5s" hx-swap="innerHTML">
         {% include "partials/lab_rows.html" %}
       </tbody>

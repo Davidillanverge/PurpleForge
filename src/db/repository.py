@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agents.engine import AgentResult, ApprovalRequest
@@ -457,6 +458,7 @@ async def build_tenant_pool(
         backoff_base=settings.backoff_base,
         backoff_max=settings.backoff_max,
         cooldown_seconds=settings.cooldown_seconds,
+        max_retry_after=settings.max_retry_after,
         on_failover=on_failover,
     )
 
@@ -635,3 +637,55 @@ async def lab_names(session: AsyncSession, tenant_id: str, ids: Iterable[uuid.UU
         return {}
     stmt = select(Lab.id, Lab.name).where(Lab.tenant_id == tenant_id, Lab.id.in_(wanted))
     return {row.id: row.name for row in (await session.execute(stmt)).all()}
+
+
+# --------------------------------------------------------------------------- token usage
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Tokens consumed by a set of agent runs (thinking tokens count as output)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    runs: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+_SUM_IN = func.coalesce(func.sum(AgentRun.input_tokens), 0)
+_SUM_OUT = func.coalesce(func.sum(AgentRun.output_tokens), 0)
+
+
+async def usage_total(session: AsyncSession, tenant_id: str, *, lab_id: uuid.UUID | str | None = None) -> Usage:
+    stmt = select(_SUM_IN, _SUM_OUT, func.count(AgentRun.id)).where(AgentRun.tenant_id == tenant_id)
+    if lab_id is not None:
+        stmt = stmt.where(AgentRun.lab_id == _uuid(lab_id))
+    i, o, n = (await session.execute(stmt)).one()
+    return Usage(int(i), int(o), int(n))
+
+
+async def usage_by_lab(session: AsyncSession, tenant_id: str) -> dict[uuid.UUID, Usage]:
+    """lab_id → usage, for every lab that ran at least one agent (runs without a lab are excluded)."""
+    stmt = (
+        select(AgentRun.lab_id, _SUM_IN, _SUM_OUT, func.count(AgentRun.id))
+        .where(AgentRun.tenant_id == tenant_id, AgentRun.lab_id.is_not(None))
+        .group_by(AgentRun.lab_id)
+    )
+    return {lab: Usage(int(i), int(o), int(n)) for lab, i, o, n in (await session.execute(stmt)).all() if lab}
+
+
+async def usage_by_agent(
+    session: AsyncSession, tenant_id: str, *, lab_id: uuid.UUID | str | None = None
+) -> dict[str, Usage]:
+    stmt = (
+        select(AgentRun.agent, _SUM_IN, _SUM_OUT, func.count(AgentRun.id))
+        .where(AgentRun.tenant_id == tenant_id)
+        .group_by(AgentRun.agent)
+        .order_by(AgentRun.agent)
+    )
+    if lab_id is not None:
+        stmt = stmt.where(AgentRun.lab_id == _uuid(lab_id))
+    return {agent: Usage(int(i), int(o), int(n)) for agent, i, o, n in (await session.execute(stmt)).all()}

@@ -243,7 +243,7 @@ async def test_launch_validator_from_lab_page(ui, llms, repo_root):
 
 async def test_providers_page_never_shows_keys(ui):
     page = (await ui.get("/settings/providers")).text
-    assert "PF_LLM_PROVIDERS=" in page  # env fallback explained when nothing is configured
+    assert "desde el entorno" in page and "● en uso" in page  # env providers listed when the tenant has none
 
     form = {
         "name": "claude",
@@ -285,3 +285,16 @@ async def test_incomplete_manifest_is_flagged_not_rendered_as_values(ui, repo_ro
     (d / "lab-manifest.json").write_text('{"vulnerabilities_planned": []}')
     page = (await ui.get(f"/labs/{lab.id}")).text
     assert "no es un manifest completo" in page and "None / None" not in page
+
+
+async def test_env_providers_are_listed_and_testable(ui, monkeypatch):
+    monkeypatch.setenv("PF_LLM_PROVIDERS", "gemini,ollama")
+    monkeypatch.setenv("GEMINI_API_KEY", "k-test")
+    monkeypatch.setenv("PF_LLM_GEMINI_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("PF_LLM_OLLAMA_BASE_URL", "http://127.0.0.1:9")
+    page = (await ui.get("/settings/providers")).text
+    assert "gemini-3.1-flash-lite" in page and "✓ en .env" in page and "k-test" not in page
+    r = await ui.post("/ui/providers/env/ollama/test", headers=hx(ui))
+    assert "✗ ollama (.env)" in r.text  # unreachable endpoint → a clear error, not a crash
+    r = await ui.post("/ui/providers/env/anthropic/test", headers=hx(ui))
+    assert "not in PF_LLM_PROVIDERS" in r.text
