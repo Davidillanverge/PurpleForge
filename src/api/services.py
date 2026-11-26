@@ -343,8 +343,6 @@ class BrainInfo(BaseModel):
 
 async def brains(session: AsyncSession, principal: Principal, settings: AppSettings) -> list[BrainInfo]:
     """Which brains can run an agent on this install right now (shown in the launch forms)."""
-    from api import claude_brain
-
     engine_reason = None
     if not await repo.list_provider_configs(session, principal.tenant, enabled_only=True):
         try:
@@ -354,13 +352,10 @@ async def brains(session: AsyncSession, principal: Principal, settings: AppSetti
                 engine_reason = "no LLM API provider configured (set a key in .env or add one under providers)"
         except ValueError as exc:
             engine_reason = f"invalid LLM settings: {exc}"
-    claude_reason = claude_brain.availability(settings)
-    return [
-        BrainInfo(name="engine", label="API LLM (motor)", available=engine_reason is None, reason=engine_reason),
-        BrainInfo(
-            name=claude_brain.BRAIN,
-            label="Claude (tu suscripción)",
-            available=claude_reason is None,
-            reason=claude_reason,
-        ),
-    ]
+    from api.runner import CLI_BRAINS
+
+    out = [BrainInfo(name="engine", label="API LLM (motor)", available=engine_reason is None, reason=engine_reason)]
+    for name, cli in CLI_BRAINS.items():
+        reason = cli.availability(settings)
+        out.append(BrainInfo(name=name, label=cli.label, available=reason is None, reason=reason))
+    return out

@@ -73,9 +73,10 @@ class AppSettings(BaseSettings):
     log_level: str = "INFO"
 
     # --- agent brain ------------------------------------------------------------
-    #: Default brain for runs launched without an explicit choice:
-    #: "engine" (AgentEngine + LLM API pool) or "claude-subscription" (headless Claude Code CLI).
-    agent_brain: Literal["engine", "claude-subscription"] = "engine"
+    #: Default brain for runs launched without an explicit choice: "engine" (AgentEngine + LLM
+    #: API pool), "claude-subscription" (headless Claude Code CLI) or "copilot-subscription"
+    #: (headless GitHub Copilot CLI).
+    agent_brain: Literal["engine", "claude-subscription", "copilot-subscription"] = "engine"
     claude_bin: str = "claude"
     #: e.g. "sonnet" / "opus" / a full model id; unset = the subscription's default
     claude_model: str | None = None
@@ -85,3 +86,13 @@ class AppSettings(BaseSettings):
     )
     #: Wall-clock cap for one Claude-brain run (the CLI has no turn cap).
     claude_wall_seconds: float = 7200.0
+
+    copilot_bin: str = "copilot"
+    #: e.g. "claude-sonnet-4.6", "gpt-5.3-codex", "auto"; unset = the seat's default
+    copilot_model: str | None = None
+    #: OAuth/fine-grained token for headless hosts. Unset = the host's `copilot login`
+    #: (or COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN already in the environment).
+    copilot_github_token: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("PF_COPILOT_GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN")
+    )
+    copilot_wall_seconds: float = 7200.0

@@ -140,7 +140,7 @@ async def test_brains_endpoint_and_single_user_rule(app_client, make_app, fake_c
     s = AppSettings(_env_file=None, claude_bin=str(fake_claude), api_tokens={"a" * 30: "alice", "b" * 30: "bob"})
     from api.claude_brain import availability
 
-    assert "individual use" in availability(s)
+    assert "one person's use" in availability(s)
     assert "not installed" in availability(AppSettings(_env_file=None, claude_bin="/nonexistent/claude"))
 
 

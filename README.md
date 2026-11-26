@@ -445,9 +445,9 @@ prompts built from `.claude/agents/*.md`. Everything is recorded in the same DB
   the lab state, the gates and the approval, not a sandbox.
 - Token usage of MCP runs is your client's subscription (not visible to the service).
 
-### Brains: API engine or your Claude subscription
+### Brains: API engine, your Claude subscription or your GitHub Copilot seat
 
-Within the standalone mode, each run launched from the UI/API picks a **brain**
+Within the standalone mode, each run launched from the UI/API picks a **brain** — the API engine, your Claude subscription or your GitHub Copilot seat
 (the `cerebro` selector next to every launch button; `"brain"` in `POST /api/runs`;
 default `PF_AGENT_BRAIN`):
 
@@ -469,6 +469,22 @@ default `PF_AGENT_BRAIN`):
     users' requests through it, so this brain refuses to run on an install with
     more than one user in `PF_API_TOKENS`. It counts against your plan's limits.
 
+- **`copilot-subscription`** — the official GitHub Copilot CLI (`npm install -g
+  @github/copilot`, then `copilot login`) headless with **your Copilot seat**:
+  `copilot -p <agent .md + task> --output-format json --additional-mcp-config @pf
+  --disable-builtin-mcps --allow-tool pf --deny-tool shell|write|read|url|memory`.
+  In prompt mode anything not allowed is denied and deny rules win over every
+  allow, so Copilot's own shell, file, web and memory tools are off and only the
+  same per-run agent-tools server runs. Copilot has no system-prompt flag, so the
+  agent's `.md` travels at the top of the prompt. Tokens come from
+  `assistant.usage` events (fallback: `--usage-output-file`), premium requests are
+  recorded on the run. Model: `PF_COPILOT_MODEL` (e.g. `claude-sonnet-4.6`).
+  Auth: the host's `copilot login` or `COPILOT_GITHUB_TOKEN`. Same one-user rule —
+  and an **Enterprise seat is governed by your employer's agreement**: check its
+  policy allows this use.
+
+Both subscription brains share `api/cli_brain.py` (per-run MCP server, scrubbed
+environment, event stream, wall-clock cap, cancellation, token accounting).
 `GET /api/brains` tells which brains are usable on the install and why not.
 
 ### The agents

@@ -28,10 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agents.engine import AgentResult, ApprovalDecision, ApprovalRequest, RunStatus, relay_failover
 from agents.events import AgentEvent
-from api import claude_brain
+from api import claude_brain, copilot_brain
 from api.approvals import expire_pending_for_run
 from api.auth import Principal
 from api.broker import Broker
+from api.cli_brain import CliBrain
 from api.registry import AgentContext, AgentPreconditionError, AgentSpec, OutcomeContext, PreparedRun
 from api.settings import AppSettings
 from db import repository as repo
@@ -47,7 +48,12 @@ log = logging.getLogger(__name__)
 LLMFactory = Callable[[AsyncSession, str], Awaitable[LLMProvider]]
 
 
-BRAINS = ("engine", claude_brain.BRAIN)
+#: subscription brains: an official agentic CLI drives the agent through the per-run agent-tools MCP server
+CLI_BRAINS: dict[str, type[CliBrain]] = {
+    claude_brain.BRAIN: claude_brain.ClaudeSubscriptionBrain,
+    copilot_brain.BRAIN: copilot_brain.CopilotSubscriptionBrain,
+}
+BRAINS = ("engine", *CLI_BRAINS)
 
 
 class _NoLLM:
@@ -116,18 +122,19 @@ class AgentRunner:
         brain = brain or self.settings.agent_brain
         if brain not in BRAINS:
             raise AgentPreconditionError(f"unknown brain {brain!r}; available: {', '.join(BRAINS)}")
-        if brain == claude_brain.BRAIN:
-            reason = claude_brain.availability(self.settings)
+        cli = CLI_BRAINS.get(brain)
+        if cli is not None:
+            reason = cli.availability(self.settings)
             if reason:
-                raise AgentPreconditionError(f"Claude subscription brain unavailable: {reason}")
+                raise AgentPreconditionError(f"{cli.label} unavailable: {reason}")
 
         # 1) check the lab and build the LLM; 2) prepare (preconditions) outside any transaction
         async with transaction(self.sessionmaker) as s:
             lab = await repo.get_lab(s, tenant, lab_id) if lab_id else None
             if lab is not None:
                 self._check_state(spec, lab.state)
-            # the Claude brain needs no API provider at all: don't build (or require) the pool
-            llm = _NoLLM() if brain == claude_brain.BRAIN else await self.llm_factory(s, tenant)
+            # a subscription brain needs no API provider at all: don't build (or require) the pool
+            llm = _NoLLM() if cli is not None else await self.llm_factory(s, tenant)
         try:
             prepared = spec.prepare(
                 AgentContext(
@@ -172,18 +179,18 @@ class AgentRunner:
             await llm.aclose()
             raise
 
-        if brain == claude_brain.BRAIN:
-            prepared = self._via_claude(tenant, spec, prepared)
+        if cli is not None:
+            prepared = self._via_cli(cli, tenant, spec, prepared)
         self._tasks[run.id] = asyncio.create_task(
             self._execute(tenant, spec, prepared, run.id, lab_id, llm), name=f"agent-run-{run.id}"
         )
         return run
 
-    def _via_claude(self, tenant: str, spec: AgentSpec, prepared: PreparedRun) -> PreparedRun:
+    def _via_cli(self, cli: type[CliBrain], tenant: str, spec: AgentSpec, prepared: PreparedRun) -> PreparedRun:
         """Same agent, same toolset/lanes/gate/outcome — only the brain changes."""
         if prepared.definition is None or not prepared.brief:
-            raise AgentPreconditionError(f"{spec.name} can't run on the Claude brain (no brief)")
-        brain = claude_brain.ClaudeSubscriptionBrain(self.settings, self.sessionmaker, tenant)
+            raise AgentPreconditionError(f"{spec.name} can't run on {cli.label} (no brief)")
+        brain = cli(self.settings, self.sessionmaker, tenant)
         definition, brief = prepared.definition, prepared.brief
 
         def execute(run_id: str) -> Any:
@@ -194,11 +201,10 @@ class AgentRunner:
                 task=brief,
                 lab_name=prepared.lab_name,
                 spec_path=prepared.spec_path,
-                wall_seconds=self.settings.claude_wall_seconds,
             )
 
         return PreparedRun(
-            task=f"{prepared.task} [claude subscription]",
+            task=f"{prepared.task} [{cli.provider_label}]",
             execute=execute,
             brief=brief,
             definition=definition,
