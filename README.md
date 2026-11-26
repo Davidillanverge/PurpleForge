@@ -63,7 +63,7 @@ scope. Azure, AWS, and Proxmox VE are supported.
 | **Cost & lifecycle** | Every lab carries `auto_shutdown` + `budget_alert_usd`; `teardown` verifies cost-zero; `reset` rolls back to a clean-state snapshot between exercises. |
 | **Validation** | `validate --run` drives the injected vulns live over the tunnel (roasting auto-confirmed with `nxc`; the rest emit a ready-to-run command). `ad-inventory` dumps the live domain (LDAP + DCSync hashes) and checks it against the plan. |
 | **Deterministic, no-AI lifecycle** | `generate` → `guardrail` → `deploy` → `validate` → `reset`/`teardown` are pure scripts. AI (skills/agents) only helps *author* a spec and *drive* those scripts; nothing about deployment depends on it. |
-| **Agent service (optional)** | A self-hosted web UI + API (`src/`) that runs the four agents against any LLM (Anthropic, Gemini, Ollama) with failover, streams every step live, and puts a **human approval gate** in front of every infra-touching action. See [Agent service](#agent-service-web-ui--api). |
+| **Agent service (optional)** | A self-hosted web UI + API (`src/`) that runs the four agents in two modes — **standalone** (any LLM API: Anthropic, Gemini, Ollama, with failover) or **MCP** (Claude Code is the LLM, no API key) — streams every step live, counts tokens per run/lab, and puts a **human approval gate** in front of every infra-touching action. See [Agent service](#agent-service-web-ui--api). |
 
 ---
 
@@ -391,18 +391,26 @@ Ansible lookup at deploy time; read them post-deploy via `ad-inventory`.)
 ## Agent service (web UI + API)
 
 An optional, self-hosted service that runs the four agents of `.claude/agents/`
-outside Claude Code — against **any LLM** — with a web UI, a JSON API, live
-streaming, and a **human approval gate** in front of anything that touches
+— either with its own engine against **any LLM API**, or with **Claude Code as
+the LLM** through an MCP server — with a web UI, a JSON API, live streaming,
+token accounting and a **human approval gate** in front of anything that touches
 infrastructure. The deterministic core is unchanged: agents call `forge` (in a
 subprocess) exactly as an operator would; the CLI keeps working on its own.
 
 ```
-browser (Jinja2 + HTMX, SSE) ─┐
-API clients (Bearer token)  ──┼─► FastAPI ─► AgentRunner ─► AgentEngine ─► LLMPool ─► Anthropic / Ollama
-                              │      │            │              │ tools: forge · bash · read/write/edit · grep/glob · web_fetch
-                              │      │            │              └─► approval gate ─► human (UI / API)
-                              │   Postgres ◄── events, runs, labs (FSM), approvals, provider configs
-                              └── Redis ◄──── live events · approvals/cancels across workers · heartbeats
+                         ┌─────────────── shared core (src/core, db, api/services) ───────────────┐
+                         │ lab FSM · forge gates (check/compile/guardrail/generate) · ForgeTool    │
+                         │ policy (spec lock) · approval gate · deterministic outcomes · tokens   │
+                         └──────────────▲──────────────────────────────────────▲───────────────────┘
+                                        │                                      │
+ browser (Jinja2+HTMX, SSE) ─┐          │                                      │
+ API clients (Bearer)      ──┴► FastAPI ─► AgentRunner ─► AgentEngine ─► LLMPool ─► Anthropic / Gemini / Ollama
+                                   │                                           (standalone mode)
+ Claude Code / Cursor ──stdio──► mcp_server (lab_* tools, prompts from .claude/agents/*.md)
+                                   │                                           (MCP mode: the client is the LLM)
+                                   ▼
+             Postgres / SQLite ◄── labs (FSM), runs (engine | mcp), events, approvals, provider configs
+             Redis (optional)  ◄── live events · approvals/cancels across workers · heartbeats
 ```
 
 ### Two execution modes
@@ -427,14 +435,15 @@ prompts built from `.claude/agents/*.md`. Everything is recorded in the same DB
   approval and return immediately; a human decides it in the dashboard, then the
   operation runs in the background under the same `ForgeTool` policy and the
   lab state comes from `core/outcomes.py` (forge's exit codes).
-- **Mind the client's own tools.** Claude Code also has its own shell and file
-  tools, which bypass the MCP server — the MCP layer adds the lab state, the
-  gates and the approval, not a sandbox. Don't run Claude Code in
-  bypass-permissions mode for infra work, and consider denying
-  `Bash(forge deploy:*)`, `Bash(forge teardown:*)`, `Bash(terraform apply:*)`,
-  `Bash(terraform destroy:*)` in `.claude/settings.json` so infra only moves
-  through `lab_deploy` / `lab_teardown`.
-- Token usage of MCP runs is your client's (not visible to the service).
+- **Infra only moves through the MCP tools.** Claude Code also has its own shell,
+  which would bypass the MCP server, so the repo's `.claude/settings.json`
+  **denies** from that shell: `forge deploy|teardown` (also as `.venv/bin/forge`,
+  `python -m forge`, …), running the generated `deploy.sh`/`teardown.sh`, and
+  `terraform apply|destroy`. Deny rules hold even in bypass-permissions mode
+  (verified). They match command prefixes, so they stop mistakes, not a model
+  set on evading them (e.g. wrapping a command in `sh -c`) — the MCP layer adds
+  the lab state, the gates and the approval, not a sandbox.
+- Token usage of MCP runs is your client's subscription (not visible to the service).
 
 ### The agents
 
@@ -469,11 +478,24 @@ draft ─► designing ─► designed ─► compiled ─► ready ─► appro
 
 ```bash
 pip install -e ".[app]" -c constraints.txt
-cp .env.example .env    # set ANTHROPIC_API_KEY (or PF_LLM_PROVIDERS=ollama) and PF_API_TOKENS
+cp .env.example .env    # PF_API_TOKENS + an LLM: ANTHROPIC_API_KEY, or GEMINI_API_KEY with
+                        #   PF_LLM_PROVIDERS=gemini, or PF_LLM_PROVIDERS=ollama (local)
 PF_DATABASE_URL=sqlite+aiosqlite:///pf.db PF_AUTO_MIGRATE=true \
   uvicorn api.app:create_app --factory --app-dir src
 # → http://127.0.0.1:8000  (log in with your token)
 ```
+
+**With Claude Code (MCP mode, no LLM API key):**
+
+```bash
+pip install -e ".[app,mcp]" -c constraints.txt
+# keep the dashboard running (above) — that's where a human approves deploys
+claude          # in the repo: accept the "purpleforge" MCP server from .mcp.json (or /mcp)
+# then e.g.: "use the lab_designer prompt for a small AD lab with kerberoasting"
+```
+
+The MCP server (`python -m mcp_server`, launched by Claude Code over stdio) reads
+the same `.env` and database as the dashboard.
 
 **With Docker** (app + Postgres + Redis, 2 workers):
 
@@ -491,14 +513,36 @@ and brings the WireGuard tunnel up with sudo, which a container could only do
 with root-equivalent host access. The deploy-operator checks this before
 starting and refuses with the exact list of what's missing.
 
+### Using the web UI
+
+1. **labs → nuevo lab**: name + a description of the lab you want (or point it at an existing `specs/<name>.yml`).
+2. On the lab page: **▶ lanzar lab-designer** writes the spec (live console), then
+   - **check** — `forge lab-spec --check-only`: validates, writes nothing, no state change;
+   - **generar scripts** — `forge generate`: Terraform + Ansible + lifecycle scripts into `generated/<lab>/`
+     (cloud-free; no state change — generating is not a guardrail PASS nor an approval);
+   - **forge lab-spec + guardrail** — the deterministic gate: `designed → compiled → ready`.
+3. In `ready`, a human reviews cost/isolation/reconciliation and **approves** (authorized-use confirmation, invariant #6).
+4. **deploy-operator** → **purple-validator** → **deploy-operator-teardown**, each infra action approved in **approvals**.
+
+These buttons are hidden (and the API answers 409) while an agent owns the lab.
+
+**Tokens.** Every engine run records input/output tokens (thinking tokens count as
+output), updated live on each LLM turn: a `Σ … tok` counter in the run console,
+a per-lab total with a per-agent breakdown on the lab page, a per-lab column and a
+total on the dashboard, and the tenant total in the navigation bar. API:
+`GET /api/usage`. Note that input dominates: each turn re-sends the conversation.
+
 ### LLM providers
 
 `PF_LLM_PROVIDERS` sets the failover order (`anthropic`, `gemini`, `ollama`;
-`anthropic,ollama` by default; a provider without a key is skipped). Transient errors are retried with backoff,
-then the pool fails over; a failing provider is cooled down so later turns go
+`anthropic,ollama` by default; a provider without a key is skipped). Transient
+errors (429/5xx) are retried with backoff — honouring the wait the provider asks
+for (`Retry-After`, Gemini's `retryDelay`; per-minute quotas need ~30–60 s) up to
+`PF_LLM_MAX_RETRY_AFTER` — then the pool fails over; a failing provider is cooled down so later turns go
 straight to the healthy one. Per-tenant providers can also be configured in the
 UI (*providers*); their API keys are encrypted at rest with `PF_SECRET_KEY` and
-never shown again. Anthropic model aliases: `opus`, `sonnet`, `haiku`. Gemini: set
+never shown again. The providers page also lists the `.env` ones (model, key
+present, in use or shadowed) with a live **test** button. Anthropic model aliases: `opus`, `sonnet`, `haiku`. Gemini: set
 `GEMINI_API_KEY` and add `gemini` to `PF_LLM_PROVIDERS` (default model
 `gemini-flash-latest`; pick a less loaded one with `PF_LLM_GEMINI_MODEL` when it
 answers 503 "high demand").
@@ -530,17 +574,23 @@ answers 503 "high demand").
   Without Redis the service refuses to start more than one worker.
 - **Crash recovery**: workers heartbeat through Redis; runs of a dead worker are
   failed, their approvals expired and their labs rolled back (a deploy that died
-  mid-way → `failed`, i.e. teardown required).
+  mid-way → `failed`, i.e. teardown required). Each mode judges only its own
+  runs: the MCP server recovers MCP runs by checking whether the owning process
+  is still alive.
+- **Live view across processes**: the SSE stream takes live events from the
+  broker and polls the DB when it is quiet, so runs recorded by another process
+  (the MCP server, or a worker without Redis) stream live too.
 - Every setting is documented in `.env.example`.
 
-**Status:** the service is covered by an automated suite (scripted LLMs, real
-forge, real subprocesses, SQLite and fakeredis) and was exercised end-to-end in
-Docker Compose (Postgres + Redis, 2 workers). The `lab-designer` has run
-end-to-end against a live model (Gemini 3.1 Flash-Lite: wrote the spec, hit a
-`forge lab-spec --check-only` failure, fixed it, passed — 6 turns, ~7 s). The
-other agents have not yet run against a live model, and the deploy-operator has
-not yet driven a real cloud deploy — treat those paths with the same caution as
-any first run.
+**Status:** the service is covered by an automated suite (226 tests in
+`tests/app/`: scripted LLMs, real forge, real subprocesses, SQLite, fakeredis and
+an in-memory MCP client) and was exercised end-to-end in Docker Compose
+(Postgres + Redis, 2 workers); the MCP server was verified over stdio exactly as
+Claude Code launches it. The `lab-designer` has run end-to-end against a live
+model (Gemini 3.1 Flash-Lite: wrote the spec, hit a `forge lab-spec --check-only`
+failure, fixed it, passed). The other agents have not yet run against a live
+model, and the deploy-operator has not yet driven a real cloud deploy — treat
+those paths with the same caution as any first run.
 
 ---
 
@@ -555,6 +605,7 @@ IMAGES-AND-TEMPLATES.md       # image/template requirements and overrides
 pyproject.toml                # packaging; the `forge` console script
 
 .claude/
+  settings.json               # deny rules: infra changes only via the MCP lab_deploy/lab_teardown tools
   agents/                     # lab-designer, catalog-author, deploy-operator, purple-validator
   commands/                   # /new-lab /lab-from-exercise /deploy /validate /destroy
   skills/                     # lab-spec, network-topology, infra-azure/proxmox/aws, ad-topology,
