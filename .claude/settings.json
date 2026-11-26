@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(forge deploy*)",
+      "Bash(forge teardown*)",
+      "Bash(.venv/bin/forge deploy*)",
+      "Bash(.venv/bin/forge teardown*)",
+      "Bash(python -m forge deploy*)",
+      "Bash(python -m forge teardown*)",
+      "Bash(python3 -m forge deploy*)",
+      "Bash(python3 -m forge teardown*)",
+      "Bash(.venv/bin/python -m forge deploy*)",
+      "Bash(.venv/bin/python -m forge teardown*)",
+      "Bash(bash generated/*/deploy.sh*)",
+      "Bash(bash generated/*/teardown.sh*)",
+      "Bash(generated/*/deploy.sh*)",
+      "Bash(generated/*/teardown.sh*)",
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(terraform * apply*)",
+      "Bash(terraform * destroy*)"
+    ]
+  }
+}

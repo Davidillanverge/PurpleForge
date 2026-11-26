@@ -162,6 +162,7 @@ async def create_run(
     lab_id: uuid.UUID | str | None = None,
     created_by: str | None = None,
     worker_id: str | None = None,
+    source: str = "engine",
 ) -> AgentRun:
     if lab_id is not None:
         await get_lab(session, tenant_id, lab_id)  # tenant check on the FK target
@@ -172,6 +173,7 @@ async def create_run(
         lab_id=_uuid(lab_id) if lab_id else None,
         created_by=created_by,
         worker_id=worker_id,
+        source=source,
         status=RunState.QUEUED,
         created_at=utcnow(),
     )
@@ -545,6 +547,7 @@ async def recover_orphans(
     *,
     alive_workers: Iterable[str] | None,
     started_before: datetime | None = None,
+    source: str = "engine",
 ) -> dict[str, int]:
     """SYSTEM maintenance, deliberately cross-tenant. Runs live inside one API
     worker process, so a run whose worker is gone will never finish. Fail those
@@ -555,8 +558,11 @@ async def recover_orphans(
     means "no worker is alive" (single-process startup: everything active is dead).
     ``started_before``: grace period — ignore runs created after this instant
     (a just-created run whose worker hasn't heartbeated yet).
+    ``source``: only runs of this execution mode ("engine" or "mcp").
     """
-    stmt = select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATES))
+    # each mode only judges its own runs: the API can't know whether an MCP server
+    # process (spawned by Claude Code) is alive, and vice versa
+    stmt = select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATES), AgentRun.source == source)
     alive = set(alive_workers or ())
     if alive:
         stmt = stmt.where((AgentRun.worker_id.is_(None)) | (AgentRun.worker_id.not_in(alive)))
@@ -689,3 +695,28 @@ async def usage_by_agent(
     if lab_id is not None:
         stmt = stmt.where(AgentRun.lab_id == _uuid(lab_id))
     return {agent: Usage(int(i), int(o), int(n)) for agent, i, o, n in (await session.execute(stmt)).all()}
+
+
+async def max_event_seq(session: AsyncSession, tenant_id: str, run_id: uuid.UUID | str) -> int:
+    stmt = select(func.coalesce(func.max(AgentEvent.seq), 0)).where(
+        AgentEvent.tenant_id == tenant_id, AgentEvent.run_id == _uuid(run_id)
+    )
+    return int((await session.execute(stmt)).scalar_one())
+
+
+async def active_runs(
+    session: AsyncSession,
+    tenant_id: str,
+    *,
+    lab_id: uuid.UUID | str | None = None,
+    agent: str | None = None,
+    source: str | None = None,
+) -> Sequence[AgentRun]:
+    stmt = select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.status.in_(ACTIVE_RUN_STATES))
+    if lab_id is not None:
+        stmt = stmt.where(AgentRun.lab_id == _uuid(lab_id))
+    if agent is not None:
+        stmt = stmt.where(AgentRun.agent == agent)
+    if source is not None:
+        stmt = stmt.where(AgentRun.source == source)
+    return (await session.execute(stmt.order_by(AgentRun.created_at.desc()))).scalars().all()

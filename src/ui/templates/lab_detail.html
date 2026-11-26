@@ -16,7 +16,7 @@
           {% for run in runs %}
           <tr class="hover:bg-term-line/30">
             <td><a href="/runs/{{ run.id }}">{{ run.id|string|truncate(8, true, "") }}</a></td>
-            <td>{{ run.agent }}</td>
+            <td>{{ run.agent }} {% include "partials/source_badge.html" %}</td>
             <td><span class="badge {{ run.status|state_class }}">{{ run.status.value }}</span></td>
             <td class="text-term-dim" title="in {{ "{:,}".format(run.input_tokens) }} · out {{ "{:,}".format(run.output_tokens) }}">{{ run.turns }} / <span class="text-cyan-300">{{ (run.input_tokens + run.output_tokens)|tok }}</span></td>
             <td class="text-term-dim" title="{{ run.created_at|dt }}">{{ run.created_at|ago }} · {{ run.created_by or "—" }}</td>

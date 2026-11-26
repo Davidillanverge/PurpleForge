@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,11 @@ from agents.events import EventCallback
 from agents.lab_designer import LabDesignerAgent
 from agents.validator import ValidatorAgent, ValidatorPreconditionError
 from api.forge_ops import SpecError, resolve_spec, run_forge
+from core.outcomes import (  # shared with the MCP mode
+    Outcome,
+    deploy_outcome,
+    teardown_outcome,
+)
 from db.models import AgentEvent, Lab
 from db.states import LabState
 from llm.provider import LLMProvider
@@ -61,13 +65,6 @@ class OutcomeContext:
     previous_state: LabState | None
 
 
-@dataclass
-class Outcome:
-    target: LabState
-    reason: str
-    error: str | None = None
-
-
 StateFn = Callable[[Lab], LabState]
 
 
@@ -91,30 +88,6 @@ class AgentSpec:
 
 
 # --------------------------------------------------------------------------- event helpers
-
-
-def _calls_and_results(events: Sequence[AgentEvent]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    calls = {str(e.data.get("id")): e.data for e in events if e.type == "tool_call"}
-    results = {str(e.data.get("id")): e.data for e in events if e.type == "tool_result"}
-    return calls, results
-
-
-def forge_call_succeeded(events: Sequence[AgentEvent], subcommand: str) -> bool:
-    """Did a `forge <subcommand>` call actually run and exit 0?"""
-    calls, results = _calls_and_results(events)
-    for cid, call in calls.items():
-        if call.get("name") == "forge" and (call.get("arguments") or {}).get("subcommand") == subcommand:
-            res = results.get(cid) or {}
-            if (res.get("data") or {}).get("exit_code") == 0:
-                return True
-    return False
-
-
-def approved_action_ran(events: Sequence[AgentEvent]) -> bool:
-    """Did any human-approved (= potentially infra-touching) tool call execute?"""
-    _, results = _calls_and_results(events)
-    approved = {str(e.data.get("id")) for e in events if e.type == "approval_resolved" and e.data.get("approved")}
-    return any(cid in results for cid in approved)
 
 
 # --------------------------------------------------------------------------- purple-validator
@@ -225,26 +198,11 @@ def _prepare_deploy(mode: Mode) -> Callable[[AgentContext], PreparedRun]:
 
 
 async def _deploy_outcome(ctx: OutcomeContext) -> Outcome:
-    if forge_call_succeeded(ctx.events, "deploy"):
-        return Outcome(LabState.DEPLOYED, "forge deploy exited 0 (clean snapshot taken by deploy.sh)")
-    if approved_action_ran(ctx.events):
-        why = ctx.result.error if ctx.result and ctx.result.error else "forge deploy did not succeed"
-        return Outcome(LabState.FAILED, f"deploy failed after touching infrastructure: {why}", error=why)
-    return Outcome(LabState.READY, "deploy never touched infrastructure (no approved action ran) — re-approve to retry")
+    return deploy_outcome(ctx.events, ctx.result.error if ctx.result else None)
 
 
 async def _teardown_outcome(ctx: OutcomeContext) -> Outcome:
-    if forge_call_succeeded(ctx.events, "teardown"):
-        return Outcome(LabState.DESTROYED, "forge teardown exited 0 (cost-zero verified)")
-    if approved_action_ran(ctx.events):
-        why = ctx.result.error if ctx.result and ctx.result.error else "forge teardown did not succeed"
-        return Outcome(LabState.FAILED, f"teardown incomplete — resources may remain: {why}", error=why)
-    back = (
-        ctx.previous_state if ctx.previous_state in (LabState.DEPLOYED, LabState.VALIDATED, LabState.STOPPED) else None
-    )
-    if back is None:  # came from FAILED: stays failed (still possibly billable)
-        return Outcome(LabState.FAILED, "teardown never ran — the lab still needs one", error="teardown not executed")
-    return Outcome(back, "teardown never touched infrastructure (no approved action ran)")
+    return teardown_outcome(ctx.events, ctx.previous_state, ctx.result.error if ctx.result else None)
 
 
 DEPLOYER = AgentSpec(

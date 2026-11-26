@@ -60,12 +60,15 @@ async def iter_run_events(
     run_id: uuid.UUID,
     after_seq: int = 0,
     heartbeat: float = 15.0,
+    poll_seconds: float = 1.0,
 ) -> AsyncIterator[StreamItem]:
     """Events after ``after_seq`` until the run ends; always finishes with a StreamEnd.
 
     "Ended" is decided from the DB run status — valid cluster-wide, unlike
     "does this worker execute it" — so a client on worker B follows a run
-    executing on worker A until its terminal event.
+    executing on worker A until its terminal event. Live events come from the
+    broker; when it is quiet the DB is polled every ``poll_seconds``, which is how
+    runs recorded by another process (the MCP server) stream live too.
     """
     last = after_seq
     async with broker.subscribe(str(run_id)) as queue:
@@ -82,14 +85,27 @@ async def iter_run_events(
             yield StreamEnd(run.status.value)
             return
 
+        idle = 0.0
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=heartbeat)
+                item = await asyncio.wait_for(queue.get(), timeout=poll_seconds)
             except asyncio.TimeoutError:
+                # Nothing on the broker: events may come from ANOTHER process that only
+                # writes to the DB (the MCP server, or a worker without Redis) — poll it.
                 async with sessionmaker() as s:
-                    if (await repo.get_run(s, tenant_id, run_id)).status.is_terminal:
-                        break  # ended while we were dropped/closed without seeing the terminal event
-                yield None
+                    fresh = await repo.list_events(s, tenant_id, run_id, after_seq=last, limit=1000)
+                    status = (await repo.get_run(s, tenant_id, run_id)).status
+                ended = False
+                for ev in fresh:
+                    last = ev.seq
+                    yield StreamEvent(seq=ev.seq, type=ev.type, ts=ev.ts, data=ev.data)
+                    ended = ended or ev.type in TERMINAL_EVENT_TYPES
+                if ended or (status.is_terminal and not fresh):
+                    break
+                idle = 0.0 if fresh else idle + poll_seconds
+                if idle >= heartbeat:
+                    idle = 0.0
+                    yield None
                 continue
             if item is None:  # broker closed the run
                 break

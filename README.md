@@ -405,6 +405,37 @@ API clients (Bearer token)  ──┼─► FastAPI ─► AgentRunner ─► Ag
                               └── Redis ◄──── live events · approvals/cancels across workers · heartbeats
 ```
 
+### Two execution modes
+
+The same agents, database, lab state machine, deterministic gates and outcomes —
+only the "brain" differs:
+
+| Mode | Who is the LLM | Cost | Interface | Use it for |
+|---|---|---|---|---|
+| **Standalone** | `AgentEngine` + LLM pool (Anthropic / Gemini / Ollama) | API billing | Web UI + JSON API | unattended runs, teams, CI |
+| **MCP** | Claude Code / Cursor / Claude Desktop (`python -m mcp_server`) | your client's subscription | your MCP client + the same web UI | individual use, development |
+
+**MCP mode.** `.mcp.json` registers the `purpleforge` server, so Claude Code picks
+it up when you open the repo (`pip install -e ".[app,mcp]" -c constraints.txt`).
+It exposes `lab_*` tools (`lab_status`, `lab_create`, `lab_design_start` /
+`lab_design_finish`, `lab_check`, `lab_compile`, `lab_generate`, `lab_deploy`,
+`lab_teardown`, `lab_validate`, `approvals_pending`) and the four agents as
+prompts built from `.claude/agents/*.md`. Everything is recorded in the same DB
+(runs marked `MCP · Claude Code`), so the dashboard shows it live.
+
+- **Claude can't approve.** `lab_deploy` / `lab_teardown` create a pending
+  approval and return immediately; a human decides it in the dashboard, then the
+  operation runs in the background under the same `ForgeTool` policy and the
+  lab state comes from `core/outcomes.py` (forge's exit codes).
+- **Mind the client's own tools.** Claude Code also has its own shell and file
+  tools, which bypass the MCP server — the MCP layer adds the lab state, the
+  gates and the approval, not a sandbox. Don't run Claude Code in
+  bypass-permissions mode for infra work, and consider denying
+  `Bash(forge deploy:*)`, `Bash(forge teardown:*)`, `Bash(terraform apply:*)`,
+  `Bash(terraform destroy:*)` in `.claude/settings.json` so infra only moves
+  through `lab_deploy` / `lab_teardown`.
+- Token usage of MCP runs is your client's (not visible to the service).
+
 ### The agents
 
 | Agent | Starts from | What it does | Lane (enforced by its tools, not its prompt) |
@@ -559,6 +590,8 @@ src/                          # the agent service (optional — the harness work
   db/                         # SQLAlchemy 2.0 async models (tenant_id everywhere), lab FSM, Alembic migrations
   api/                        # FastAPI app, agent runner, SSE, Redis broker, deterministic compile/guardrail
   ui/                         # server-rendered UI: Jinja2 + HTMX templates, vendored htmx, Tailwind CSS
+  core/                       # shared by both modes: ToolSpec/ToolResult, security (scrub_env, PathGuard), outcomes
+  mcp_server/                 # MCP mode: FastMCP server (lab_* tools, prompts from .claude/agents/*.md)
 
 vendor/                       # version-pinned submodules: GOAD, Vulnerable-AD, ansible-lockdown
 tests/                        # the harness test suite (tests/app/: the agent service)
@@ -568,6 +601,7 @@ Dockerfile                    # agent service image (multi-stage, non-root, pinn
 docker-compose.yml            # app + Postgres + Redis (app bound to 127.0.0.1)
 alembic.ini                   # DB migrations (src/db/migrations)
 .env.example                  # every setting: service, LLM providers, deploy-time credentials
+.mcp.json                     # MCP servers Claude Code loads: azure + purpleforge (sources in mcp/)
 ```
 
 ---

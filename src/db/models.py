@@ -79,6 +79,8 @@ class AgentRun(TenantMixin, Base):
     #: API worker process that executes this run (runs live in-process); orphan
     #: recovery only fails runs whose worker is no longer alive.
     worker_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    #: who orchestrated it: "engine" (AgentEngine + LLM pool) or "mcp" (Claude Code via the MCP server)
+    source: Mapped[str] = mapped_column(String(16), default="engine", server_default="engine", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column()
     finished_at: Mapped[datetime | None] = mapped_column()

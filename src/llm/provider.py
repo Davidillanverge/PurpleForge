@@ -19,6 +19,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+from core.schemas import ToolSpec  # re-exported (shared with the MCP mode)
+
 
 class Role(str, Enum):
     USER = "user"
@@ -56,14 +58,6 @@ class Message(BaseModel):
     @classmethod
     def tool_result(cls, call: ToolCall, content: str, *, is_error: bool = False) -> Message:
         return cls(role=Role.TOOL, content=content, tool_call_id=call.id, name=call.name, is_error=is_error)
-
-
-class ToolSpec(BaseModel):
-    """A tool the model may call. ``input_schema`` is a JSON Schema object."""
-
-    name: str
-    description: str
-    input_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
 
 
 class StopReason(str, Enum):

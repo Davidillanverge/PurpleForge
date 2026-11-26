@@ -63,7 +63,7 @@ despliega.
 
 ## MCP
 
-`mcp/azure.json` (symlink desde `.mcp.json`) añade el Azure MCP Server:
+`mcp/azure.json` (combinado en `.mcp.json`) añade el Azure MCP Server:
 `lab-designer` verifica `vm_size`/región/quota antes de escribir el spec;
 `deploy-operator` comprueba quota antes de gastar y coste-cero tras `destroy`.
 Ver `mcp/README.md`.

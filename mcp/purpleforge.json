@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "purpleforge": {
+      "command": "bash",
+      "args": ["-c", "PYTHONPATH=src:scripts exec .venv/bin/python -m mcp_server"]
+    }
+  }
+}

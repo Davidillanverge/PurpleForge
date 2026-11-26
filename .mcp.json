@@ -1,1 +1,23 @@
-mcp/azure.json
+{
+  "mcpServers": {
+    "azure": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure/mcp@latest",
+        "server",
+        "start"
+      ],
+      "env": {
+        "AZURE_MCP_COLLECT_TELEMETRY": "false"
+      }
+    },
+    "purpleforge": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "PYTHONPATH=src:scripts exec .venv/bin/python -m mcp_server"
+      ]
+    }
+  }
+}

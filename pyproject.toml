@@ -48,17 +48,23 @@ app = [
     "python-multipart==0.0.34",  # HTML form parsing for the UI
     "redis==8.2.0",  # multi-worker broker (events/approvals/cancels + heartbeats)
 ]
+# MCP mode: Claude Code / Cursor / Desktop is the LLM (no LLM API key needed).
+# Install with: pip install -e ".[app,mcp]" -c constraints.txt
+mcp = [
+    "fastmcp==4.2.6",
+]
 
 # `forge` on the PATH after `pip install -e .` — no more `python3 scripts/forge.py`.
 # REPO_ROOT resolves from __file__, so an EDITABLE install is required (the
 # harness reads catalog/, specs/, templates/ from the repo tree).
 [project.scripts]
 forge = "forge:main"
+purpleforge-mcp = "mcp_server.__main__:main"
 
 [tool.setuptools]
 # `forge` is a package (scripts/forge/), `population` a top-level module
 # (scripts/population.py) — matches the package's `from population import ...`.
-packages = ["forge", "llm", "agents", "db", "api", "api.routes", "ui"]
+packages = ["forge", "core", "llm", "agents", "db", "api", "api.routes", "ui", "mcp_server"]
 py-modules = ["population"]
 
 [tool.setuptools.package-data]
@@ -67,11 +73,13 @@ ui = ["templates/*.html", "templates/partials/*.html", "static/css/*.css", "stat
 [tool.setuptools.package-dir]
 "" = "scripts"
 # Agent service packages live under src/ (one entry per top-level package).
+"core" = "src/core"
 "llm" = "src/llm"
 "agents" = "src/agents"
 "db" = "src/db"
 "api" = "src/api"
 "ui" = "src/ui"
+"mcp_server" = "src/mcp_server"
 
 [tool.ruff]
 line-length = 120

@@ -355,7 +355,11 @@ async def run_approvals(run_id: uuid.UUID, request: Request, session: SessionDep
 @router.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
 async def cancel_run(run_id: uuid.UUID, request: Request, principal: UIPrincipal, runner: RunnerDep):
     async with request.app.state.sessionmaker() as s:
-        await repo.get_run(s, principal.tenant, run_id)
+        current = await repo.get_run(s, principal.tenant, run_id)
+    if current.source == "mcp":
+        return flash_response(
+            "MCP runs are driven by Claude Code: deny the pending approval to stop one before it touches infrastructure"
+        )
     if not await runner.cancel(run_id, tenant=principal.tenant):
         return flash_response("el run ya no está activo")
     async with request.app.state.sessionmaker() as s:

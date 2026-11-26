@@ -51,7 +51,12 @@ async def get_run(run_id: uuid.UUID, session: SessionDep, principal: PrincipalDe
 @router.post("/runs/{run_id}/cancel", response_model=RunOut)
 async def cancel_run(run_id: uuid.UUID, request: Request, principal: PrincipalDep, runner: RunnerDep):
     async with request.app.state.sessionmaker() as s:
-        await repo.get_run(s, principal.tenant, run_id)  # tenant check before touching the task
+        run = await repo.get_run(s, principal.tenant, run_id)  # tenant check before touching the task
+    if run.source == "mcp":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "MCP runs are driven by Claude Code: deny the pending approval to stop one before it touches infrastructure",
+        )
     if not await runner.cancel(run_id, tenant=principal.tenant):
         raise HTTPException(status.HTTP_409_CONFLICT, "run is not active")
     async with request.app.state.sessionmaker() as s:
