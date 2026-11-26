@@ -10,6 +10,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -27,7 +28,7 @@ from api.broker import Broker, EventBroker, RedisEventBroker
 from api.registry import AgentPreconditionError, AgentSpec, default_registry
 from api.routes import approvals, health, labs, providers, runs, usage
 from api.runner import AgentRunner, LabBusy, LLMFactory, UnknownAgent
-from api.settings import AppSettings
+from api.settings import AppSettings, load_env_file
 from db import repository as repo
 from db.crypto import SecretCipher
 from db.migrate import upgrade_head
@@ -94,6 +95,12 @@ async def build_broker(settings: AppSettings) -> Broker:
             await asyncio.sleep(1.0)
 
 
+def _repo_env_file() -> Path:
+    from forge.core import REPO_ROOT  # lazy, like api.settings: forge resolves the repo root
+
+    return Path(REPO_ROOT) / ".env"
+
+
 def create_app(
     settings: AppSettings | None = None,
     db_settings: DatabaseSettings | None = None,
@@ -101,9 +108,15 @@ def create_app(
     registry: dict[str, AgentSpec] | None = None,
     llm_factory: LLMFactory | None = None,
 ) -> FastAPI:
+    # Production path only (tests inject settings and must not pick up the dev .env):
+    # export .env into os.environ so agent subprocesses (forge deploy) see the
+    # deploy-time vars too, the same .env pydantic-settings reads (cwd) plus the repo's.
+    env_files = load_env_file(Path(".env"), _repo_env_file()) if settings is None else []
     settings = settings or AppSettings()
     db_settings = db_settings or DatabaseSettings()
     configure_logging(settings.log_level)
+    for env_file in env_files:
+        log.info("exported %s into the process environment (already-set variables kept)", env_file)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

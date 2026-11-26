@@ -70,3 +70,22 @@ def test_api_tokens_parsing(monkeypatch):
     monkeypatch.setenv("PF_API_TOKENS", "david:token")
     with pytest.raises(ValueError, match="must be JSON"):
         AppSettings(_env_file=None)
+
+
+def test_load_env_file_exports_without_overriding(tmp_path, monkeypatch):
+    """The UI's forge deploy child inherits os.environ: .env must be exported
+    into it (PF_FLEET_URL etc.), but a variable already set in the shell wins."""
+    import os
+
+    from api.settings import load_env_file
+
+    env = tmp_path / ".env"
+    env.write_text('PF_TEST_FLEET_URL="https://fleet:8220"\nPF_TEST_KEEP=from-file\n', encoding="utf-8")
+    monkeypatch.delenv("PF_TEST_FLEET_URL", raising=False)
+    monkeypatch.setenv("PF_TEST_KEEP", "from-shell")
+    try:
+        assert load_env_file(env, env, tmp_path / "missing.env") == [env.resolve()]
+        assert os.environ["PF_TEST_FLEET_URL"] == "https://fleet:8220"
+        assert os.environ["PF_TEST_KEEP"] == "from-shell"
+    finally:
+        os.environ.pop("PF_TEST_FLEET_URL", None)

@@ -12,6 +12,29 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from db.base import DEFAULT_TENANT
 
 
+def load_env_file(*candidates: Path) -> list[Path]:
+    """Export ``.env`` into ``os.environ`` (variables already set win).
+
+    pydantic-settings reads ``.env`` only into its own fields; it never exports
+    it. The deploy-operator's ``forge deploy`` child inherits ``os.environ``
+    (via ``scrub_env``), so deploy-time vars such as ``PF_FLEET_URL`` would be
+    missing unless uvicorn was launched under ``set -a; source .env``. Loading
+    it here makes the UI path behave like a shell with the ``.env`` sourced.
+    Returns the files actually loaded."""
+    from dotenv import load_dotenv  # dependency of pydantic-settings
+
+    loaded: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates or (Path(".env"),):
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        load_dotenv(resolved, override=False)
+        loaded.append(resolved)
+    return loaded
+
+
 def _default_repo_root() -> Path:
     from forge.core import REPO_ROOT  # reuse forge's resolution, don't re-derive it
 
