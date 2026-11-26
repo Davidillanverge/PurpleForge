@@ -46,7 +46,7 @@
         <div><label class="label" for="kind">tipo</label>
           <select class="input" id="kind" name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
       </div>
-      <div><label class="label" for="model">modelo</label><input class="input" id="model" name="model" required placeholder="sonnet · claude-sonnet-5-5 · qwen3:8b"></div>
+      <div><label class="label" for="model">modelo</label><input class="input" id="model" name="model" required placeholder="sonnet · gemini-flash-latest · qwen3:8b"></div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="label" for="priority">prioridad</label><input class="input" id="priority" name="priority" type="number" value="100"></div>
         <div><label class="label" for="timeout">timeout (s)</label><input class="input" id="timeout" name="timeout_seconds" type="number" step="any" min="1" placeholder="default"></div>

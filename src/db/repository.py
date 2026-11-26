@@ -24,6 +24,8 @@ from db.crypto import SecretCipher
 from db.models import AgentEvent, AgentRun, Approval, Lab, LabTransition, ProviderConfig
 from db.states import INFRA_STATES, ApprovalStatus, LabState, ProviderKind, RunState, check_transition
 from llm.anthropic_provider import AnthropicProvider
+from llm.gemini_provider import DEFAULT_BASE_URL as GEMINI_DEFAULT_BASE_URL
+from llm.gemini_provider import GeminiProvider
 from llm.ollama_provider import DEFAULT_NUM_CTX, OllamaProvider
 from llm.pool import FailoverCallback, LLMPool
 from llm.provider import LLMProvider
@@ -412,6 +414,17 @@ def provider_from_config(cfg: ProviderConfig, cipher: SecretCipher | None) -> LL
             raise ValueError(f"provider {cfg.name!r} has a stored key but no PF_SECRET_KEY is configured")
         return AnthropicProvider(
             name=cfg.name, api_key=key, model=cfg.model, base_url=cfg.base_url, timeout=cfg.timeout_seconds or 120.0
+        )
+    if cfg.kind is ProviderKind.GEMINI:
+        if cfg.api_key_encrypted and cipher is None:
+            raise ValueError(f"provider {cfg.name!r} has a stored key but no PF_SECRET_KEY is configured")
+        gkey = cipher.decrypt(cfg.api_key_encrypted) if (cfg.api_key_encrypted and cipher) else None
+        return GeminiProvider(
+            name=cfg.name,
+            api_key=gkey,
+            model=cfg.model,
+            base_url=cfg.base_url or GEMINI_DEFAULT_BASE_URL,
+            timeout=cfg.timeout_seconds or 600.0,
         )
     if cfg.kind is ProviderKind.OLLAMA:
         return OllamaProvider(

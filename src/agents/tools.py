@@ -67,7 +67,7 @@ def truncate(text: str, limit: int = DEFAULT_MAX_OUTPUT_CHARS) -> str:
 
 _SECRET_NAME = re.compile(r"(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL)", re.I)
 _CLOUD_PREFIXES = ("AWS_", "ARM_", "AZURE_", "GOOGLE_", "GCLOUD_", "PROXMOX_", "TF_VAR_", "MDE_")
-_ALWAYS_DROP_PREFIXES = ("ANTHROPIC_", "PF_LLM_")
+_ALWAYS_DROP_PREFIXES = ("ANTHROPIC_", "PF_LLM_", "GEMINI_", "GOOGLE_API_KEY")
 
 
 def scrub_env(environ: Mapping[str, str], *, allow_cloud: bool = False) -> dict[str, str]:

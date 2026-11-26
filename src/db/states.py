@@ -124,4 +124,5 @@ class ApprovalStatus(str, Enum):
 
 class ProviderKind(str, Enum):
     ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
     OLLAMA = "ollama"

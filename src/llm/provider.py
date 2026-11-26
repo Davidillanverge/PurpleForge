@@ -30,6 +30,9 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    #: Opaque provider round-trip data (Gemini's thoughtSignature): must be sent back
+    #: unchanged with this call in the next turn. Other providers ignore it.
+    signature: str | None = None
 
 
 class Message(BaseModel):

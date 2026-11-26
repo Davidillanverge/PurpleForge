@@ -1,6 +1,7 @@
 """Provider-neutral LLM layer for the PurpleForge agent service."""
 
 from llm.anthropic_provider import AnthropicProvider
+from llm.gemini_provider import GeminiProvider
 from llm.ollama_provider import OllamaProvider
 from llm.pool import FailoverEvent, LLMPool
 from llm.provider import (
@@ -23,6 +24,7 @@ __all__ = [
     "AllProvidersFailed",
     "AnthropicProvider",
     "FailoverEvent",
+    "GeminiProvider",
     "InvalidRequestError",
     "LLMPool",
     "LLMProvider",

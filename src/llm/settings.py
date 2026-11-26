@@ -12,13 +12,14 @@ from typing import Annotated
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from llm import anthropic_provider, ollama_provider
+from llm import anthropic_provider, gemini_provider, ollama_provider
 from llm.anthropic_provider import AnthropicProvider
+from llm.gemini_provider import GeminiProvider
 from llm.ollama_provider import OllamaProvider
 from llm.pool import FailoverCallback, LLMPool
 from llm.provider import LLMProvider
 
-KNOWN_PROVIDERS = ("anthropic", "ollama")
+KNOWN_PROVIDERS = ("anthropic", "gemini", "ollama")
 
 
 class LLMSettings(BaseSettings):
@@ -33,6 +34,13 @@ class LLMSettings(BaseSettings):
     anthropic_model: str = anthropic_provider.DEFAULT_MODEL
     anthropic_base_url: str | None = None
     anthropic_timeout: float = 120.0
+
+    gemini_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("PF_LLM_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+    )
+    gemini_model: str = gemini_provider.DEFAULT_MODEL
+    gemini_base_url: str = gemini_provider.DEFAULT_BASE_URL
+    gemini_timeout: float = 600.0
 
     ollama_base_url: str = ollama_provider.DEFAULT_BASE_URL
     ollama_model: str = ollama_provider.DEFAULT_MODEL
@@ -66,6 +74,14 @@ def build_provider(name: str, settings: LLMSettings) -> LLMProvider:
             base_url=settings.anthropic_base_url,
             timeout=settings.anthropic_timeout,
         )
+    if name == "gemini":
+        gkey = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+        return GeminiProvider(
+            api_key=gkey,
+            model=settings.gemini_model,
+            base_url=settings.gemini_base_url,
+            timeout=settings.gemini_timeout,
+        )
     if name == "ollama":
         return OllamaProvider(
             base_url=settings.ollama_base_url,
@@ -77,12 +93,16 @@ def build_provider(name: str, settings: LLMSettings) -> LLMProvider:
 
 
 def build_pool(settings: LLMSettings | None = None, *, on_failover: FailoverCallback | None = None) -> LLMPool:
-    """Build the pool in ``settings.providers`` order. Anthropic is skipped when
-    no API key is configured, so a key-less dev box falls back to Ollama only."""
+    """Build the pool in ``settings.providers`` order. Key-based providers
+    (anthropic, gemini) are skipped when their key is missing, so a key-less dev
+    box falls back to Ollama only."""
     settings = settings or LLMSettings()
-    names = [n for n in settings.providers if n != "anthropic" or settings.anthropic_api_key]
+    keyed = {"anthropic": settings.anthropic_api_key, "gemini": settings.gemini_api_key}
+    names = [n for n in settings.providers if n not in keyed or keyed[n]]
     if not names:
-        raise ValueError("no usable LLM provider: set ANTHROPIC_API_KEY or add 'ollama' to PF_LLM_PROVIDERS")
+        raise ValueError(
+            "no usable LLM provider: set ANTHROPIC_API_KEY / GEMINI_API_KEY or add 'ollama' to PF_LLM_PROVIDERS"
+        )
     return LLMPool(
         [build_provider(n, settings) for n in names],
         max_retries=settings.max_retries,

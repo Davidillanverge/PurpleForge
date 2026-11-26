@@ -63,7 +63,7 @@ scope. Azure, AWS, and Proxmox VE are supported.
 | **Cost & lifecycle** | Every lab carries `auto_shutdown` + `budget_alert_usd`; `teardown` verifies cost-zero; `reset` rolls back to a clean-state snapshot between exercises. |
 | **Validation** | `validate --run` drives the injected vulns live over the tunnel (roasting auto-confirmed with `nxc`; the rest emit a ready-to-run command). `ad-inventory` dumps the live domain (LDAP + DCSync hashes) and checks it against the plan. |
 | **Deterministic, no-AI lifecycle** | `generate` → `guardrail` → `deploy` → `validate` → `reset`/`teardown` are pure scripts. AI (skills/agents) only helps *author* a spec and *drive* those scripts; nothing about deployment depends on it. |
-| **Agent service (optional)** | A self-hosted web UI + API (`src/`) that runs the four agents against any LLM (Anthropic, Ollama) with failover, streams every step live, and puts a **human approval gate** in front of every infra-touching action. See [Agent service](#agent-service-web-ui--api). |
+| **Agent service (optional)** | A self-hosted web UI + API (`src/`) that runs the four agents against any LLM (Anthropic, Gemini, Ollama) with failover, streams every step live, and puts a **human approval gate** in front of every infra-touching action. See [Agent service](#agent-service-web-ui--api). |
 
 ---
 
@@ -462,12 +462,15 @@ starting and refuses with the exact list of what's missing.
 
 ### LLM providers
 
-`PF_LLM_PROVIDERS` sets the failover order (`anthropic,ollama` by default; a
-provider without a key is skipped). Transient errors are retried with backoff,
+`PF_LLM_PROVIDERS` sets the failover order (`anthropic`, `gemini`, `ollama`;
+`anthropic,ollama` by default; a provider without a key is skipped). Transient errors are retried with backoff,
 then the pool fails over; a failing provider is cooled down so later turns go
 straight to the healthy one. Per-tenant providers can also be configured in the
 UI (*providers*); their API keys are encrypted at rest with `PF_SECRET_KEY` and
-never shown again. Model aliases: `opus`, `sonnet`, `haiku`.
+never shown again. Anthropic model aliases: `opus`, `sonnet`, `haiku`. Gemini: set
+`GEMINI_API_KEY` and add `gemini` to `PF_LLM_PROVIDERS` (default model
+`gemini-flash-latest`; pick a less loaded one with `PF_LLM_GEMINI_MODEL` when it
+answers 503 "high demand").
 
 ### Security model
 
@@ -501,9 +504,12 @@ never shown again. Model aliases: `opus`, `sonnet`, `haiku`.
 
 **Status:** the service is covered by an automated suite (scripted LLMs, real
 forge, real subprocesses, SQLite and fakeredis) and was exercised end-to-end in
-Docker Compose (Postgres + Redis, 2 workers). The agents have **not yet run
-end-to-end against a live model**, and the deploy-operator has not yet driven a
-real cloud deploy — treat those paths with the same caution as any first run.
+Docker Compose (Postgres + Redis, 2 workers). The `lab-designer` has run
+end-to-end against a live model (Gemini 3.1 Flash-Lite: wrote the spec, hit a
+`forge lab-spec --check-only` failure, fixed it, passed — 6 turns, ~7 s). The
+other agents have not yet run against a live model, and the deploy-operator has
+not yet driven a real cloud deploy — treat those paths with the same caution as
+any first run.
 
 ---
 
