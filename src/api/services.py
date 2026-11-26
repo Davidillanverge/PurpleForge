@@ -332,3 +332,35 @@ def load_manifest_summary(repo_root: Path, lab_name: str) -> dict[str, Any] | No
             "warnings": recon.get("warnings") or [],
         },
     }
+
+
+class BrainInfo(BaseModel):
+    name: str
+    label: str
+    available: bool
+    reason: str | None = None
+
+
+async def brains(session: AsyncSession, principal: Principal, settings: AppSettings) -> list[BrainInfo]:
+    """Which brains can run an agent on this install right now (shown in the launch forms)."""
+    from api import claude_brain
+
+    engine_reason = None
+    if not await repo.list_provider_configs(session, principal.tenant, enabled_only=True):
+        try:
+            st = LLMSettings()
+            keyed = {"anthropic": st.anthropic_api_key, "gemini": st.gemini_api_key}
+            if not [n for n in st.providers if n not in keyed or keyed[n]]:
+                engine_reason = "no LLM API provider configured (set a key in .env or add one under providers)"
+        except ValueError as exc:
+            engine_reason = f"invalid LLM settings: {exc}"
+    claude_reason = claude_brain.availability(settings)
+    return [
+        BrainInfo(name="engine", label="API LLM (motor)", available=engine_reason is None, reason=engine_reason),
+        BrainInfo(
+            name=claude_brain.BRAIN,
+            label="Claude (tu suscripción)",
+            available=claude_reason is None,
+            reason=claude_reason,
+        ),
+    ]

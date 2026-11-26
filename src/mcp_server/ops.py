@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import Any
 
 from agents.deploy_operator import DeployOperatorAgent, DeployPreconditionError, Mode
-from agents.events import AgentEvent, EventType
+from agents.events import EventType
 from agents.lab_designer import LabDesignerAgent
 from agents.tools import ForgeInput, ForgeTool, truncate
 from agents.validator import ValidatorAgent, ValidatorPreconditionError
@@ -26,6 +26,7 @@ from core.outcomes import Outcome, deploy_outcome, teardown_outcome, validate_ou
 from db import repository as repo
 from db.base import utcnow
 from db.models import AgentRun, Lab
+from db.recorder import Recorder
 from db.session import transaction
 from db.states import ApprovalStatus, LabState
 from llm.provider import ToolCall
@@ -39,27 +40,6 @@ class McpError(RuntimeError):
 
 
 # --------------------------------------------------------------------------- recording
-
-
-class Recorder:
-    """Writes one MCP run's events into agent_events (same shapes as the engine), so
-    the dashboard console, the run status and core.outcomes all work unchanged."""
-
-    def __init__(self, ctx: McpContext, run_id: uuid.UUID, agent: str) -> None:
-        self.ctx, self.run_id, self.agent = ctx, run_id, agent
-        self._seq: int | None = None
-
-    async def emit(self, type_: EventType, **data: Any) -> None:
-        async with transaction(self.ctx.sessionmaker) as s:
-            if self._seq is None:
-                self._seq = await repo.max_event_seq(s, self.ctx.tenant, self.run_id)
-            self._seq += 1
-            event = AgentEvent(run_id=str(self.run_id), agent=self.agent, seq=self._seq, type=type_, data=data)
-            await repo.record_event(s, self.ctx.tenant, event)
-
-    async def events(self) -> list[Any]:
-        async with self.ctx.sessionmaker() as s:
-            return list(await repo.list_events(s, self.ctx.tenant, self.run_id, limit=100_000))
 
 
 async def _lab(ctx: McpContext, name: str, *, for_update: bool = False, session: Any = None) -> Lab:
@@ -105,7 +85,7 @@ async def _start_run(ctx: McpContext, lab_name: str, spec: AgentSpec, task: str)
                 reason=f"{spec.name} started from Claude Code (MCP)",
                 run_id=run.id,
             )
-    rec = Recorder(ctx, run.id, spec.name)
+    rec = Recorder(ctx.sessionmaker, ctx.tenant, run.id, spec.name)
     await rec.emit(
         EventType.RUN_STARTED, task=task, model=None, provider=PROVIDER_LABEL, tools=["forge"], source="mcp", limits={}
     )
@@ -212,7 +192,7 @@ async def design_finish(ctx: McpContext, name: str) -> Outcome:
         runs = await repo.active_runs(s, ctx.tenant, lab_id=lab.id, agent=DESIGNER.name, source="mcp")
     if not runs or lab.state is not LabState.DESIGNING:
         raise McpError(f"{name} has no design in progress — call lab_design_start first")
-    rec = Recorder(ctx, runs[0].id, DESIGNER.name)
+    rec = Recorder(ctx.sessionmaker, ctx.tenant, runs[0].id, DESIGNER.name)
     assert DESIGNER.outcome is not None
     async with transaction(ctx.sessionmaker) as s:
         locked = await repo.get_lab(s, ctx.tenant, lab.id, for_update=True)

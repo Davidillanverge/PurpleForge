@@ -1,0 +1,9 @@
+{# Which brain runs this agent. Unavailable ones are shown disabled with the reason. #}
+<label class="flex flex-wrap items-center gap-2 text-xs text-term-dim">cerebro
+  <select class="input w-auto py-1" name="brain">
+    {% for b in brains %}
+    <option value="{{ b.name }}" {% if not b.available %}disabled{% endif %} {% if b.name == default_brain and b.available %}selected{% endif %}>{{ b.label }}{% if not b.available %} — no disponible{% endif %}</option>
+    {% endfor %}
+  </select>
+  {% for b in brains if not b.available %}<span class="text-[11px] text-term-dim/70" title="{{ b.reason }}">({{ b.label }}: {{ b.reason|truncate(70) }})</span>{% endfor %}
+</label>

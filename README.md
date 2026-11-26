@@ -445,6 +445,32 @@ prompts built from `.claude/agents/*.md`. Everything is recorded in the same DB
   the lab state, the gates and the approval, not a sandbox.
 - Token usage of MCP runs is your client's subscription (not visible to the service).
 
+### Brains: API engine or your Claude subscription
+
+Within the standalone mode, each run launched from the UI/API picks a **brain**
+(the `cerebro` selector next to every launch button; `"brain"` in `POST /api/runs`;
+default `PF_AGENT_BRAIN`):
+
+- **`engine`** — the `AgentEngine` + LLM pool (Anthropic / Gemini / Ollama API keys).
+- **`claude-subscription`** — the official `claude` CLI headless with **your Claude
+  Pro/Max login, no API key** (the same idea as PentestGPT). Per run the API launches
+  `claude -p … --output-format stream-json --tools "" --strict-mcp-config
+  --allowedTools mcp__pf`, where `pf` is `python -m mcp_server.agent_tools` for that
+  run: Claude gets **none of Claude Code's own tools**, only the agent's toolset
+  (`agents/toolsets.py`) executed through the engine's own `_execute` — same lanes,
+  same spec lock, same human approval gate, same events, and the same
+  deterministic outcomes. `ANTHROPIC_API_KEY` is stripped from its environment, and
+  a run is refused if Claude reports any API-key auth (no silent API billing).
+  Tokens are counted per turn from the stream (cache reads/writes included).
+  - Auth: the host's `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from
+    `claude setup-token` (headless hosts). Model: `PF_CLAUDE_MODEL` (e.g. `sonnet`).
+  - **Personal use only**: Anthropic allows your own subscription in the unmodified
+    Claude Code binary for ordinary individual use and forbids routing other
+    users' requests through it, so this brain refuses to run on an install with
+    more than one user in `PF_API_TOKENS`. It counts against your plan's limits.
+
+`GET /api/brains` tells which brains are usable on the install and why not.
+
 ### The agents
 
 | Agent | Starts from | What it does | Lane (enforced by its tools, not its prompt) |

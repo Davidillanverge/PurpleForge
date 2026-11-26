@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from db.base import DEFAULT_TENANT
@@ -71,3 +71,17 @@ class AppSettings(BaseSettings):
 
     #: Level for the service's own loggers (uvicorn keeps its own config).
     log_level: str = "INFO"
+
+    # --- agent brain ------------------------------------------------------------
+    #: Default brain for runs launched without an explicit choice:
+    #: "engine" (AgentEngine + LLM API pool) or "claude-subscription" (headless Claude Code CLI).
+    agent_brain: Literal["engine", "claude-subscription"] = "engine"
+    claude_bin: str = "claude"
+    #: e.g. "sonnet" / "opus" / a full model id; unset = the subscription's default
+    claude_model: str | None = None
+    #: Long-lived token from `claude setup-token` (headless hosts/Docker). Unset = the host's `claude` login.
+    claude_oauth_token: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("PF_CLAUDE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+    )
+    #: Wall-clock cap for one Claude-brain run (the CLI has no turn cap).
+    claude_wall_seconds: float = 7200.0

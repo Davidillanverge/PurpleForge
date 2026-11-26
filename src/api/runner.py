@@ -28,6 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agents.engine import AgentResult, ApprovalDecision, ApprovalRequest, RunStatus, relay_failover
 from agents.events import AgentEvent
+from api import claude_brain
+from api.approvals import expire_pending_for_run
 from api.auth import Principal
 from api.broker import Broker
 from api.registry import AgentContext, AgentPreconditionError, AgentSpec, OutcomeContext, PreparedRun
@@ -43,6 +45,22 @@ from llm.provider import LLMProvider
 log = logging.getLogger(__name__)
 
 LLMFactory = Callable[[AsyncSession, str], Awaitable[LLMProvider]]
+
+
+BRAINS = ("engine", claude_brain.BRAIN)
+
+
+class _NoLLM:
+    """Placeholder for runs whose brain is not an API model (agents are built but the engine isn't used)."""
+
+    name = "none"
+    model = "none"
+
+    async def complete(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("this run's brain is not an API model")
+
+    async def aclose(self) -> None:
+        return None
 
 
 class UnknownAgent(LookupError):
@@ -81,7 +99,13 @@ class AgentRunner:
 
     # ------------------------------------------------------------------ start
     async def start(
-        self, principal: Principal, agent: str, *, lab_id: uuid.UUID | None = None, instructions: str = ""
+        self,
+        principal: Principal,
+        agent: str,
+        *,
+        lab_id: uuid.UUID | None = None,
+        instructions: str = "",
+        brain: str | None = None,
     ) -> AgentRun:
         spec = self.registry.get(agent)
         if spec is None:
@@ -89,13 +113,21 @@ class AgentRunner:
         if spec.requires_lab and lab_id is None:
             raise AgentPreconditionError(f"agent {agent} needs a lab")
         tenant = principal.tenant
+        brain = brain or self.settings.agent_brain
+        if brain not in BRAINS:
+            raise AgentPreconditionError(f"unknown brain {brain!r}; available: {', '.join(BRAINS)}")
+        if brain == claude_brain.BRAIN:
+            reason = claude_brain.availability(self.settings)
+            if reason:
+                raise AgentPreconditionError(f"Claude subscription brain unavailable: {reason}")
 
         # 1) check the lab and build the LLM; 2) prepare (preconditions) outside any transaction
         async with transaction(self.sessionmaker) as s:
             lab = await repo.get_lab(s, tenant, lab_id) if lab_id else None
             if lab is not None:
                 self._check_state(spec, lab.state)
-            llm = await self.llm_factory(s, tenant)
+            # the Claude brain needs no API provider at all: don't build (or require) the pool
+            llm = _NoLLM() if brain == claude_brain.BRAIN else await self.llm_factory(s, tenant)
         try:
             prepared = spec.prepare(
                 AgentContext(
@@ -140,10 +172,39 @@ class AgentRunner:
             await llm.aclose()
             raise
 
+        if brain == claude_brain.BRAIN:
+            prepared = self._via_claude(tenant, spec, prepared)
         self._tasks[run.id] = asyncio.create_task(
             self._execute(tenant, spec, prepared, run.id, lab_id, llm), name=f"agent-run-{run.id}"
         )
         return run
+
+    def _via_claude(self, tenant: str, spec: AgentSpec, prepared: PreparedRun) -> PreparedRun:
+        """Same agent, same toolset/lanes/gate/outcome — only the brain changes."""
+        if prepared.definition is None or not prepared.brief:
+            raise AgentPreconditionError(f"{spec.name} can't run on the Claude brain (no brief)")
+        brain = claude_brain.ClaudeSubscriptionBrain(self.settings, self.sessionmaker, tenant)
+        definition, brief = prepared.definition, prepared.brief
+
+        def execute(run_id: str) -> Any:
+            return brain.run(
+                run_id=run_id,
+                agent_key=spec.name,
+                definition=definition,
+                task=brief,
+                lab_name=prepared.lab_name,
+                spec_path=prepared.spec_path,
+                wall_seconds=self.settings.claude_wall_seconds,
+            )
+
+        return PreparedRun(
+            task=f"{prepared.task} [claude subscription]",
+            execute=execute,
+            brief=brief,
+            definition=definition,
+            lab_name=prepared.lab_name,
+            spec_path=prepared.spec_path,
+        )
 
     @staticmethod
     def _check_state(spec: AgentSpec, state: LabState) -> None:
@@ -193,6 +254,8 @@ class AgentRunner:
         status: RunState,
         error: str | None,
     ) -> None:
+        # a run that ended (any brain, any way) must not leave an approval clickable
+        await expire_pending_for_run(self.sessionmaker, tenant, run_id)
         async with transaction(self.sessionmaker) as s:
             if result is not None:
                 await repo.finish_run(s, tenant, result)

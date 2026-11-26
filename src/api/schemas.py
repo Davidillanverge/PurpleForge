@@ -115,6 +115,8 @@ class RunCreate(BaseModel):
     agent: str
     lab_id: uuid.UUID | None = None
     instructions: str = Field(default="", max_length=10_000)
+    #: "engine" (LLM API pool) or "claude-subscription" (headless Claude Code); default PF_AGENT_BRAIN
+    brain: str | None = None
 
 
 class RunOut(_ORM):

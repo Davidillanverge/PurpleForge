@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from api import services
 from api.deps import BrokerDep, PrincipalDep, RunnerDep, SessionDep, SettingsDep
 from api.schemas import AgentInfo, ApprovalOut, EventOut, RunCreate, RunOut
 from api.sse import run_event_stream
@@ -29,9 +30,17 @@ async def list_agents(runner: RunnerDep, principal: PrincipalDep):
     ]
 
 
+@router.get("/brains", response_model=list[services.BrainInfo])
+async def list_brains(session: SessionDep, principal: PrincipalDep, settings: SettingsDep):
+    """Brains an agent run can use here: the LLM API engine and/or your Claude subscription."""
+    return await services.brains(session, principal, settings)
+
+
 @router.post("/runs", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
 async def start_run(body: RunCreate, runner: RunnerDep, principal: PrincipalDep):
-    run = await runner.start(principal, body.agent, lab_id=body.lab_id, instructions=body.instructions)
+    run = await runner.start(
+        principal, body.agent, lab_id=body.lab_id, instructions=body.instructions, brain=body.brain
+    )
     return _out(run, runner)
 
 

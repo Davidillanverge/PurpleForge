@@ -92,13 +92,17 @@ def llms():
 @pytest.fixture
 def make_app(tmp_path, repo_root, llms):
     def _make(**overrides):
+        extra = dict(overrides.pop("settings", {}))
         settings = AppSettings(
             _env_file=None,
             repo_root=repo_root,
             auto_migrate=True,
-            api_tokens={"tok-alice-0123456789abcdefghij": "alice", "tok-bob-0123456789abcdefghijkl": "bob"},
+            api_tokens=extra.pop(
+                "api_tokens", {"tok-alice-0123456789abcdefghij": "alice", "tok-bob-0123456789abcdefghijkl": "bob"}
+            ),
             approval_timeout_seconds=overrides.pop("approval_timeout_seconds", 5),
             sse_heartbeat_seconds=0.05,
+            **extra,
         )
         db = DatabaseSettings(_env_file=None, database_url=f"sqlite+aiosqlite:///{tmp_path / 'api.db'}", secret_key=KEY)
         registry = overrides.pop("registry", None) or {VALIDATOR.name: VALIDATOR, GATED.name: GATED}

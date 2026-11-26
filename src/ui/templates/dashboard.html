@@ -59,6 +59,7 @@
       <input type="hidden" name="agent" value="{{ agent.name }}">
       <p class="text-xs text-term-dim">{{ agent.description }}</p>
       <textarea class="input" name="instructions" rows="3" required placeholder="p.ej. añade una vuln de RBCD con su mitigate y neutralized_by"></textarea>
+      {% include "partials/brain_select.html" %}
       <button class="btn-primary" type="submit">▶ lanzar</button>
     </form>
   </section>

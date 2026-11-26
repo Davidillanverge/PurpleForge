@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.budget import BudgetLimits
 from agents.catalog_author import CatalogAuthorAgent
+from agents.definitions import AgentDefinition
 from agents.deploy_operator import DeployOperatorAgent, DeployPreconditionError, Mode
 from agents.engine import AgentResult, Approver
 from agents.events import EventCallback
@@ -51,7 +52,12 @@ class AgentContext:
 class PreparedRun:
     #: short human description stored on the AgentRun row
     task: str
-    execute: Callable[[str], Awaitable[AgentResult]]  # run_id -> result
+    execute: Callable[[str], Awaitable[AgentResult]]  # run_id -> result (engine brain)
+    #: what an external brain needs to run the SAME agent: full task, definition and toolset scope
+    brief: str = ""
+    definition: AgentDefinition | None = None
+    lab_name: str | None = None
+    spec_path: str | None = None
 
 
 @dataclass
@@ -108,6 +114,10 @@ def _prepare_validator(ctx: AgentContext) -> PreparedRun:
     return PreparedRun(
         task=f"validate lab {ctx.lab.name} ({spec_path})",
         execute=lambda run_id: agent.run(spec_path, run_id=run_id, instructions=ctx.instructions),
+        brief=agent.task(spec_path, ctx.instructions),
+        definition=agent.definition,
+        lab_name=ctx.lab.name,
+        spec_path=spec_path,
     )
 
 
@@ -141,6 +151,10 @@ def _prepare_designer(ctx: AgentContext) -> PreparedRun:
     return PreparedRun(
         task=f"design lab {name} → {expected}",
         execute=lambda run_id: agent.run(name, request, existing=existing, run_id=run_id),
+        brief=agent.task(name, request, existing=existing),
+        definition=agent.definition,
+        lab_name=name,
+        spec_path=expected,
     )
 
 
@@ -185,13 +199,17 @@ def _prepare_deploy(mode: Mode) -> Callable[[AgentContext], PreparedRun]:
             ctx.llm, repo_root=ctx.repo_root, on_event=ctx.on_event, approver=ctx.approver, limits=ctx.limits
         )
         try:
-            agent.lab_context(ctx.lab.spec_path, mode)  # spec + toolchain preflight, before any token
+            spec_rel, lab_name, _ = agent.lab_context(ctx.lab.spec_path, mode)  # spec + toolchain preflight
         except DeployPreconditionError as exc:
             raise AgentPreconditionError(str(exc)) from exc
         spec = ctx.lab.spec_path
         return PreparedRun(
             task=f"{mode.value} lab {ctx.lab.name} ({spec})",
             execute=lambda run_id: agent.run(spec, mode, run_id=run_id, instructions=ctx.instructions),
+            brief=agent.task(spec_rel, lab_name, mode, ctx.instructions),
+            definition=agent.definition,
+            lab_name=ctx.lab.name,
+            spec_path=spec_rel,
         )
 
     return prepare
@@ -239,6 +257,8 @@ def _prepare_catalog(ctx: AgentContext) -> PreparedRun:
     return PreparedRun(
         task=f"catalog: {request.strip().splitlines()[0][:120]}",
         execute=lambda run_id: agent.run(request, run_id=run_id),
+        brief=agent.task(request),
+        definition=agent.definition,
     )
 
 

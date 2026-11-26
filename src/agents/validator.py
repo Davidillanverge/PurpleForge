@@ -68,7 +68,7 @@ class ValidatorAgent(BaseAgent):
             GlobTool(self.repo_root),
         ]
 
-    async def run(self, spec: str | Path, *, run_id: str | None = None, instructions: str = "") -> AgentResult:
+    def task(self, spec: str | Path, instructions: str = "") -> str:
         spec_path, lab, lab_dir = self.lab_context(spec)
         rel_spec = spec_path.relative_to(self.repo_root) if spec_path.is_relative_to(self.repo_root) else spec_path
         rel_dir = lab_dir.relative_to(self.repo_root)
@@ -80,4 +80,12 @@ class ValidatorAgent(BaseAgent):
         )
         if instructions:
             task += f"\n\nOperator notes: {instructions}"
-        return await self._run(task, self.build_tools(lab_dir, str(rel_spec)), run_id=run_id)
+        return task
+
+    def tools_for(self, spec: str | Path) -> list[Tool]:
+        spec_path, _, lab_dir = self.lab_context(spec)
+        rel_spec = spec_path.relative_to(self.repo_root) if spec_path.is_relative_to(self.repo_root) else spec_path
+        return self.build_tools(lab_dir, str(rel_spec))
+
+    async def run(self, spec: str | Path, *, run_id: str | None = None, instructions: str = "") -> AgentResult:
+        return await self._run(self.task(spec, instructions), self.tools_for(spec), run_id=run_id)

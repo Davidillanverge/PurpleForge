@@ -77,6 +77,7 @@
         <input type="hidden" name="agent" value="{{ agent.name }}">
         <div class="text-xs text-term-dim"><span class="text-term-fg">{{ agent.name }}</span> — {{ agent.description }}</div>
         <textarea class="input" name="instructions" rows="{{ 4 if agent.name == 'lab-designer' else 2 }}" placeholder="{{ 'qué lab quieres: dominios, máquinas, vulns, objetivo… (se suma a la descripción del lab)' if agent.name == 'lab-designer' else 'notas para el agente (opcional)' }}"></textarea>
+        {% include "partials/brain_select.html" %}
         {% if infra_agent %}<div class="text-xs text-orange-200">⚠ credenciales cloud · cada acción sobre infraestructura pasa por la puerta de aprobación</div>{% endif %}
         <div><button class="{{ 'btn-danger' if agent.name == 'deploy-operator-teardown' else 'btn-ok' }}" type="submit">▶ lanzar {{ agent.name }}</button></div>
       </form>

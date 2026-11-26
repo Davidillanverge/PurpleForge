@@ -108,6 +108,8 @@ async def _lab_ctx(request: Request, session: Any, principal: Principal, lab_id:
         "runs": await repo.list_runs(session, principal.tenant, lab_id=lab_id),
         "agents": list(request.app.state.runner.registry.values()),
         "manifest": services.load_manifest_summary(settings.repo_root, lab.name) if lab.spec_path else None,
+        "brains": await services.brains(session, principal, settings),
+        "default_brain": settings.agent_brain,
         "lab_usage": await repo.usage_total(session, principal.tenant, lab_id=lab_id),
         "lab_usage_by_agent": await repo.usage_by_agent(session, principal.tenant, lab_id=lab_id),
     }
@@ -158,6 +160,8 @@ async def dashboard(request: Request, session: SessionDep, principal: UIPrincipa
         active_runs=await repo.count_active_runs(session, principal.tenant),
         specs=specs,
         lab_free_agents=[a for a in request.app.state.runner.registry.values() if not a.requires_lab],
+        brains=await services.brains(session, principal, settings),
+        default_brain=settings.agent_brain,
         usage_total=await repo.usage_total(session, principal.tenant),
         usage_by_lab=await repo.usage_by_lab(session, principal.tenant),
     )
@@ -293,8 +297,11 @@ async def start_run(
     principal: UIPrincipal,
     agent: Annotated[str, Form()],
     instructions: Annotated[str, Form()] = "",
+    brain: Annotated[str, Form()] = "",
 ) -> Response:
-    run = await runner.start(principal, agent, lab_id=lab_id, instructions=instructions.strip()[:10_000])
+    run = await runner.start(
+        principal, agent, lab_id=lab_id, instructions=instructions.strip()[:10_000], brain=brain or None
+    )
     return hx_redirect(f"/runs/{run.id}")
 
 
@@ -304,9 +311,12 @@ async def start_lab_free_run(
     principal: UIPrincipal,
     agent: Annotated[str, Form()],
     instructions: Annotated[str, Form()] = "",
+    brain: Annotated[str, Form()] = "",
 ) -> Response:
     """Agents that work outside any lab lifecycle (catalog-author)."""
-    run = await runner.start(principal, agent, lab_id=None, instructions=instructions.strip()[:10_000])
+    run = await runner.start(
+        principal, agent, lab_id=None, instructions=instructions.strip()[:10_000], brain=brain or None
+    )
     return hx_redirect(f"/runs/{run.id}")
 
 
