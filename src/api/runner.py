@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agents import background
 from agents.engine import AgentResult, ApprovalDecision, ApprovalRequest, RunStatus, relay_failover
 from agents.events import AgentEvent
-from api import claude_brain, copilot_brain
+from api import claude_brain, copilot_brain, integrations
 from api.approvals import expire_pending_for_run
 from api.auth import Principal
 from api.broker import Broker
@@ -136,6 +136,7 @@ class AgentRunner:
                 self._check_state(spec, lab.state)
             # a subscription brain needs no API provider at all: don't build (or require) the pool
             llm = _NoLLM() if cli is not None else await self.llm_factory(s, tenant)
+            deploy_env = await integrations.tenant_env(s, tenant, self.cipher) if spec.deploy_env else {}
         try:
             prepared = spec.prepare(
                 AgentContext(
@@ -145,6 +146,7 @@ class AgentRunner:
                     approver=self._approver(tenant),
                     lab=lab,
                     instructions=instructions,
+                    deploy_env=deploy_env,
                 )
             )
         except Exception:
@@ -191,7 +193,7 @@ class AgentRunner:
         """Same agent, same toolset/lanes/gate/outcome — only the brain changes."""
         if prepared.definition is None or not prepared.brief:
             raise AgentPreconditionError(f"{spec.name} can't run on {cli.label} (no brief)")
-        brain = cli(self.settings, self.sessionmaker, tenant)
+        brain = cli(self.settings, self.sessionmaker, tenant, cipher=self.cipher)
         definition, brief = prepared.definition, prepared.brief
 
         def execute(run_id: str) -> Any:

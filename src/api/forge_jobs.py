@@ -24,7 +24,7 @@ import signal
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agents.events import EventType
+from api import integrations
 from api.auth import Principal
 from api.forge_ops import resolve_spec
 from core.outcomes import (
@@ -45,6 +46,7 @@ from core.outcomes import (
 )
 from core.security import forge_pythonpath, scrub_env, truncate
 from db import repository as repo
+from db.crypto import SecretCipher
 from db.models import AgentRun
 from db.recorder import Recorder
 from db.session import transaction
@@ -169,8 +171,11 @@ class ForgeJobs:
         worker_id: str | None = None,
         flush_seconds: float = 2.0,
         python: str = sys.executable,
+        cipher: SecretCipher | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
+        #: decrypts the tenant's UI-configured integrations (api.integrations) for the deploy env
+        self.cipher = cipher
         self.repo_root = repo_root
         self.worker_id = worker_id
         self.flush_seconds = flush_seconds
@@ -259,6 +264,8 @@ class ForgeJobs:
         error: str | None = None
         since = time.time()
         try:
+            # UI-configured integrations (AWS/Azure/Proxmox/Elastic/MDE/Caldera...) over .env
+            overlay = await integrations.load_tenant_env(self.sessionmaker, principal.tenant, self.cipher)
             for sub, args in action.commands(spec_path):
                 call_id = f"forge-{uuid.uuid4().hex[:12]}"
                 arguments = {"subcommand": sub, "args": args}
@@ -273,7 +280,7 @@ class ForgeJobs:
                         by=principal.actor,
                         comment="lanzado desde la UI sin IA (el clic confirmado es la aprobación)",
                     )
-                code = await self._run_forge(rec, call_id, sub, args, timeout=action.timeout)
+                code = await self._run_forge(rec, call_id, sub, args, timeout=action.timeout, overlay=overlay)
                 if code != 0:
                     error = f"forge {sub} exited {code}"
                     break
@@ -289,8 +296,18 @@ class ForgeJobs:
                 outcome = Outcome(outcome.target, outcome.reason, error=error)
         return await self._finish(principal, rec, lab_id, action, outcome, error)
 
-    async def _run_forge(self, rec: Recorder, call_id: str, sub: str, args: list[str], *, timeout: float) -> int | None:
-        env = scrub_env(os.environ, allow_cloud=True)  # deploy-time creds: this IS the deploy path
+    async def _run_forge(
+        self,
+        rec: Recorder,
+        call_id: str,
+        sub: str,
+        args: list[str],
+        *,
+        timeout: float,
+        overlay: Mapping[str, str | None] | None = None,
+    ) -> int | None:
+        # deploy-time creds: this IS the deploy path (UI integrations win over .env)
+        env = integrations.apply(scrub_env(os.environ, allow_cloud=True), overlay or {})
         env["PYTHONPATH"] = forge_pythonpath(env)
         env["PYTHONUNBUFFERED"] = "1"
         loop = asyncio.get_running_loop()

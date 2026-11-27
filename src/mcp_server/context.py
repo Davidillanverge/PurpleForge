@@ -29,6 +29,7 @@ from api.registry import AgentSpec, default_registry
 from api.settings import AppSettings
 from db import repository as repo
 from db.base import utcnow
+from db.crypto import SecretCipher
 from db.migrate import upgrade_head
 from db.session import create_engine, create_sessionmaker, transaction
 from db.settings import DatabaseSettings
@@ -70,6 +71,8 @@ class McpContext:
     principal: McpPrincipal
     worker_id: str
     tasks: dict[uuid.UUID, asyncio.Task[Any]] = field(default_factory=dict)
+    #: decrypts the tenant's UI-configured integrations for deploys (PF_SECRET_KEY)
+    cipher: SecretCipher | None = None
 
     @property
     def tenant(self) -> str:
@@ -157,6 +160,7 @@ async def build_context(
         registry=default_registry(),
         principal=McpPrincipal(user=mcp.actor, tenant=app.default_tenant, label=mcp.actor),
         worker_id=f"mcp-{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(3)}",
+        cipher=SecretCipher(db.secret_key.get_secret_value()) if db.secret_key else None,
     )
     await recover_mcp_orphans(ctx)
     return ctx

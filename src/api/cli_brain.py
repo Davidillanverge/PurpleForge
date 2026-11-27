@@ -24,6 +24,7 @@ import signal
 import sys
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,9 @@ from agents.engine import AgentResult, RunStatus
 from agents.events import EventType
 from agents.tools import forge_pythonpath, scrub_env, truncate
 from agents.toolsets import build_toolset
+from api import integrations
 from api.settings import AppSettings
+from db.crypto import SecretCipher
 from db.recorder import Recorder
 from llm.provider import Usage
 
@@ -90,10 +93,18 @@ class CliBrain(ABC):
     label: str = ""
     provider_label: str = ""
 
-    def __init__(self, settings: AppSettings, sessionmaker: async_sessionmaker[AsyncSession], tenant: str) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        tenant: str,
+        *,
+        cipher: SecretCipher | None = None,
+    ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.tenant = tenant
+        self.cipher = cipher
 
     # ------------------------------------------------------------------ to implement
     @classmethod
@@ -135,12 +146,13 @@ class CliBrain(ABC):
             "PF_APPROVAL_TIMEOUT_SECONDS": str(self.settings.approval_timeout_seconds),
         }
 
-    def _cli_env(self, *, cloud: bool) -> dict[str, str]:
+    def _cli_env(self, *, cloud: bool, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         env = scrub_env(os.environ, allow_cloud=cloud)  # no LLM API keys, no stray tokens
         for noise in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
             env.pop(noise, None)
         env.update(self.auth_env())
         env.update(self._service_env())
+        env.update(extra or {})
         return env
 
     def system_prompt(self, definition: AgentDefinition, tool_names: list[str]) -> str:
@@ -180,7 +192,15 @@ class CliBrain(ABC):
         ]
         workdir = Path(tempfile.mkdtemp(prefix=f"pf-{self.name}-"))
         cfg = workdir / "mcp.json"
-        cfg.write_text(json.dumps(self.mcp_config(sys.executable, server_args, self._service_env())), "utf-8")
+        deploy_extra: dict[str, str] = {}
+        if cloud:
+            # the deploy tools run in the MCP child: hand it the tenant's UI-configured integrations.
+            # Copilot gets them via mcp.json (0600, private temp dir removed after the run); Claude's
+            # MCP children inherit the CLI env (the CLI itself has no shell/file tools).
+            overlay = await integrations.load_tenant_env(self.sessionmaker, self.tenant, self.cipher)
+            deploy_extra[integrations.OVERLAY_ENV] = json.dumps(overlay)
+        service_env = self._service_env() | deploy_extra
+        cfg.write_text(json.dumps(self.mcp_config(sys.executable, server_args, service_env)), "utf-8")
         os.chmod(cfg, 0o600)
         state = StreamState()
         wall = self.wall_seconds()
@@ -201,7 +221,7 @@ class CliBrain(ABC):
                 workdir=workdir,
             ),
             cwd=str(self.settings.repo_root),
-            env=self._cli_env(cloud=cloud),
+            env=self._cli_env(cloud=cloud, extra=deploy_extra),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

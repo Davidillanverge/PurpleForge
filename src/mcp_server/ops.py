@@ -11,6 +11,7 @@ asynchronous human approval for infra-touching operations.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from datetime import timedelta
@@ -21,7 +22,7 @@ from agents.events import EventType
 from agents.lab_designer import LabDesignerAgent
 from agents.tools import ForgeInput, ForgeTool, truncate
 from agents.validator import ValidatorAgent, ValidatorPreconditionError
-from api import services
+from api import integrations, services
 from api.registry import DEPLOYER, DESIGNER, TEARDOWN, VALIDATOR, AgentSpec, OutcomeContext
 from core.outcomes import Outcome, deploy_outcome, teardown_outcome, validate_outcome
 from db import repository as repo
@@ -256,6 +257,7 @@ async def gated(ctx: McpContext, name: str, mode: Mode) -> tuple[AgentRun, uuid.
     except DeployPreconditionError as exc:
         raise McpError(str(exc)) from exc
     run, lab, rec = await _start_run(ctx, name, spec, f"{mode.value} lab {lab.name} ({spec_path}) from Claude Code")
+    overlay = await integrations.load_tenant_env(ctx.sessionmaker, ctx.tenant, ctx.cipher)
     tool = ForgeTool(
         ctx.app.repo_root,
         allowed_subcommands={"generate", "deploy"} if mode is Mode.DEPLOY else {"teardown"},
@@ -263,6 +265,7 @@ async def gated(ctx: McpContext, name: str, mode: Mode) -> tuple[AgentRun, uuid.
         forbidden_flags={"--skip-guardrail"},
         required_flags={"teardown": {"--force"}},
         allow_cloud_credentials=True,
+        environ=integrations.apply(os.environ, overlay),  # UI-configured integrations over .env
     )
     if mode is Mode.DEPLOY:  # fresh scripts BEFORE the human looks at the request
         gen = await _forge(rec, tool, "generate", [spec_path])

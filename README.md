@@ -609,6 +609,17 @@ present, in use or shadowed) with a live **test** button. Anthropic model aliase
 `gemini-flash-latest`; pick a less loaded one with `PF_LLM_GEMINI_MODEL` when it
 answers 503 "high demand").
 
+**Integrations (deploy-time credentials).** Everything section B of `.env.example`
+holds — AWS, Azure (service principal), Proxmox (API token + SSH key), Elastic Fleet,
+Cloudflare WARP, Defender for Endpoint (upload the onboarding `.cmd`), Caldera and the
+`PF_REGION`/`PF_VM_SIZE` overrides — can also be set per tenant in the UI
+(*integrations*, `/settings/integrations`; JSON: `/api/integrations`). Each field is the
+env var the generated scripts already read; per field, the UI value wins over `.env`
+and an empty one falls back to it. Secrets are encrypted with `PF_SECRET_KEY`, never
+shown again, and injected only into the deploy paths (UI forge buttons, the
+deploy-operator agent on any brain, MCP deploys). Each card has a **probar conexión**
+button (STS, Azure token + subscription, PVE `/version`, Fleet `/api/status`, …).
+
 ### Security model
 
 - **Approval gate**: `forge deploy`/`teardown` always, and every deploy-operator

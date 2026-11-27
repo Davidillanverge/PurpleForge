@@ -16,6 +16,7 @@ run that the dashboard is streaming. Launched by the API's Claude brain with
 from __future__ import annotations
 
 import argparse
+import os
 import uuid
 from typing import Any
 
@@ -28,6 +29,7 @@ from pydantic import PrivateAttr
 from agents import background
 from agents.engine import AgentEngine
 from agents.toolsets import build_toolset
+from api import integrations
 from api.approvals import db_polling_approver
 from api.settings import AppSettings
 from db.recorder import Recorder
@@ -72,7 +74,10 @@ def build_server(
     sessionmaker = create_sessionmaker(create_engine(settings=db))
     # long forge calls become detached jobs: they outlive this server and the brain's MCP timeout
     background.configure(db.database_url)
-    tools = build_toolset(toolset, app.repo_root, lab_name=lab, spec_path=spec)
+    # deploy toolsets: the parent API resolved the tenant's UI-configured integrations for us
+    overlay = integrations.pop_overlay_from_environ()
+    environ = integrations.apply(os.environ, overlay) if overlay else None
+    tools = build_toolset(toolset, app.repo_root, lab_name=lab, spec_path=spec, environ=environ)
     for tool in tools:
         if tool.name == "forge_wait":
             # each wait must end well inside the external brain's MCP tool timeout (Copilot CLI ~3 min)

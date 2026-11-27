@@ -9,6 +9,7 @@ construction — no second copy of the policy.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from agents.catalog_author import CatalogAuthorAgent
@@ -21,9 +22,15 @@ TOOLSETS = ("lab-designer", "deploy-operator", "deploy-operator-teardown", "purp
 
 
 def build_toolset(
-    agent: str, repo_root: Path, *, lab_name: str | None = None, spec_path: str | None = None
+    agent: str,
+    repo_root: Path,
+    *,
+    lab_name: str | None = None,
+    spec_path: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> list[Tool]:
-    """``agent`` is the registry name (deploy-operator-teardown differs from deploy-operator)."""
+    """``agent`` is the registry name (deploy-operator-teardown differs from deploy-operator).
+    ``environ``: the deploy env (only the deploy-operator toolsets use it; None = os.environ)."""
     if agent == "lab-designer":
         if not lab_name:
             raise ValueError("lab-designer needs a lab")
@@ -32,7 +39,9 @@ def build_toolset(
         if not spec_path:
             raise ValueError(f"{agent} needs a spec")
         mode = Mode.TEARDOWN if agent.endswith("teardown") else Mode.DEPLOY
-        return DeployOperatorAgent(None, repo_root=repo_root).build_tools(spec_path, mode)  # type: ignore[arg-type]
+        deployer = DeployOperatorAgent(None, repo_root=repo_root)  # type: ignore[arg-type]
+        deployer.environ = environ
+        return deployer.build_tools(spec_path, mode)
     if agent == "purple-validator":
         if not spec_path:
             raise ValueError("purple-validator needs a spec")

@@ -1,0 +1,3 @@
+<div class="mt-2 rounded border px-3 py-2 text-xs {{ 'border-green-600/60 text-green-200' if result.ok else 'border-red-600/60 text-red-200' }}">
+  {{ '✓' if result.ok else '✗' }} {{ result.message }}
+</div>

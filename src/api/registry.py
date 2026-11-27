@@ -8,7 +8,8 @@ never from the agent's own claim of success. E.g. a deploy is DEPLOYED only if
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import os
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from agents.engine import AgentResult, Approver, RunStatus
 from agents.events import EventCallback
 from agents.lab_designer import LabDesignerAgent
 from agents.validator import ValidatorAgent, ValidatorPreconditionError
+from api import integrations
 from api.forge_ops import SpecError, resolve_spec, run_forge
 from core.outcomes import (  # shared with the MCP mode
     Outcome,
@@ -48,6 +50,8 @@ class AgentContext:
     lab: Lab | None
     instructions: str = ""
     limits: BudgetLimits | None = None
+    #: the tenant's UI-configured integrations (api.integrations), loaded only for deploy agents
+    deploy_env: Mapping[str, str | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,6 +94,8 @@ class AgentSpec:
     failure_state: LabState | StateFn | None = None
     #: deterministic outcome overriding success/failure_state (see module docstring)
     outcome: Callable[[OutcomeContext], Awaitable[Outcome]] | None = None
+    #: holds cloud/deploy credentials: gets the tenant's integrations (api.integrations)
+    deploy_env: bool = False
 
     def failure_for(self, lab: Lab) -> LabState | None:
         return self.failure_state(lab) if callable(self.failure_state) else self.failure_state
@@ -212,6 +218,8 @@ def _prepare_deploy(mode: Mode) -> Callable[[AgentContext], PreparedRun]:
         agent = DeployOperatorAgent(
             ctx.llm, repo_root=ctx.repo_root, on_event=ctx.on_event, approver=ctx.approver, limits=ctx.limits
         )
+        if ctx.deploy_env:
+            agent.environ = integrations.apply(os.environ, ctx.deploy_env)
         try:
             spec_rel, lab_name, _ = agent.lab_context(ctx.lab.spec_path, mode)  # spec + toolchain preflight
         except DeployPreconditionError as exc:
@@ -245,6 +253,7 @@ DEPLOYER = AgentSpec(
     running_state=LabState.DEPLOYING,
     failure_state=LabState.FAILED,  # orphaned mid-deploy: infra state unknown → treat as possibly billable
     outcome=_deploy_outcome,
+    deploy_env=True,
 )
 
 TEARDOWN = AgentSpec(
@@ -255,6 +264,7 @@ TEARDOWN = AgentSpec(
     running_state=LabState.DESTROYING,
     failure_state=LabState.FAILED,
     outcome=_teardown_outcome,
+    deploy_env=True,
 )
 
 

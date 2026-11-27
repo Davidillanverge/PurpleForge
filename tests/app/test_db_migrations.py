@@ -26,7 +26,15 @@ async def test_every_table_has_tenant_id(engine):
 
     async with engine.connect() as conn:
         cols = await conn.run_sync(tables)
-    assert set(cols) == {"labs", "lab_transitions", "agent_runs", "agent_events", "approvals", "provider_configs"}
+    assert set(cols) == {
+        "labs",
+        "lab_transitions",
+        "agent_runs",
+        "agent_events",
+        "approvals",
+        "provider_configs",
+        "integration_configs",
+    }
     for table, names in cols.items():
         assert "tenant_id" in names, table
 

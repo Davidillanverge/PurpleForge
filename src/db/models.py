@@ -154,3 +154,23 @@ class ProviderConfig(TenantMixin, TimestampMixin, Base):
     @property
     def has_api_key(self) -> bool:
         return bool(self.api_key_encrypted)
+
+
+class IntegrationConfig(TenantMixin, TimestampMixin, Base):
+    """Per-tenant deploy-time integration (AWS, Azure, Proxmox, Elastic, Caldera, MDE...).
+
+    Each field is the env var the generated scripts already read (``api.integrations``
+    is the catalog). Non-secret values are stored as-is; secrets only as Fernet tokens
+    (db.crypto) and are never returned by the API. Overrides ``.env`` at deploy time.
+    """
+
+    __tablename__ = "integration_configs"
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64))  # catalog key: aws | azure | proxmox | ...
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: env var -> plaintext value (non-secret fields only)
+    values: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    #: env var -> Fernet token (secret fields only); never the plaintext
+    secrets_encrypted: Mapped[dict[str, Any]] = mapped_column(default=dict)

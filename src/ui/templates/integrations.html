@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}integraciones{% endblock %}
+{% block content %}
+<h1 class="prompt mb-2 text-lg">integrations --list</h1>
+<p class="mb-6 max-w-3xl text-term-dim">Credenciales y endpoints que usan los despliegues (deploy/stop/start/teardown,
+  desde la UI, los agentes o MCP). Por campo: <span class="text-term-fg">lo guardado aquí</span> gana sobre
+  <span class="text-term-fg">.env</span>; lo que dejes vacío sigue saliendo de <span class="text-term-fg">.env</span>.
+  Una integración deshabilitada no aporta nada. Los secretos se cifran en reposo y nunca se vuelven a mostrar.</p>
+
+{% if not cipher_ready %}
+<div class="mb-6 rounded border border-amber-500/60 bg-amber-500/5 px-4 py-3 text-amber-200">
+  ⚠ PF_SECRET_KEY no está configurada en el servidor: puedes guardar campos no secretos, pero no secretos
+  (se cifran en reposo con ella).
+</div>
+{% endif %}
+
+{% for group, label, rows in groups %}
+<h2 class="mb-3 mt-6 text-xs uppercase tracking-wider text-term-dim">{{ label }}</h2>
+<div class="pf-int-grid">
+  {% for row in rows %}
+  {% set i = row.integration %}
+  <section class="panel h-fit" id="int-{{ i.name }}">
+    <div class="panel-title flex items-center justify-between">
+      <span>{{ i.label }}</span>
+      <span class="normal-case tracking-normal">
+        {% if row.enabled %}<span class="text-green-300">● UI</span>
+        {% elif row.config is not none %}<span class="text-term-dim">○ deshabilitada (usa .env)</span>
+        {% elif row.configured %}<span class="text-cyan-300">● .env</span>
+        {% else %}<span class="text-term-dim">○ sin configurar</span>{% endif %}
+      </span>
+    </div>
+    <form class="space-y-3 p-4" hx-post="/ui/integrations/{{ i.name }}" hx-encoding="multipart/form-data">
+      <p class="text-xs text-term-dim">{{ i.description }}{% if i.runbook %} · ver <span class="text-term-fg">{{ i.runbook }}</span>{% endif %}</p>
+      {% for fs in row.fields %}
+      {% set f = fs.field %}
+      {% set fid = i.name ~ "-" ~ f.env %}
+      {% if f.kind == "bool" %}
+      <label class="flex items-center gap-2 text-xs">
+        <input type="checkbox" name="v:{{ f.env }}" value="true" {% if fs.value %}checked{% endif %}>
+        {{ f.label }} <code class="pf-int-env">{{ f.env }}</code>
+      </label>
+      {% else %}
+      <div>
+        <label class="label flex items-center justify-between" for="{{ fid }}">
+          <span>{{ f.label }} <code class="pf-int-env">{{ f.path_env or f.env }}</code></span>
+          {% if fs.source == "ui" %}<span class="pf-int-src pf-int-src-ui">{{ "✓ cifrado" if f.secret else "UI" }}</span>
+          {% elif fs.source == "env" %}<span class="pf-int-src pf-int-src-env">.env</span>
+          {% else %}<span class="pf-int-src">—</span>{% endif %}
+        </label>
+        {% if f.kind == "file" %}
+          <input class="input" id="{{ fid }}" name="s:{{ f.env }}" type="file" {% if not cipher_ready %}disabled{% endif %}>
+          {% if fs.source == "env" %}<p class="mt-1 text-[11px] text-term-dim">desde .env: {{ fs.value }}</p>{% endif %}
+        {% elif f.kind == "textarea" %}
+          <textarea class="input pf-int-textarea" id="{{ fid }}" name="s:{{ f.env }}" autocomplete="off" spellcheck="false"
+            placeholder="{{ 'vacío = conservar la guardada' if fs.source == 'ui' else f.placeholder }}" {% if not cipher_ready %}disabled{% endif %}></textarea>
+        {% elif f.secret %}
+          <input class="input" id="{{ fid }}" name="s:{{ f.env }}" type="password" autocomplete="off"
+            placeholder="{{ 'vacío = conservar el guardado' if fs.source == 'ui' else (f.placeholder or ('vacío = el de .env' if fs.source == 'env' else '')) }}" {% if not cipher_ready %}disabled{% endif %}>
+        {% else %}
+          <input class="input" id="{{ fid }}" name="v:{{ f.env }}" autocomplete="off" spellcheck="false"
+            value="{{ fs.value if fs.source == 'ui' else '' }}"
+            placeholder="{{ fs.value if fs.source == 'env' else f.placeholder }}">
+        {% endif %}
+        {% if f.secret and fs.source == "ui" %}
+          <label class="mt-1 flex items-center gap-2 text-xs text-term-dim"><input type="checkbox" name="clear:{{ f.env }}" value="yes"> borrar el guardado</label>
+        {% endif %}
+        {% if f.help %}<p class="mt-1 text-[11px] text-term-dim">{{ f.help }}</p>{% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+      <label class="flex items-center gap-2 text-xs"><input type="checkbox" name="enabled" value="yes" {% if row.config is none or row.config.enabled %}checked{% endif %}> habilitada (sobrescribe .env)</label>
+      <div class="flex flex-wrap items-center gap-2 border-t border-term-line pt-3">
+        <button class="btn-primary" type="submit">guardar</button>
+        {% if i.test %}<button class="btn-ghost" type="button" hx-post="/ui/integrations/{{ i.name }}/test" hx-target="#test-{{ i.name }}" hx-disabled-elt="this">probar conexión <span class="htmx-indicator">…</span></button>{% endif %}
+        {% if row.config is not none %}<button class="btn-danger ml-auto" type="button" hx-post="/ui/integrations/{{ i.name }}/delete" hx-confirm="¿Borrar lo guardado de {{ i.label }}? (vuelve a .env)">borrar</button>{% endif %}
+      </div>
+      <div id="test-{{ i.name }}"></div>
+    </form>
+  </section>
+  {% endfor %}
+</div>
+{% endfor %}
+<p class="mt-6 text-[11px] text-term-dim">La prueba usa los valores efectivos (UI sobre .env) y guarda primero lo que hayas cambiado solo si pulsas «guardar».
+  Las credenciales de telemetría/BAS son deploy-time y no se derivan del seed (CLAUDE.md invariante #2).</p>
+{% endblock %}

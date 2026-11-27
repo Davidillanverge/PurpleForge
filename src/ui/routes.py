@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, 
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import ValidationError
 
-from api import services
+from api import integrations, services
 from api.auth import CSRF_COOKIE, Principal, authenticate, end_session, start_session, user_for_token
 from api.deps import ForgeJobsDep, RunnerDep, SessionDep, SettingsDep
 from api.forge_jobs import ACTIONS as FORGE_ACTIONS
@@ -662,3 +662,80 @@ async def delete_provider(name: str, session: SessionDep, principal: UIPrincipal
 async def test_provider(name: str, request: Request, session: SessionDep, principal: UIPrincipal):
     result = await services.test_provider(session, principal, name, request.app.state.cipher)
     return render(request, "partials/provider_test.html", principal, result=result)
+
+
+# --------------------------------------------------------------------------- integrations
+
+
+@router.get("/settings/integrations", response_class=HTMLResponse)
+async def integrations_page(request: Request, session: SessionDep, principal: UIPrincipal):
+    rows = integrations.status(await repo.list_integration_configs(session, principal.tenant))
+    groups = [
+        (g, label, [r for r in rows if r.integration.group == g]) for g, label in integrations.GROUP_LABELS.items()
+    ]
+    return render(
+        request,
+        "integrations.html",
+        principal,
+        nav_active="integrations",
+        groups=[g for g in groups if g[2]],
+        cipher_ready=request.app.state.cipher is not None,
+    )
+
+
+@router.post("/ui/integrations/{name}")
+async def save_integration(name: str, request: Request, session: SessionDep, principal: UIPrincipal) -> Response:
+    """Dynamic form from the catalog: ``v:<ENV>`` values, ``s:<ENV>`` secrets (text or an
+    uploaded file), ``clear:<ENV>`` to drop a stored secret, ``enabled``."""
+    integ = integrations.BY_NAME.get(name)
+    if integ is None:
+        return flash_response(f"integración desconocida: {name}")
+    form = await request.form()
+    values: dict[str, str] = {}
+    secrets: dict[str, str] = {}
+    clear: list[str] = []
+    for f in integ.fields:
+        if f.secret:
+            raw = form.get(f"s:{f.env}")
+            if hasattr(raw, "read"):  # UploadFile
+                data = await raw.read(integrations.MAX_FILE_BYTES + 1)  # type: ignore[union-attr]
+                if len(data) > integrations.MAX_FILE_BYTES:
+                    return flash_response(f"{f.label}: el fichero supera {integrations.MAX_FILE_BYTES // 1024} KB")
+                text = data.decode("utf-8", errors="replace") if data else ""
+            else:
+                text = str(raw or "")
+            if text:
+                secrets[f.env] = text
+            if form.get(f"clear:{f.env}") == "yes":
+                clear.append(f.env)
+        else:
+            values[f.env] = str(form.get(f"v:{f.env}") or "")
+    try:
+        await integrations.save(
+            session,
+            principal.tenant,
+            name,
+            enabled=form.get("enabled") == "yes",
+            values=values,
+            secrets=secrets,
+            clear_secrets=clear,
+            cipher=request.app.state.cipher,
+        )
+    except integrations.IntegrationInputError as exc:
+        return flash_response(str(exc))
+    return hx_redirect(f"/settings/integrations#int-{name}")
+
+
+@router.post("/ui/integrations/{name}/test", response_class=HTMLResponse)
+async def test_integration(name: str, request: Request, session: SessionDep, principal: UIPrincipal):
+    if name not in integrations.BY_NAME:
+        return flash_response(f"integración desconocida: {name}")
+    result = await integrations.run_test(session, principal.tenant, name, request.app.state.cipher)
+    return render(request, "partials/integration_test.html", principal, result=result)
+
+
+@router.post("/ui/integrations/{name}/delete")
+async def delete_integration(name: str, session: SessionDep, principal: UIPrincipal) -> Response:
+    if not await repo.delete_integration_config(session, principal.tenant, name):
+        return flash_response(f"{name}: no hay nada guardado")
+    return hx_redirect("/settings/integrations")

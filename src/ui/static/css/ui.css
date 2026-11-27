@@ -77,3 +77,13 @@
 .pf-validation-row { margin-top: 0.25rem; }
 .pf-validation-verdict { color: #fbbf24; }
 .pf-validation-ok .pf-validation-verdict { color: #86efac; }
+
+/* ---- integrations page (/settings/integrations) ---- */
+.pf-int-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); align-items: start; }
+.pf-int-env { font-size: 0.62rem; color: #6b7a85; margin-left: 0.25rem; text-transform: none; letter-spacing: 0; }
+.pf-int-src { font-size: 0.62rem; color: #4b5963; text-transform: none; letter-spacing: 0; }
+.pf-int-src-ui { color: #86efac; }
+.pf-int-src-env { color: #67e8f9; }
+.pf-int-textarea { min-height: 5.5rem; font-size: 0.7rem; resize: vertical; }
+.mt-6 { margin-top: 1.5rem; }
+.pt-3 { padding-top: 0.75rem; }

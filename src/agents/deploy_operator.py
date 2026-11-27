@@ -19,7 +19,7 @@ The deterministic work stays in forge/deploy.sh — the agent drives and reports
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import Enum
 
 import yaml
@@ -114,6 +114,10 @@ class DeployOperatorAgent(BaseAgent):
             raise DeployPreconditionError(f"generated/{name}/ not found — nothing was rendered/deployed from here")
         return str(spec_path.relative_to(self.repo_root.resolve())), name, provider
 
+    #: env for the forge/bash children (None = os.environ); the service sets it to
+    #: os.environ + the tenant's UI-configured integrations (api.integrations)
+    environ: Mapping[str, str] | None = None
+
     def build_tools(self, spec_rel: str, mode: Mode) -> list[Tool]:
         return [
             ForgeTool(
@@ -123,12 +127,14 @@ class DeployOperatorAgent(BaseAgent):
                 forbidden_flags={"--skip-guardrail"},
                 required_flags={"teardown": {"--force"}},  # non-interactive; the human approval IS the confirmation
                 allow_cloud_credentials=True,
+                environ=self.environ,
             ),
             BashTool(
                 self.repo_root,
                 deny_patterns=DEPLOY_BASH_DENY,
                 approve_unless_readonly=READONLY_BASH,
                 allow_cloud_credentials=True,
+                environ=self.environ,
             ),
             FileReadTool(self.repo_root),
             GrepTool(self.repo_root),

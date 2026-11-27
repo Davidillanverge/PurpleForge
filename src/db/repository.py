@@ -24,7 +24,7 @@ from agents.events import AgentEvent as EngineEvent
 from agents.events import EventType
 from db.base import utcnow
 from db.crypto import SecretCipher
-from db.models import AgentEvent, AgentRun, Approval, Lab, LabTransition, ProviderConfig
+from db.models import AgentEvent, AgentRun, Approval, IntegrationConfig, Lab, LabTransition, ProviderConfig
 from db.states import INFRA_STATES, ApprovalStatus, LabState, ProviderKind, RunState, check_transition
 from llm.anthropic_provider import AnthropicProvider
 from llm.gemini_provider import DEFAULT_BASE_URL as GEMINI_DEFAULT_BASE_URL
@@ -558,6 +558,65 @@ async def get_provider_config(session: AsyncSession, tenant_id: str, name: str) 
     if cfg is None:
         raise NotFound(f"provider {name!r} not found")
     return cfg
+
+
+# --------------------------------------------------------------------------- integration configs
+
+
+async def get_integration_config(session: AsyncSession, tenant_id: str, name: str) -> IntegrationConfig | None:
+    stmt = select(IntegrationConfig).where(IntegrationConfig.tenant_id == tenant_id, IntegrationConfig.name == name)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_integration_configs(
+    session: AsyncSession, tenant_id: str, *, enabled_only: bool = False
+) -> Sequence[IntegrationConfig]:
+    stmt = select(IntegrationConfig).where(IntegrationConfig.tenant_id == tenant_id)
+    if enabled_only:
+        stmt = stmt.where(IntegrationConfig.enabled.is_(True))
+    return (await session.execute(stmt.order_by(IntegrationConfig.name))).scalars().all()
+
+
+async def upsert_integration_config(
+    session: AsyncSession,
+    tenant_id: str,
+    *,
+    name: str,
+    enabled: bool = True,
+    values: dict[str, str] | None = None,
+    set_secrets: dict[str, str] | None = None,
+    clear_secrets: Iterable[str] = (),
+    cipher: SecretCipher | None = None,
+) -> IntegrationConfig:
+    """``values`` replaces the non-secret fields; secrets are merged: ``set_secrets``
+    replaces those named (encrypted), ``clear_secrets`` drops them, the rest are kept."""
+    cfg = await get_integration_config(session, tenant_id, name)
+    if cfg is None:
+        cfg = IntegrationConfig(tenant_id=tenant_id, name=name, values={}, secrets_encrypted={})
+        session.add(cfg)
+    cfg.enabled = enabled
+    cfg.values = {k: v for k, v in (values or {}).items() if v not in (None, "")}
+    secrets = dict(cfg.secrets_encrypted or {})
+    for key in clear_secrets:
+        secrets.pop(key, None)
+    for key, plain in (set_secrets or {}).items():
+        if not plain:
+            continue
+        if cipher is None:
+            raise ValueError("a SecretCipher is required to store a secret")
+        secrets[key] = cipher.encrypt(plain)
+    cfg.secrets_encrypted = secrets  # reassign: JSON columns don't track in-place mutation
+    await session.flush()
+    return cfg
+
+
+async def delete_integration_config(session: AsyncSession, tenant_id: str, name: str) -> bool:
+    cfg = await get_integration_config(session, tenant_id, name)
+    if cfg is None:
+        return False
+    await session.delete(cfg)
+    await session.flush()
+    return True
 
 
 ACTIVE_RUN_STATES = (RunState.QUEUED, RunState.RUNNING, RunState.WAITING_APPROVAL)

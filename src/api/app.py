@@ -28,7 +28,7 @@ from agents import background
 from api.broker import Broker, EventBroker, RedisEventBroker
 from api.forge_jobs import ForgeActionError, ForgeJobs
 from api.registry import AgentPreconditionError, AgentSpec, default_registry
-from api.routes import approvals, health, labs, providers, runs, usage
+from api.routes import approvals, health, integrations, labs, providers, runs, usage
 from api.runner import AgentRunner, LabBusy, LLMFactory, UnknownAgent
 from api.settings import AppSettings, load_env_file
 from db import repository as repo
@@ -141,7 +141,7 @@ def create_app(
         app.state.cipher = cipher
         app.state.broker = broker
         app.state.runner = runner
-        forge_jobs = ForgeJobs(sessionmaker, settings.repo_root, worker_id=runner.worker_id)
+        forge_jobs = ForgeJobs(sessionmaker, settings.repo_root, worker_id=runner.worker_id, cipher=cipher)
         app.state.forge_jobs = forge_jobs
         if not settings.auth_disabled and not settings.api_tokens:
             log.warning("no PF_API_TOKENS configured: every API request will be rejected (401)")
@@ -161,7 +161,7 @@ def create_app(
             await engine.dispose()
 
     app = FastAPI(title="PurpleForge", version="0.1.0", lifespan=lifespan)
-    for module in (health, labs, runs, approvals, providers, usage):
+    for module in (health, labs, runs, approvals, providers, integrations, usage):
         app.include_router(module.router)
     from ui.routes import router as ui_router
     from ui.templating import STATIC_DIR

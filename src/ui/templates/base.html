@@ -19,7 +19,7 @@
       <a href="/" class="flex items-center gap-2 text-term-fg hover:text-term-fg">
         <span class="text-term-purple">▲</span><span class="font-bold tracking-wider">purple<span class="text-term-purple">forge</span></span>
       </a>
-      {% set nav = [("/", "labs", "labs"), ("/approvals", "approvals", "approvals"), ("/settings/providers", "providers", "providers")] %}
+      {% set nav = [("/", "labs", "labs"), ("/approvals", "approvals", "approvals"), ("/settings/providers", "providers", "providers"), ("/settings/integrations", "integrations", "integrations")] %}
       <div class="flex items-center gap-1 text-xs uppercase tracking-wider">
         {% for href, key, label in nav %}
         <a href="{{ href }}" class="rounded px-2.5 py-1 {{ 'bg-term-line text-term-fg' if nav_active == key else 'text-term-dim hover:text-term-fg' }}">
